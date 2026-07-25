@@ -47,7 +47,7 @@ internal static class Program
         await worker.CallAsync("initialize");
         await worker.CallAsync("play");
         var firstFrame = await ReadFrameAfterAsync(frameFile, 0, TimeSpan.FromSeconds(5));
-        Assert(firstFrame.Width == 640 && firstFrame.Height == 360 && firstFrame.Stride == 2560,
+        Assert(firstFrame.Width == 1280 && firstFrame.Height == 720 && firstFrame.Stride == 5120,
             "Frame dimensions or stride were invalid.");
         Assert(firstFrame.PixelFormat == 1 && firstFrame.ContentFlags == 3,
             "Frame did not declare BGRA8 sprite and static-mesh content.");
@@ -67,7 +67,7 @@ internal static class Program
             $"adapter {timings["adapter"]!.GetValue<double>():F1} ms, " +
             $"render {timings["render"]!.GetValue<double>():F1} ms, " +
             $"publish {timings["publish"]!.GetValue<double>():F1} ms";
-        Assert(framesPerSecond >= 20.0,
+        Assert(framesPerSecond >= 30.0,
             $"{expectedAdapter} frame rate was only {framesPerSecond:F1} FPS ({timingSummary}).");
 
         await worker.CallAsync("pause");
@@ -126,9 +126,9 @@ internal static class Program
         startInfo.ArgumentList.Add("--frame-file");
         startInfo.ArgumentList.Add(frameFile);
         startInfo.ArgumentList.Add("--width");
-        startInfo.ArgumentList.Add("640");
+        startInfo.ArgumentList.Add("1280");
         startInfo.ArgumentList.Add("--height");
-        startInfo.ArgumentList.Add("360");
+        startInfo.ArgumentList.Add("720");
         return new WorkerProcess(Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not launch worker."));
     }

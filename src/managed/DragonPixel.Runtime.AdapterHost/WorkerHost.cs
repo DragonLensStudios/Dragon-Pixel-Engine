@@ -18,7 +18,11 @@ public static class WorkerHost
             using var frameBuffer = new SharedFrameBuffer(options.FrameFile, options.Width, options.Height);
             using var shutdown = new CancellationTokenSource();
             var state = new WorkerState();
-            var renderTask = RenderLoopAsync(adapter, frameBuffer, state, shutdown.Token);
+            var renderTask = Task.Factory.StartNew(
+                () => RenderLoop(adapter, frameBuffer, state, shutdown.Token),
+                CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
             ControlConnection? connection = null;
             try
             {
@@ -67,7 +71,7 @@ public static class WorkerHost
         }
     }
 
-    private static async Task RenderLoopAsync(
+    private static void RenderLoop(
         IFrameworkSceneAdapter adapter,
         SharedFrameBuffer frameBuffer,
         WorkerState state,
@@ -107,11 +111,11 @@ public static class WorkerHost
             var remaining = frameInterval - Stopwatch.GetElapsedTime(iterationStart);
             if (remaining > TimeSpan.Zero)
             {
-                await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+                Thread.Sleep(remaining);
             }
             else
             {
-                await Task.Yield();
+                Thread.Yield();
             }
         }
     }

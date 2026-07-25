@@ -112,8 +112,8 @@ public:
             QString::fromUtf8(DPE_DOTNET_EXECUTABLE),
             {worker,
              QStringLiteral("--frame-file"), frame_path_,
-             QStringLiteral("--width"), QStringLiteral("640"),
-             QStringLiteral("--height"), QStringLiteral("360")});
+             QStringLiteral("--width"), QStringLiteral("1280"),
+             QStringLiteral("--height"), QStringLiteral("720")});
         if (!worker_->waitForStarted(5000))
         {
             statusBar()->showMessage(QStringLiteral("Worker failed to start: %1").arg(worker_->errorString()));
