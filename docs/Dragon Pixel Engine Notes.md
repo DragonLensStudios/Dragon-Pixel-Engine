@@ -17,3 +17,14 @@ I want to break this into 4 slices to start off with. Core/Infrastructure/Scaffo
 
 
 I want to mirror the documentation markdown files in the repo so it is in-sync with the design document and LLM prompt source, this directory C:\Projects\Documentation\Engines\Dragon Pixel Engine can be used for documentation and mirrored inside the docs folder in the repo so all these markdowns are stored in the repo and in my document system. add to agents file that all documents and plans and responses will be added as expected.
+
+
+
+
+Let's start building the Editor i'm on a windows machine so let's get windows dev environment setup for C++ coding and able to easily test changes. let;s start with Phase 1
+
+
+Let's get the environment setup for Slice 1 (Phase 1), I also want to make sure to have you capture all plans and place them in both the docs and the C:\Projects\Documentation\Engines\Dragon Pixel Engine\Plans path.
+
+
+Let's go ahead and get Slice 1: Core, infrastructure, scaffolding, and core editor done entirely.

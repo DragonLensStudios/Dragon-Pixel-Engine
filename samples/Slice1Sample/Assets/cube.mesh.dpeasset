@@ -1,0 +1,12 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/asset-metadata.schema.json",
+  "format": "dpe.asset",
+  "formatVersion": 1,
+  "engineVersion": "0.1.0-slice1",
+  "assetId": "a07de004-0265-4745-b4ee-2a0f1143f28c",
+  "assetType": "static-mesh",
+  "source": "builtin://unit-cube",
+  "importSettings": {
+    "generateNormals": true
+  }
+}

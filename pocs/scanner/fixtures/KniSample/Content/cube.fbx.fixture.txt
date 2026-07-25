@@ -1,0 +1,1 @@
+This placeholder names a static mesh without embedding a binary asset in POC D.

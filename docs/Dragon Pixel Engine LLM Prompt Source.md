@@ -1,8 +1,8 @@
 # Dragon Pixel Engine LLM Prompt Source
 
 > **Document role:** Prompt and generated-result provenance  
-> **Design revision:** `DPE-ARCH-0002`  
-> **Result revision:** `RESULT-DPE-ARCH-0002`  
+> **Design revision:** `DPE-ARCH-0005`
+> **Result revision:** `RESULT-DPE-ARCH-0005`
 > **Last reviewed:** 2026-07-24  
 > **Design paths:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md` and `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`  
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine LLM Prompt Source.md`  
@@ -28,8 +28,9 @@ This is the second Dragon Pixel Engine living document. It preserves the request
 | `Dragon Pixel Engine First Structure Prompt Main Flow.md` at `DPE-ARCH-0002` | Same prompt content with normalized final LF for exact mirroring | `C4914E9686259E00A051720A7BF289D99A3876E7E17CB8B14F800FF384A215BE` |
 | `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0001` | Earlier product notes used by initial research | `B63016AC6D7D9876A9B1131D2C3F438AE49A48A6819C8AAA9A9A42AE4C8F4A3C` |
 | `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0002` | Current notes including the documentation-mirroring request and normalized final LF | `54AF7F76159831B94CBCA5317E05849570CCC3CEA0598119FC5B293248B991B0` |
+| `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0005` | Living intake including the request to complete Slice 1 | `DA2238DA74375D8A59EA4B313EF435C4DDABB75776702FC853EBA2D868E603C0` |
 | Dragon Pixel Engine repository | Repository state inspected before research | Git commit `b48360e59f55fd827d9513405c9fef42178b92be` |
-| `Dragon Pixel Engine Design Document.md` | Expanded authoritative result for this revision | SHA-256 `1277F66438EF9632A4AB4B46EBD861C4CB0F994DB2575B227AD71D9FE866B1D5` |
+| `Dragon Pixel Engine Design Document.md` | Expanded authoritative result for this revision | SHA-256 `C1A566DD292ADA58DF328C30DA0EDFF859D26334674C13CF401DFBDB676283AF` |
 
 At the time of research, the repository contained only `README.md` and `LICENSE.md`; no engine implementation or prior `AGENTS.md` existed.
 
@@ -385,9 +386,19 @@ Additional primary specifications for the selected durable boundaries are JSON-R
 
 ### Result identity
 
-- **Result:** `RESULT-DPE-ARCH-0002`
-- **Design:** `DPE-ARCH-0002`
-- **Disposition:** Accepted as the architecture baseline for POCs and `S1.0`; no engine implementation was generated.
+- **Result:** `RESULT-DPE-ARCH-0005`
+- **Design:** `DPE-ARCH-0005`
+- **Disposition:** Accepted architecture baseline with reviewed Windows and Ubuntu implementation evidence; macOS Slice 1 validation remains open.
+
+### Implementation evidence result
+
+The architecture itself is unchanged by this revision. Windows 11 x64 and Ubuntu 24.04 x64 now have executable evidence for the four risk prototypes, production S1.0 modules, and the complete locally executable Qt editor/runtime Slice 1 vertical slice. All 15 registered tests pass in Release and again with the platform native AddressSanitizer configuration on both systems.
+
+The implemented foundation includes portable C++ core, scene, metadata, serialization, command/transaction, and C ABI modules; `.NET Standard 2.1` contracts; .NET 10 interop and worker packages; deterministic scene and metadata format-version-2 schemas; UUID component identities; entity/component enabled state; canonical project/scene/asset filenames; separate MonoGame and KNI adapters; authenticated named-pipe/Unix-socket JSON-RPC control; shared-memory BGRA8 frames; and a Qt 6.11 Widgets editor with Scene, Hierarchy, Project/Assets, Inspector, and Console docks.
+
+The Windows and Ubuntu editor tests load the same sample, reject project-root traversal, execute an atomic multi-command edit, save and fully close/reopen a project, expose native/managed metadata plus read-only opaque diagnostics, display 2D and 3D content, supervise distinct preview and play processes, preserve authoring data across play/stop, and recover from a forced play-worker crash without losing preview. They also run an external Python client through capability negotiation, inspection, dry-run, validated mutation, rejection, cancellation, and token-redacted audit paths. Windows exercises authenticated named pipes and Ubuntu exercises Unix-domain sockets. Direct framework probes create real MonoGame and KNI graphics devices, render a sprite and cube to a render target, and verify readback content. KNI remains experimental because two-platform success is not its required three-platform conformance matrix.
+
+macOS 14+ arm64 has a workflow definition but no executed evidence in this work record. Consequently Slice 1 is not accepted, ADRs 0001-0007 remain `Proposed`, and the current result must not be read as complete cross-platform or production KNI support evidence.
 
 ### Product and scope result
 
@@ -417,6 +428,8 @@ The canonical space is right-handed, Y-up, negative-Z-forward, meter/second base
 
 Authoritative project, scene, prefab, asset, workspace, and migration data use deterministic UTF-8 JSON with document and component schema versions. Import caches are disposable. Unknown or newer components remain opaque, visible, and structurally preserved during load/save. Renames retain stable IDs; true schema changes use explicit ordered migrations. Saves validate first, write and flush a sibling temporary file, atomically replace the target where possible, and retain bounded recovery data.
 
+The implemented scene format version 2 includes an explicit schema URI and producer engine version, stable scene/entity IDs, entity enabled state, and component UUID, qualified name, schema version, owner, enabled state, and property payload. Version 1 scenes migrate explicitly. Known descriptor IDs must be UUIDs, while opaque legacy or unavailable records keep their raw identity and subtree for lossless recovery.
+
 The Qt shell uses dockable Scene, Hierarchy, Project/Assets, Inspector, and Console panels backed by project, scene, selection, command, metadata, asset, runtime-session, and diagnostics services. All mutations are commands/transactions. Undo/redo, panels, migration, plugins, Python, and AI use the same validation path. Standard Qt controls are preferred for accessibility; custom viewport/gizmo controls must expose keyboard and assistive behavior.
 
 ### Framework and rendering result
@@ -434,6 +447,8 @@ Generation defaults to a new sibling Dragon Pixel project and staging area. It n
 ### Python, AI, and plugin result
 
 Python/AI tools are external clients of a capability-based automation broker. They receive read-only project access by default, write only to isolated staging, and propose validated editor commands. Every operation supports progress, cancellation, timeouts, and hard worker termination. JSONL audit events record tool/model identity, versions, capability grants, hashes, parameters, approvals, results, and diagnostics. Reproducible tools pin Python/dependencies and input/output hashes; AI output is always an untrusted proposal.
+
+Slice 1 now includes the initial external Python boundary: a dependency-free client and user-restricted editor broker negotiate protocol/capabilities, inspect a scene, dry-run and apply the permitted rename command through editor validation, reject invalid commands, exercise cancellation, and write capability-specific JSONL audit records without persisting the inherited session token. Broader staging, approvals, progress, build/import, and AI workflows remain later-slice expansions of this boundary.
 
 Plugins have versioned manifests, explicit runtime type, platform/architecture support, dependencies, contributions, and requested permissions. Native/managed project plugins load in workers. Declarative editor extensions are preferred. Native Qt editor plugins are trusted, exact-version-bound, restart-required, and do not receive a stable cross-version C++ ABI promise. All plugins mutate through commands.
 
@@ -455,7 +470,11 @@ Four POCs gate development:
 3. Cross-language metadata plus scene and unknown-component round-tripping.
 4. A read-only MonoGame/KNI scanner whose source-tree hashes do not change.
 
+Windows and Ubuntu evidence recorded on 2026-07-24 passes all four POCs in Release and native AddressSanitizer configurations. POC B additionally passes direct real-device MonoGame and KNI render-target/readback probes with a normal device status: Windows observed 5,608 distinct colors per adapter and Ubuntu observed 5,589. Recorded shared-frame runs exceed 30 FPS; the latest verbose Ubuntu Release run measured 54.9 FPS for MonoGame and 54.8 FPS for KNI with crash recovery below 100 ms. POC D proves its inspected source trees remain unchanged. Equivalent macOS runs and broader real-project scanner fixtures remain required.
+
 The first post-POC implementation is `S1.0 Architecture Bootstrap`: build scaffolding, native core/scene/metadata/serialization/C ABI modules, portable contracts/interops/headless worker, one native and one managed component, one world/scene, JSON round-trip, schemas, and tests. It explicitly excludes the Qt shell and general renderer.
+
+S1.0 and the subsequent Slice 1 editor/runtime vertical slice are now implemented and verified on Windows and Ubuntu. The repository contains the Qt shell and required docks, metadata-driven property editing, command/transaction-routed entity and component changes, scene-v2 migration/preservation, canonical project save/close/reopen, 2D/3D sample content, distinct preview/play supervision over named pipes or Unix sockets, play/pause/resume/stop, isolated crash restart, initial external Python automation, and MonoGame/KNI adapter probes. The architecture's macOS and three-platform definition of done is still open.
 
 The authoritative design document contains the exact ownership rules, module tables, file conventions, panel services, risk register, prototype metrics, 12 ADRs, slice acceptance criteria, and `S1.0` definition of done for this result.
 
@@ -465,3 +484,6 @@ The authoritative design document contains the exact ownership rules, module tab
 | --- | --- | --- | --- |
 | `RESULT-DPE-ARCH-0001` | `DPE-ARCH-0001` | 2026-07-24 | Initial researched architecture result; established living-document governance and bounded the first prototype/implementation iteration |
 | `RESULT-DPE-ARCH-0002` | `DPE-ARCH-0002` | 2026-07-24 | Added repository/document-system Markdown mirrors and made durable documentation, plans, and substantive response capture mandatory |
+| `RESULT-DPE-ARCH-0003` | `DPE-ARCH-0003` | 2026-07-24 | Recorded passing Windows POC, S1.0, direct framework graphics, and Qt editor/worker evidence without changing the architecture; retained macOS/Linux and KNI support gates |
+| `RESULT-DPE-ARCH-0004` | `DPE-ARCH-0004` | 2026-07-24 | Added passing Ubuntu 24.04 Release/Clang-ASan, Unix-socket, shared-frame, graphics, and editor evidence; retained macOS and KNI support gates |
+| `RESULT-DPE-ARCH-0005` | `DPE-ARCH-0005` | 2026-07-24 | Recorded scene-v2 and stable-ID conformance, transactions, canonical project lifecycle, distinct preview/play supervision, opaque Inspector diagnostics, initial external Python automation, and passing 15-test Windows/Ubuntu Release/ASan matrices; retained macOS and KNI support gates |

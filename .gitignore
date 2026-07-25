@@ -1,0 +1,17 @@
+# Visual Studio and CMake user/build state
+.vs/
+CMakeUserPresets.json
+build/
+out/
+
+# Local tool logs
+aqtinstall.log
+slice1-*.xml
+
+# Managed build output
+bin/
+obj/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

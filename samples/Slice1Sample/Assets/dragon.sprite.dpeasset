@@ -1,0 +1,13 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/asset-metadata.schema.json",
+  "format": "dpe.asset",
+  "formatVersion": 1,
+  "engineVersion": "0.1.0-slice1",
+  "assetId": "dd02cd2a-8a7e-4b27-9d26-06331093885a",
+  "assetType": "sprite",
+  "source": "builtin://dragon-checker",
+  "importSettings": {
+    "filter": "nearest",
+    "pixelsPerUnit": 32
+  }
+}

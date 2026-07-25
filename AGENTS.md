@@ -19,7 +19,7 @@ Before planning, reviewing, or changing architecture or implementation:
 2. Read the Design and Prompt/Result documents completely.
 3. Confirm their design revision fields match this file.
 
-The current synchronized design revision is `DPE-ARCH-0002`, last reviewed 2026-07-24. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
+The current synchronized design revision is `DPE-ARCH-0005`, last reviewed 2026-07-24. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
 
 The first-structure prompt is immutable historical evidence. The Notes file is a living intake/context record and may receive user-supplied additions, but those additions must be mirrored. Neither file overrides the current Design or Prompt/Result documents.
 
@@ -54,6 +54,8 @@ Implementation progress that does not change architecture should update normal r
 ## Documentation, Plan, and Response Capture
 
 - Store every durable project document, implementation plan, architecture/research result, and substantive generated response as Markdown in both documentation locations.
+- Store every plan under `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Plans` and the repository `docs\Plans` directory. Use the same relative path, filename, and UTF-8/LF bytes in both locations.
+- Create the plan before executing its work, maintain its status, decisions, verification evidence, blockers, and handoff notes while the work proceeds, and mark its final disposition before ending the work item.
 - Add material to the appropriate existing living document when it belongs there. Otherwise create a descriptive same-named Markdown file in both `C:\Projects\Documentation\Engines\Dragon Pixel Engine` and repository `docs`.
 - A chat response alone is not the durable project record. Record decisions, completed work, verification results, blockers, and meaningful handoff information in the appropriate mirrored Markdown before ending the work item.
 - Keep mirrored filenames and relative organization identical. Use physical files, not links or symlinks.
@@ -86,13 +88,13 @@ Implementation progress that does not change architecture should update normal r
 
 ## Current Work Boundary
 
-The current phase is architecture validation. Follow the sequence in the Design Document:
+The current phase is Slice 1 cross-platform acceptance. POCs A-D, S1.0, and the local core-editor vertical slice pass on Windows and Ubuntu in Release and native AddressSanitizer configurations. The remaining work is to:
 
-1. Draft and accept the foundational ADRs.
-2. Complete POCs A-D and record their evidence.
-3. Begin only the bounded `S1.0 Architecture Bootstrap` after the gates pass or an ADR explicitly changes a failed approach.
+1. Execute the same Release/AddressSanitizer matrix on macOS 14+ arm64.
+2. Fix any portability or conformance failures without narrowing the supported matrix.
+3. Record macOS evidence, review ADRs 0001-0007, and close the Slice 1 plan only when every acceptance statement has executed three-platform proof.
 
-Do not attempt to build the complete engine/editor, broaden Slice 1 into the later slices, or claim Unity/KNI production support without the documented acceptance evidence.
+Do not begin Slice 2 or claim Unity/KNI production support while the macOS and documented acceptance gates remain open.
 
 ## Repository Practices
 

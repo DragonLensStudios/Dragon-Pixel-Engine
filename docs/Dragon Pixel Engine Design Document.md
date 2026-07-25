@@ -1,9 +1,9 @@
 # Dragon Pixel Engine Design Document
 
-> **Status:** Accepted architecture baseline for prototyping  
-> **Design revision:** `DPE-ARCH-0002`  
+> **Status:** Accepted architecture baseline; Slice 1 validation in progress
+> **Design revision:** `DPE-ARCH-0005`
 > **Last reviewed:** 2026-07-24  
-> **Current phase:** Architecture research; engine implementation has not started  
+> **Current phase:** Slice 1 local implementation complete; macOS arm64 acceptance evidence pending
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`
 
@@ -33,6 +33,20 @@ This is the authoritative logical architecture document for Dragon Pixel Engine.
 - **Verified:** Unity 6.3 LTS supports managed plug-ins targeting .NET Standard 2.1 and does not support plug-ins targeting .NET Core.
 - **Verified:** Qt 6.11.1 is the current public Qt 6.11 release. Qt 6.11 supports Windows, macOS, and Linux and provides dock widgets, render-capable widgets, and accessibility interfaces.
 - **Verified:** Qt's LGPLv3 option permits dynamic linking when all LGPL obligations are met, including notices, a corresponding-source offer, relinking rights, and the absence of restrictions that conflict with those rights. This document is not legal advice; distribution must pass a license review.
+
+### Implementation evidence reviewed 2026-07-24
+
+- **Verified on Windows 11 x64 and Ubuntu 24.04 x64:** all 15 registered Release tests and all 15 native AddressSanitizer tests pass with Qt 6.11.1, .NET SDK 10.0.203, MonoGame 3.8.5, the experimental KNI adapter package, and the external Python automation contract suite. Windows uses MSVC v143; Ubuntu uses Clang 18 in the checked-in clean Docker environment.
+- **Verified on Windows and Ubuntu:** POC A completes 10,000 native/managed ownership cycles and converts native and managed failures into structured ABI errors without leaking live handles or buffers.
+- **Verified on Windows and Ubuntu:** POC B exercises real MonoGame and KNI graphics devices, renders a sprite and static cube into framework render targets, reads the results back, and reports a normal graphics-device status. Windows observed 5,608 distinct colors per adapter; Ubuntu observed 5,589. The latest verbose Ubuntu shared-memory lifecycle run measured 54.9 FPS for MonoGame and 54.8 FPS for KNI, with crash recovery below 100 ms; recorded Windows runs remain above 30 FPS.
+- **Verified on Windows and Ubuntu:** the Qt editor opens the canonical project manifest, rejects a startup scene that escapes the project root, routes entity/component changes through commands or an atomic transaction, saves a scene, fully closes the project, reopens it, rediscovers assets, and reproduces native, managed, enabled, hierarchy, property, and opaque-record state.
+- **Verified on Windows and Ubuntu:** preview and play are distinct supervised worker processes with different process IDs. A forced play-worker crash restarts only the disposable play session while the preview frame and editor-owned scene remain available.
+- **Verified on Windows and Ubuntu:** the external standard-library Python client negotiates a user-restricted local endpoint, inspects state, dry-runs and applies a validated command, receives an invalid-command rejection, exercises the cancellation contract, and produces a capability-specific JSONL audit that does not contain the inherited session token.
+- **Verified on Windows and Ubuntu:** POC C validates native and generated managed metadata against one schema and passes deterministic known, renamed, missing, newer, and migrated component round trips, including atomic-save recovery.
+- **Verified on Windows and Ubuntu:** POC D produces JSON and Markdown scan reports out of process while proving the inspected project tree is byte-for-byte and metadata unchanged.
+- **Verified on Windows and Ubuntu:** the production Qt editor shell loads the Slice 1 sample, exposes the required docks and metadata-driven Inspector, displays 2D and 3D content, controls both adapter workers over the platform local IPC transport, receives shared frames, preserves the saved scene during play/stop, and recovers from a forced worker crash. Windows exercises authenticated named pipes; Ubuntu exercises Unix-domain sockets.
+- **Assumption pending evidence:** equivalent builds, tests, graphics-device behavior, Unix-domain-socket control, atomic-save behavior, and editor workflows will pass on macOS 14+ arm64. The CI definition is not execution evidence.
+- **Status constraint:** KNI remains experimental until its complete .NET 10 and three-platform conformance matrix passes. Windows and Ubuntu results do not establish production support.
 
 ## 1. Product Definition and Non-Goals
 
@@ -323,17 +337,20 @@ The common runtime lifecycle is `Create`, `Enable`, fixed update, variable updat
 
 Files use strict UTF-8 JSON without comments or trailing commas. Writers use stable field ordering, invariant numeric formatting, and deterministic collection ordering where order has no domain meaning.
 
+The implemented scene contract is format version 2. It requires an explicit schema URI and producer engine version, stable scene/entity IDs, entity enabled state, and component type UUID, qualified name, schema version, owner, enabled state, and property payload. The reader accepts the bootstrap version 1 fixture and records an explicit version 1-to-2 migration. Known component descriptors require UUID type IDs; opaque legacy or missing records retain their original type identifier and complete raw subtree so incompatible data remains recoverable.
+
 ### Document envelope
 
-Every durable document has a schema URI, integer `formatVersion`, document UUID, producer engine version, and payload. File-format version and individual component schema versions evolve independently.
+Every durable document has a canonical `$schema` URI, a format discriminator, integer `formatVersion`, a format-specific document UUID such as `sceneId`, a producer `engineVersion`, and format-specific payload fields. Payload fields may remain at the top level when the schema is unambiguous; a generic nested `payload` wrapper is not required. File-format version and individual component schema versions evolve independently.
 
 ```json
 {
-  "$schema": "dpe://schemas/scene/v1",
-  "formatVersion": 1,
-  "documentId": "00000000-0000-4000-8000-000000000000",
-  "engineVersion": "0.0.0-dev",
-  "payload": {}
+  "$schema": "https://dragonpixel.dev/schemas/v2/scene.schema.json",
+  "format": "dpe.scene",
+  "formatVersion": 2,
+  "engineVersion": "0.1.0-slice1",
+  "sceneId": "00000000-0000-4000-8000-000000000000",
+  "entities": []
 }
 ```
 
@@ -575,6 +592,8 @@ Acceptance:
 - Stop discards runtime-only changes; a worker crash cannot corrupt the saved scene.
 - Unknown components survive load/save and appear as repairable diagnostics.
 
+Current evidence status (2026-07-24): the Windows and Ubuntu vertical slices and all registered Release/AddressSanitizer tests pass. The same sample and suites have not yet produced executed macOS evidence, so Slice 1 is not accepted and ADRs 0001-0007 remain `Proposed` pending three-platform review.
+
 ### Slice 2: Designer-friendly 2D and 3D tooling
 
 Milestones include polished layouts, Inspector editors/validation, drag-and-drop, previews, 2D/3D gizmos, editor cameras, multi-selection, undo/redo, prefabs, custom drawers, and baseline lighting/physics authoring. Conduct keyboard, accessibility, and designer usability tests throughout rather than at the end.
@@ -644,6 +663,8 @@ Pass criteria:
 - Native and managed exceptions become structured errors without crossing the ABI.
 - ABI version mismatch and missing capability fail cleanly.
 
+Windows and Ubuntu evidence: passed Release and native AddressSanitizer configurations, including 10,000 create/destroy cycles, allocator pairing, invalid-handle cases, version/capability failures, and native/managed exception containment. macOS remains pending.
+
 ### POC B: Worker lifecycle and viewport frames
 
 Build a minimal Qt viewer plus separate MonoGame and KNI workers. Render one moving sprite and one lit static mesh to a 1280x720 BGRA shared-memory frame transport.
@@ -654,6 +675,8 @@ Pass criteria:
 - Play, pause, resume, stop, and a forced worker crash leave the viewer responsive and release shared resources.
 - The editor can restart and display a fresh snapshot without reopening the project.
 - KNI results are recorded per platform; any failure blocks supported status, not the remaining architecture.
+
+Windows and Ubuntu evidence: passed the process lifecycle, platform local IPC control, shared-memory frame, Qt consumption, forced-crash/restart, and real framework graphics-device probes in Release and native AddressSanitizer configurations. MonoGame and KNI each rendered a sprite and static cube to a render target with a normal device status. Windows produced 5,608 distinct readback colors; Ubuntu produced 5,589. Recorded shared-frame runs exceeded 30 FPS. macOS remains pending; KNI remains experimental.
 
 ### POC C: Metadata and serialization
 
@@ -666,6 +689,8 @@ Pass criteria:
 - The unknown component's JSON subtree is structurally identical after round-trip.
 - Rename through a stable type/property ID requires no migration; an actual schema change requires one.
 
+Windows and Ubuntu evidence: passed Release and native AddressSanitizer configurations for native and generated managed manifests, schema validation, headless Inspector exposure, deterministic JSON, stable-ID rename, explicit migration, opaque missing/newer records, and atomic-save recovery. macOS remains pending.
+
 ### POC D: Read-only project scanner
 
 Scan representative MonoGame and KNI solutions containing content projects, common game-loop patterns, conditional builds, custom processors, and native dependencies.
@@ -675,6 +700,8 @@ Pass criteria:
 - Pre/post source-tree manifests are identical.
 - The report includes target frameworks, packages, content, game-loop evidence, assets, risks, reusable/adapt/manual classifications, confidence, and source locations.
 - Unsupported evaluation or code patterns are reported as unknown/manual, not silently ignored.
+
+Windows and Ubuntu evidence: passed Release and native AddressSanitizer configurations for representative MonoGame and KNI fixtures. JSON and Markdown reports were produced outside the inspected tree, and pre/post path, hash, timestamp, and attribute manifests remained identical. macOS and broader real-project fixtures remain pending.
 
 ## 17. Recommended First Implementation Chunk for Slice 1
 
@@ -723,6 +750,8 @@ After POCs and ADRs 0001-0007 are accepted, implement `S1.0 Architecture Bootstr
 - All ownership/error/version mismatch tests pass.
 - The design revision and accepted ADR links are updated before beginning the next chunk.
 
+Current evidence: the production S1.0 modules and the subsequent editor/runtime vertical slice are implemented. All fifteen Release tests and all fifteen native AddressSanitizer tests pass on Windows and Ubuntu, covering native core/transactions/scene-v2 serialization, managed contracts/interop/worker behavior, POCs A-D, direct MonoGame/KNI graphics probes, platform local IPC, distinct preview/play workers, project save/close/reopen, opaque Inspector diagnostics, external Python automation, and crash recovery. The macOS definition of done remains open.
+
 ## Research Question Resolutions
 
 1. **Responsibility split:** portable data/lifecycle/commands live in the native core; Qt UI in the editor; managed lifecycle/interop in workers; framework APIs in adapters; inspection/build/AI in external tooling.
@@ -749,7 +778,7 @@ After POCs and ADRs 0001-0007 are accepted, implement `S1.0 Architecture Bootstr
 5. Record measurements, failures, and decision changes in ADRs and both living documents.
 6. Begin `S1.0 Architecture Bootstrap` only when POC gates pass or an ADR explicitly narrows/replaces a failed approach.
 
-This iteration deliberately ends before a broad editor build. Its output is a proven foundation, not an enormous backlog or a partially integrated engine.
+The original bounded architecture iteration ended before a broad editor build. That foundation and the subsequent Windows/Ubuntu Slice 1 editor/runtime vertical slice are now implemented. macOS arm64 execution remains the final platform gate; later-slice tooling remains out of scope.
 
 ## Sources
 
@@ -782,3 +811,6 @@ Primary sources were accessed on 2026-07-24.
 | --- | --- | --- | --- |
 | `DPE-ARCH-0001` | 2026-07-24 | Accepted baseline | Established product scope, process topology, hybrid component model, serialization, Qt/.NET/framework boundaries, migration/automation safety, four slices, risks, POCs, and `S1.0` |
 | `DPE-ARCH-0002` | 2026-07-24 | Accepted governance update | Added byte-identical repository/document-system mirroring and durable capture requirements for project documentation, plans, and substantive responses |
+| `DPE-ARCH-0003` | 2026-07-24 | Accepted evidence update | Recorded passing Windows Release/AddressSanitizer evidence for POCs A-D, S1.0, direct MonoGame/KNI graphics probes, and the Qt editor/worker vertical slice; retained macOS/Linux and KNI support gates |
+| `DPE-ARCH-0004` | 2026-07-24 | Accepted evidence update | Added clean Ubuntu 24.04 Release/Clang-ASan evidence for all 14 tests, Unix-domain sockets, shared frames, framework graphics, and editor recovery; retained macOS and KNI support gates |
+| `DPE-ARCH-0005` | 2026-07-24 | Accepted implementation-conformance update | Recorded scene format v2, UUID component identities, enabled state, atomic transactions, canonical project lifecycle, distinct preview/play supervision, opaque Inspector diagnostics, external Python automation, and passing 15-test Windows/Ubuntu Release/ASan matrices; retained macOS and KNI support gates |
