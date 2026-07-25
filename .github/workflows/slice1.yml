@@ -123,13 +123,13 @@ jobs:
             "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION
             qt_core="$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
             [[ -f "$qt_core" ]] || { echo "QtCore framework binary was not found at $qt_core." >&2; exit 1; }
-            lipo -verify_arch arm64 "$qt_core"
+            lipo "$qt_core" -verify_arch arm64
             native_library_manifest="$RUNNER_TEMP/dragon-pixel-native-libraries.txt"
             find src/managed -path '*/bin/Release/net10.0/*' -name '*.dylib' -type f | sort > "$native_library_manifest"
             [[ -s "$native_library_manifest" ]] || { echo 'Managed adapter native libraries were not found.' >&2; exit 1; }
             while IFS= read -r native_library; do
               echo "Verifying arm64 native dependency: $native_library"
-              lipo -verify_arch arm64 "$native_library"
+              lipo "$native_library" -verify_arch arm64
             done < "$native_library_manifest"
           fi
           junit="$GITHUB_WORKSPACE/slice1-${RUNNER_OS}-${{ matrix.configuration }}.xml"
