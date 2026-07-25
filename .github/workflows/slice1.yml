@@ -1,0 +1,134 @@
+name: Slice 1 cross-platform
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows 11 x64 / ${{ matrix.configuration }}
+    runs-on: windows-2025
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: 0
+      MSBUILDDISABLENODEREUSE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [release, asan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.203
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Configure, build, and test
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & (Join-Path $vs 'Common7\Tools\Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $env:VCPKG_ROOT) { throw 'The GitHub runner did not expose VCPKG_INSTALLATION_ROOT.' }
+          $configure = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-msvc-asan' } else { 'windows-msvc' }
+          $build = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-asan' } else { 'windows-release' }
+          cmake --preset $configure -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          cmake --build --preset $build
+          $junit = Join-Path $env:GITHUB_WORKSPACE "slice1-Windows-${{ matrix.configuration }}.xml"
+          ctest --preset $build --output-on-failure --output-junit $junit
+      - name: Upload Windows test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice1-windows-2025-${{ matrix.configuration }}-evidence
+          if-no-files-found: warn
+          path: |
+            slice1-Windows-${{ matrix.configuration }}.xml
+            out/build/**/Testing/Temporary/LastTest.log
+
+  unix:
+    name: ${{ matrix.os }} / ${{ matrix.configuration }}
+    runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: 0
+      MSBUILDDISABLENODEREUSE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+        configuration: [release, asan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.203
+      - name: Install Qt for Linux
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          arch: linux_gcc_64
+          cache: true
+      - name: Install Qt for macOS
+        if: runner.os == 'macOS'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          arch: clang_64
+          cache: true
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-18-dev ninja-build nlohmann-json3-dev libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja nlohmann-json
+      - name: Configure, build, and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          configure=unix-clang
+          build=unix-release
+          if [[ '${{ matrix.configuration }}' == 'asan' ]]; then
+            configure=unix-clang-asan
+            build=unix-asan
+          fi
+          prefix_path="$QT_ROOT_DIR"
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            [[ "$(uname -m)" == 'arm64' ]] || { echo "Expected macOS arm64 runner, got $(uname -m)" >&2; exit 1; }
+            prefix_path="$prefix_path;$(brew --prefix nlohmann-json)"
+          fi
+          cmake --preset "$configure" -DCMAKE_PREFIX_PATH="$prefix_path"
+          cmake --build --preset "$build"
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION
+            qt_core=$(find "$QT_ROOT_DIR" -path '*/QtCore.framework/Versions/*/QtCore' -type f -print -quit)
+            [[ -n "$qt_core" ]] || { echo 'QtCore framework binary was not found.' >&2; exit 1; }
+            lipo -verify_arch arm64 "$qt_core"
+            native_library_manifest="$RUNNER_TEMP/dragon-pixel-native-libraries.txt"
+            find src/managed -path '*/bin/Release/net10.0/*' -name '*.dylib' -type f | sort > "$native_library_manifest"
+            [[ -s "$native_library_manifest" ]] || { echo 'Managed adapter native libraries were not found.' >&2; exit 1; }
+            while IFS= read -r native_library; do
+              echo "Verifying arm64 native dependency: $native_library"
+              lipo -verify_arch arm64 "$native_library"
+            done < "$native_library_manifest"
+          fi
+          junit="$GITHUB_WORKSPACE/slice1-${RUNNER_OS}-${{ matrix.configuration }}.xml"
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then
+            xvfb-run -a ctest --preset "$build" --output-on-failure --output-junit "$junit"
+          else
+            ctest --preset "$build" --output-on-failure --output-junit "$junit"
+          fi
+      - name: Upload Unix test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice1-${{ matrix.os }}-${{ matrix.configuration }}-evidence
+          if-no-files-found: warn
+          path: |
+            slice1-${{ runner.os }}-${{ matrix.configuration }}.xml
+            out/build/**/Testing/Temporary/LastTest.log
