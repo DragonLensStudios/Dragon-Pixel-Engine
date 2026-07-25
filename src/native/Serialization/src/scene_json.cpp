@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <unordered_map>
 #include <string_view>
 #include <utility>
 
@@ -11,8 +12,9 @@ namespace dragonpixel::serialization
 {
 namespace
 {
-constexpr auto scene_schema = "https://dragonpixel.dev/schemas/v2/scene.schema.json";
-constexpr auto producer_version = "0.1.0-slice1";
+constexpr auto scene_schema_v2 = "https://dragonpixel.dev/schemas/v2/scene.schema.json";
+constexpr auto scene_schema_v3 = "https://dragonpixel.dev/schemas/v3/scene.schema.json";
+constexpr auto producer_version = "0.2.0-slice2";
 
 std::string owner_name(metadata::runtime_owner owner)
 {
@@ -72,6 +74,30 @@ scene::component_record read_component(
     }
     return result;
 }
+
+scene::scene_physics_settings read_physics_settings(const nlohmann::ordered_json& root)
+{
+    scene::scene_physics_settings result;
+    if (!root.contains("physicsSettings"))
+    {
+        return result;
+    }
+    const auto& settings = root.at("physicsSettings");
+    result.fixed_time_step_seconds = settings.at("fixedTimeStepSeconds").get<double>();
+    result.max_catch_up_ticks = settings.at("maxCatchUpTicks").get<std::uint32_t>();
+    result.box2d_solver_substeps = settings.at("box2DSolverSubsteps").get<std::uint32_t>();
+    result.jolt_collision_steps = settings.at("joltCollisionSteps").get<std::uint32_t>();
+    result.gravity_2d = {
+        settings.at("gravity2D").at("x").get<double>(),
+        settings.at("gravity2D").at("y").get<double>(),
+    };
+    result.gravity_3d = {
+        settings.at("gravity3D").at("x").get<double>(),
+        settings.at("gravity3D").at("y").get<double>(),
+        settings.at("gravity3D").at("z").get<double>(),
+    };
+    return result;
+}
 }
 
 nlohmann::ordered_json canonicalize_json(const nlohmann::ordered_json& value)
@@ -107,30 +133,63 @@ nlohmann::ordered_json canonicalize_json(const nlohmann::ordered_json& value)
 std::string write_scene_json(const scene::scene& value)
 {
     auto root = nlohmann::ordered_json::object();
-    root["$schema"] = scene_schema;
+    root["$schema"] = scene_schema_v3;
     root["format"] = "dpe.scene";
-    root["formatVersion"] = 2;
+    root["formatVersion"] = 3;
     root["engineVersion"] = producer_version;
     root["sceneId"] = value.id().to_string();
     root["name"] = value.name();
+    const auto& physics = value.physics_settings();
+    root["physicsSettings"] = {
+        {"fixedTimeStepSeconds", physics.fixed_time_step_seconds},
+        {"maxCatchUpTicks", physics.max_catch_up_ticks},
+        {"box2DSolverSubsteps", physics.box2d_solver_substeps},
+        {"joltCollisionSteps", physics.jolt_collision_steps},
+        {"gravity2D", {{"x", physics.gravity_2d.x}, {"y", physics.gravity_2d.y}}},
+        {"gravity3D", {{"x", physics.gravity_3d.x}, {"y", physics.gravity_3d.y}, {"z", physics.gravity_3d.z}}},
+    };
+    root["prefabInstances"] = canonicalize_json(value.prefab_instances());
     root["entities"] = nlohmann::ordered_json::array();
 
+    std::vector<const scene::entity*> ordered_entities;
+    ordered_entities.reserve(value.entities().size());
     for (const auto& entity : value.entities())
     {
-        auto entity_json = nlohmann::ordered_json::object();
-        entity_json["id"] = entity.id.to_string();
-        entity_json["name"] = entity.name;
-        entity_json["enabled"] = entity.enabled;
-        if (entity.parent_id)
+        ordered_entities.push_back(&entity);
+    }
+    std::sort(ordered_entities.begin(), ordered_entities.end(), [](const auto* left, const auto* right) {
+        if (left->parent_id.has_value() != right->parent_id.has_value())
         {
-            entity_json["parentId"] = entity.parent_id->to_string();
+            return !left->parent_id.has_value();
+        }
+        if (left->parent_id != right->parent_id)
+        {
+            return left->parent_id < right->parent_id;
+        }
+        if (left->sibling_order != right->sibling_order)
+        {
+            return left->sibling_order < right->sibling_order;
+        }
+        return left->id < right->id;
+    });
+
+    for (const auto* entity : ordered_entities)
+    {
+        auto entity_json = nlohmann::ordered_json::object();
+        entity_json["id"] = entity->id.to_string();
+        entity_json["name"] = entity->name;
+        entity_json["enabled"] = entity->enabled;
+        entity_json["siblingOrder"] = entity->sibling_order;
+        if (entity->parent_id)
+        {
+            entity_json["parentId"] = entity->parent_id->to_string();
         }
         else
         {
             entity_json["parentId"] = nullptr;
         }
         entity_json["components"] = nlohmann::ordered_json::array();
-        for (const auto& component : entity.components)
+        for (const auto& component : entity->components)
         {
             auto component_json = component.raw_record.is_object()
                 ? component.raw_record
@@ -171,20 +230,31 @@ scene_load_result read_scene_json(std::string_view json, const metadata::registr
         const auto root = nlohmann::ordered_json::parse(json.begin(), json.end());
         const auto format_version = root.value("formatVersion", 0);
         if (!root.is_object() || root.value("format", "") != "dpe.scene"
-            || (format_version != 1 && format_version != 2))
+            || (format_version != 1 && format_version != 2 && format_version != 3))
         {
             result.diagnostics.push_back(load_error(
                 "DPE.SERIALIZATION.UNSUPPORTED_FORMAT",
-                "Document is not a supported dpe.scene version 1 or 2 document."));
+                "Document is not a supported dpe.scene version 1, 2, or 3 document."));
             return result;
         }
         if (format_version == 2
-            && (root.value("$schema", "") != scene_schema
+            && (root.value("$schema", "") != scene_schema_v2
                 || root.value("engineVersion", "").empty()))
         {
             result.diagnostics.push_back(load_error(
                 "DPE.SERIALIZATION.INVALID_ENVELOPE",
                 "Scene version 2 requires the canonical schema URI and a producer engineVersion."));
+            return result;
+        }
+        if (format_version == 3
+            && (root.value("$schema", "") != scene_schema_v3
+                || root.value("engineVersion", "").empty()
+                || !root.contains("physicsSettings")
+                || !root.contains("prefabInstances")))
+        {
+            result.diagnostics.push_back(load_error(
+                "DPE.SERIALIZATION.INVALID_ENVELOPE",
+                "Scene version 3 requires its canonical schema, producer engineVersion, physics settings, and prefab instances."));
             return result;
         }
         if (format_version == 1)
@@ -196,6 +266,15 @@ scene_load_result read_scene_json(std::string_view json, const metadata::registr
                 "Added explicit entity/component enabled state and diagnostic component qualified names.",
             });
         }
+        if (format_version < 3)
+        {
+            result.migrations.push_back({
+                "dpe.document.scene",
+                2,
+                3,
+                "Added deterministic sibling ordering, physics settings, and linked prefab instance records.",
+            });
+        }
         const auto scene_id = core::uuid::parse(root.at("sceneId").get<std::string>());
         if (!scene_id)
         {
@@ -204,6 +283,7 @@ scene_load_result read_scene_json(std::string_view json, const metadata::registr
         }
 
         std::vector<scene::entity> entities;
+        std::unordered_map<std::string, std::uint32_t> next_sibling_orders;
         for (const auto& entity_json : root.at("entities"))
         {
             const auto entity_id = core::uuid::parse(entity_json.at("id").get<std::string>());
@@ -230,16 +310,30 @@ scene_load_result read_scene_json(std::string_view json, const metadata::registr
             {
                 components.push_back(read_component(component_json, registry, result.migrations));
             }
+            const auto sibling_order = format_version == 3
+                ? entity_json.at("siblingOrder").get<std::uint32_t>()
+                : next_sibling_orders[parent_id ? parent_id->to_string() : std::string{}]++;
             entities.push_back({
                 *entity_id,
                 entity_json.at("name").get<std::string>(),
                 parent_id,
                 std::move(components),
                 entity_json.value("enabled", true),
+                sibling_order,
             });
         }
 
-        scene::scene loaded{*scene_id, root.value("name", "Untitled Scene"), std::move(entities)};
+        scene::scene_document_extras extras;
+        extras.physics = read_physics_settings(root);
+        extras.prefab_instances = canonicalize_json(
+            root.value("prefabInstances", nlohmann::ordered_json::array()));
+        extras.has_explicit_sibling_order = true;
+        scene::scene loaded{
+            *scene_id,
+            root.value("name", "Untitled Scene"),
+            std::move(entities),
+            std::move(extras),
+        };
         if (const auto validation = loaded.validate())
         {
             result.diagnostics.push_back(*validation);

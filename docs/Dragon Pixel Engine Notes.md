@@ -13,6 +13,9 @@ there will be a explorer, inspector, scene view, and console/logging, ways to pl
 I want to break this into 4 slices to start off with. Core/Infrastructure/Scaffolding, and Core editor, Then 2nd slice is tooling and tailoring for designer friendly UI and Design. 3nd slice is is project creation, edit, delete, updater and details that are relevant for core workflow. and 4th slice is polish and core guts to get to version 1.0.0 each iteration being the goal to launch a stable project flow. I want this to be as close to Unity as possible when it comes to idea how how a editor should look.
 
 
+I want to make all of the editor UI functional and working I should be able to add gameobjects, there should be a project explorer, all for Slice 1 should be working let's get the slice built into working fully functional editor.
+
+
 
 
 

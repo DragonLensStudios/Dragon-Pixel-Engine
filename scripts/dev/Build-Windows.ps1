@@ -26,6 +26,14 @@ if (-not $visualStudioPath) {
 $developerShell = Join-Path $visualStudioPath 'Common7\Tools\Launch-VsDevShell.ps1'
 & $developerShell -Arch amd64 -HostArch amd64
 
+$integratedVcpkgRoot = Join-Path $visualStudioPath 'VC\vcpkg'
+if (-not $env:VCPKG_ROOT -or -not (Test-Path -LiteralPath (Join-Path $env:VCPKG_ROOT 'scripts\buildsystems\vcpkg.cmake'))) {
+    $env:VCPKG_ROOT = $integratedVcpkgRoot
+}
+if (-not (Test-Path -LiteralPath (Join-Path $env:VCPKG_ROOT 'scripts\buildsystems\vcpkg.cmake'))) {
+    throw "vcpkg was not found at $env:VCPKG_ROOT. Run Install-WindowsPrerequisites.ps1."
+}
+
 $qtRoot = 'C:\Qt\6.11.1\msvc2022_64'
 if (-not (Test-Path -LiteralPath (Join-Path $qtRoot 'bin\qmake.exe'))) {
     throw "Qt 6.11.1 was not found at $qtRoot. Run Install-WindowsPrerequisites.ps1."

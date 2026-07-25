@@ -95,7 +95,17 @@ public:
             QStringLiteral("dpe-poc-b-%1-%2.frame")
                 .arg(QApplication::applicationPid())
                 .arg(adapter));
+        snapshot_path_ = QDir::temp().filePath(
+            QStringLiteral("dpe-poc-b-%1-%2.dpescene")
+                .arg(QApplication::applicationPid())
+                .arg(adapter));
         QFile::remove(frame_path_);
+        QFile::remove(snapshot_path_);
+        if (!create_snapshot_fixture())
+        {
+            statusBar()->showMessage(QStringLiteral("Could not create disposable real-render scene fixture"));
+            return;
+        }
 
         const auto worker = adapter == QStringLiteral("kni")
             ? QString::fromUtf8(DPE_POC_B_KNI_DLL)
@@ -122,6 +132,10 @@ public:
 
         send_command(QStringLiteral("handshake"));
         send_command(QStringLiteral("initialize"));
+        send_command(
+            QStringLiteral("loadSnapshot"),
+            {{QStringLiteral("snapshotPath"), snapshot_path_},
+             {QStringLiteral("snapshotRevision"), 1}});
         send_command(QStringLiteral("play"));
         statusBar()->showMessage(QStringLiteral("%1 worker running").arg(adapter));
     }
@@ -132,7 +146,7 @@ public:
     }
 
 private:
-    void send_command(const QString& method)
+    void send_command(const QString& method, const QJsonObject& parameters = {})
     {
         if (worker_ == nullptr || worker_->state() != QProcess::Running)
         {
@@ -144,6 +158,10 @@ private:
             {QStringLiteral("id"), ++request_id_},
             {QStringLiteral("method"), method},
         };
+        if (!parameters.isEmpty())
+        {
+            request.insert(QStringLiteral("params"), parameters);
+        }
         const auto payload = QJsonDocument(request).toJson(QJsonDocument::Compact);
         QByteArray framed(static_cast<qsizetype>(sizeof(std::uint32_t)) + payload.size(), Qt::Uninitialized);
         qToLittleEndian<std::uint32_t>(static_cast<std::uint32_t>(payload.size()), framed.data());
@@ -228,6 +246,99 @@ private:
         }
         worker_->deleteLater();
         worker_ = nullptr;
+        QFile::remove(frame_path_);
+        QFile::remove(snapshot_path_);
+    }
+
+    bool create_snapshot_fixture()
+    {
+        static const QByteArray fixture = R"json({
+  "$schema": "https://dragonpixel.dev/schemas/v2/scene.schema.json",
+  "format": "dpe.scene",
+  "formatVersion": 2,
+  "engineVersion": "0.2.0-poc-e",
+  "snapshotRevision": 1,
+  "sceneId": "af8ffc47-d69b-4ba9-886a-8b8876dd0ed1",
+  "name": "Disposable Qt transport fixture",
+  "entities": [
+    {
+      "id": "e75d033b-bba0-4f8f-8f54-c7a1e6990aef",
+      "name": "Sprite",
+      "parentId": null,
+      "enabled": true,
+      "components": [
+        {
+          "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e",
+          "qualifiedName": "DragonPixel.Native.TransformComponent",
+          "schemaVersion": 2,
+          "owner": "native",
+          "enabled": true,
+          "properties": {
+            "dpe.transform.position": { "x": -2.0, "y": 0.0, "z": 0.0 },
+            "dpe.transform.rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+            "dpe.transform.scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+          }
+        },
+        {
+          "typeId": "b527395a-93a5-44f3-8d6c-7ea83a8568d1",
+          "qualifiedName": "DragonPixel.Native.SpriteComponent",
+          "schemaVersion": 1,
+          "owner": "native",
+          "enabled": true,
+          "properties": {
+            "dpe.sprite.asset": "builtin://checker",
+            "dpe.sprite.color": { "r": 1.0, "g": 0.3, "b": 0.7, "a": 1.0 }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3466ea8a-d7d4-458c-83ae-cc33291e5c26",
+      "name": "Cube",
+      "parentId": null,
+      "enabled": true,
+      "components": [
+        {
+          "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e",
+          "qualifiedName": "DragonPixel.Native.TransformComponent",
+          "schemaVersion": 2,
+          "owner": "native",
+          "enabled": true,
+          "properties": {
+            "dpe.transform.position": { "x": 1.5, "y": 0.0, "z": 0.0 },
+            "dpe.transform.rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+            "dpe.transform.scale": { "x": 1.5, "y": 1.5, "z": 1.5 }
+          }
+        },
+        {
+          "typeId": "9be44558-78e9-4912-bee5-046b5ad0a410",
+          "qualifiedName": "DragonPixel.Native.StaticMeshComponent",
+          "schemaVersion": 1,
+          "owner": "native",
+          "enabled": true,
+          "properties": { "dpe.mesh.asset": "builtin://unit-cube" }
+        },
+        {
+          "typeId": "90d93631-746a-4f52-9f95-4895e27edf51",
+          "qualifiedName": "DragonPixel.Native.MaterialComponent",
+          "schemaVersion": 1,
+          "owner": "native",
+          "enabled": true,
+          "properties": {
+            "dpe.material.base_color": { "r": 1.0, "g": 0.35, "b": 0.1, "a": 1.0 }
+          }
+        }
+      ]
+    }
+  ]
+})json";
+        QFile snapshot(snapshot_path_);
+        if (!snapshot.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        {
+            return false;
+        }
+        const auto written = snapshot.write(fixture);
+        return written == fixture.size() && snapshot.flush();
     }
 
     QLabel* viewport_{};
@@ -235,6 +346,7 @@ private:
     QProcess* worker_{};
     QTimer frame_timer_;
     QString frame_path_;
+    QString snapshot_path_;
     std::uint64_t last_sequence_{};
     std::uint32_t last_content_{};
     int request_id_{};

@@ -28,8 +28,9 @@ internal static class Program
             var managedManifestJson = GeneratedComponentManifest.Json;
             var metadataSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "component-metadata.schema.json");
             var sceneSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "scene.schema.json");
-            var projectSchemaPath = Path.Combine(repositoryRoot, "schemas", "v1", "project.schema.json");
-            var assetSchemaPath = Path.Combine(repositoryRoot, "schemas", "v1", "asset-metadata.schema.json");
+            var currentSceneSchemaPath = Path.Combine(repositoryRoot, "schemas", "v3", "scene.schema.json");
+            var currentProjectSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "project.schema.json");
+            var currentAssetSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "asset-metadata.schema.json");
 
             ValidateAgainstSchema(metadataSchemaPath, nativeManifestJson, "native manifest");
             ValidateAgainstSchema(metadataSchemaPath, managedManifestJson, "managed generated manifest");
@@ -45,15 +46,15 @@ internal static class Program
             VerifyStableIdRename(scene, nativeManifest, managedManifest);
             VerifyExplicitMigration(scene, sceneSchemaPath);
             ValidateAgainstSchema(
-                sceneSchemaPath,
+                currentSceneSchemaPath,
                 File.ReadAllText(Path.Combine(repositoryRoot, "samples", "Slice1Sample", "Scenes", "Main.dpescene")),
                 "Slice 1 sample scene");
             ValidateAgainstSchema(
-                projectSchemaPath,
+                currentProjectSchemaPath,
                 File.ReadAllText(Path.Combine(repositoryRoot, "samples", "Slice1Sample", "DragonPixelProject.json")),
                 "Slice 1 sample project");
             ValidateAgainstSchema(
-                assetSchemaPath,
+                currentAssetSchemaPath,
                 File.ReadAllText(Path.Combine(repositoryRoot, "samples", "Slice1Sample", "Assets", "dragon.sprite.dpeasset")),
                 "Slice 1 sample sprite metadata");
 

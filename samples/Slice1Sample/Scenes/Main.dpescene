@@ -1,5 +1,5 @@
 {
-  "$schema": "https://dragonpixel.dev/schemas/v2/scene.schema.json",
+  "$schema": "https://dragonpixel.dev/schemas/v3/scene.schema.json",
   "entities": [
     {
       "enabled": true,
@@ -23,6 +23,7 @@
             "dpe.camera.far": 1000.0,
             "dpe.camera.field_of_view": 60.0,
             "dpe.camera.near": 0.1,
+            "dpe.camera.primary": true,
             "dpe.camera.projection": "perspective"
           },
           "qualifiedName": "DragonPixel.Native.CameraComponent",
@@ -32,7 +33,8 @@
       ],
       "id": "6ec98b7a-b71e-4d10-829f-43ecdf87c8f3",
       "name": "Main Camera",
-      "parentId": null
+      "parentId": null,
+      "siblingOrder": 0
     },
     {
       "enabled": true,
@@ -60,11 +62,44 @@
           "qualifiedName": "DragonPixel.Native.SpriteComponent",
           "schemaVersion": 1,
           "typeId": "b527395a-93a5-44f3-8d6c-7ea83a8568d1"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics2d.body_mode": "dynamic",
+            "dpe.physics2d.linear_damping": 0.05,
+            "dpe.physics2d.angular_damping": 0.05,
+            "dpe.physics2d.gravity_scale": 1.0,
+            "dpe.physics2d.initial_velocity": { "x": 0.0, "y": 0.0 },
+            "dpe.physics2d.ccd": true
+          },
+          "qualifiedName": "DragonPixel.Native.RigidBody2DComponent",
+          "schemaVersion": 1,
+          "typeId": "ea23c9e1-2580-4aa9-94a2-96de0c5545ac"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics2d.size": { "x": 1.0, "y": 1.0 },
+            "dpe.physics2d.offset": { "x": 0.0, "y": 0.0 },
+            "dpe.physics.sensor": false,
+            "dpe.physics.density": 1.0,
+            "dpe.physics.friction": 0.6,
+            "dpe.physics.restitution": 0.1,
+            "dpe.physics.layer": 0,
+            "dpe.physics.mask": 65535
+          },
+          "qualifiedName": "DragonPixel.Native.BoxCollider2DComponent",
+          "schemaVersion": 1,
+          "typeId": "edbe79a3-4e97-4440-a23d-05c2d8faa1ca"
         }
       ],
       "id": "e75d033b-bba0-4f8f-8f54-c7a1e6990aef",
       "name": "Dragon Sprite (2D)",
-      "parentId": null
+      "parentId": null,
+      "siblingOrder": 1
     },
     {
       "enabled": true,
@@ -113,11 +148,43 @@
           "qualifiedName": "DragonPixel.Managed.RotatorComponent",
           "schemaVersion": 1,
           "typeId": "ee40709b-2bfc-4d50-b729-8612fb60d478"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics3d.body_mode": "dynamic",
+            "dpe.physics3d.linear_damping": 0.05,
+            "dpe.physics3d.angular_damping": 0.05,
+            "dpe.physics3d.gravity_scale": 1.0,
+            "dpe.physics3d.initial_velocity": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.physics3d.ccd": true
+          },
+          "qualifiedName": "DragonPixel.Native.RigidBody3DComponent",
+          "schemaVersion": 1,
+          "typeId": "1025c21c-34a8-4f64-977b-453d81e402c5"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics3d.size": { "x": 1.0, "y": 1.0, "z": 1.0 },
+            "dpe.physics3d.offset": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.physics.sensor": false,
+            "dpe.physics.friction": 0.6,
+            "dpe.physics.restitution": 0.1,
+            "dpe.physics.layer": 0,
+            "dpe.physics.mask": 65535
+          },
+          "qualifiedName": "DragonPixel.Native.BoxCollider3DComponent",
+          "schemaVersion": 1,
+          "typeId": "bfc9ff93-a892-4c1f-ad8f-f13d8bc1ba38"
         }
       ],
       "id": "3466ea8a-d7d4-458c-83ae-cc33291e5c26",
       "name": "Lit Cube (3D)",
-      "parentId": null
+      "parentId": null,
+      "siblingOrder": 2
     },
     {
       "enabled": true,
@@ -137,7 +204,8 @@
       ],
       "id": "e392922e-ae62-4690-8974-66c3c5954dc7",
       "name": "Key Light",
-      "parentId": null
+      "parentId": null,
+      "siblingOrder": 3
     },
     {
       "enabled": true,
@@ -157,12 +225,149 @@
       ],
       "id": "8c0da630-ed24-49ca-ad8a-a629593c4fbb",
       "name": "Missing Component Example",
-      "parentId": null
+      "parentId": null,
+      "siblingOrder": 4
+    },
+    {
+      "enabled": true,
+      "components": [
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.transform.position": { "x": -2.0, "y": -2.0, "z": 0.0 },
+            "dpe.transform.rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.transform.scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+          },
+          "qualifiedName": "DragonPixel.Native.TransformComponent",
+          "schemaVersion": 2,
+          "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics2d.body_mode": "static",
+            "dpe.physics2d.linear_damping": 0.0,
+            "dpe.physics2d.angular_damping": 0.0,
+            "dpe.physics2d.gravity_scale": 0.0,
+            "dpe.physics2d.initial_velocity": { "x": 0.0, "y": 0.0 },
+            "dpe.physics2d.ccd": false
+          },
+          "qualifiedName": "DragonPixel.Native.RigidBody2DComponent",
+          "schemaVersion": 1,
+          "typeId": "ea23c9e1-2580-4aa9-94a2-96de0c5545ac"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics2d.size": { "x": 8.0, "y": 1.0 },
+            "dpe.physics2d.offset": { "x": 0.0, "y": 0.0 },
+            "dpe.physics.sensor": false,
+            "dpe.physics.density": 1.0,
+            "dpe.physics.friction": 0.7,
+            "dpe.physics.restitution": 0.0,
+            "dpe.physics.layer": 0,
+            "dpe.physics.mask": 65535
+          },
+          "qualifiedName": "DragonPixel.Native.BoxCollider2DComponent",
+          "schemaVersion": 1,
+          "typeId": "edbe79a3-4e97-4440-a23d-05c2d8faa1ca"
+        }
+      ],
+      "id": "4ea2c201-095a-4cc6-92fe-7e650b79353a",
+      "name": "2D Physics Ground",
+      "parentId": null,
+      "siblingOrder": 5
+    },
+    {
+      "enabled": true,
+      "components": [
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.transform.position": { "x": 1.5, "y": -2.0, "z": 0.0 },
+            "dpe.transform.rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.transform.scale": { "x": 6.0, "y": 1.0, "z": 4.0 }
+          },
+          "qualifiedName": "DragonPixel.Native.TransformComponent",
+          "schemaVersion": 2,
+          "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.mesh.asset": "a07de004-0265-4745-b4ee-2a0f1143f28c",
+            "dpe.mesh.material": "builtin://ground-material"
+          },
+          "qualifiedName": "DragonPixel.Native.StaticMeshComponent",
+          "schemaVersion": 1,
+          "typeId": "9be44558-78e9-4912-bee5-046b5ad0a410"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.material.base_color": { "a": 1.0, "b": 0.32, "g": 0.28, "r": 0.24 },
+            "dpe.material.roughness": 0.85
+          },
+          "qualifiedName": "DragonPixel.Native.MaterialComponent",
+          "schemaVersion": 1,
+          "typeId": "90d93631-746a-4f52-9f95-4895e27edf51"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics3d.body_mode": "static",
+            "dpe.physics3d.linear_damping": 0.0,
+            "dpe.physics3d.angular_damping": 0.0,
+            "dpe.physics3d.gravity_scale": 0.0,
+            "dpe.physics3d.initial_velocity": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.physics3d.ccd": false
+          },
+          "qualifiedName": "DragonPixel.Native.RigidBody3DComponent",
+          "schemaVersion": 1,
+          "typeId": "1025c21c-34a8-4f64-977b-453d81e402c5"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.physics3d.size": { "x": 6.0, "y": 1.0, "z": 4.0 },
+            "dpe.physics3d.offset": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "dpe.physics.sensor": false,
+            "dpe.physics.friction": 0.7,
+            "dpe.physics.restitution": 0.0,
+            "dpe.physics.layer": 0,
+            "dpe.physics.mask": 65535
+          },
+          "qualifiedName": "DragonPixel.Native.BoxCollider3DComponent",
+          "schemaVersion": 1,
+          "typeId": "bfc9ff93-a892-4c1f-ad8f-f13d8bc1ba38"
+        }
+      ],
+      "id": "0842eb32-9d7f-48b9-a0a5-cfb95d825b10",
+      "name": "3D Physics Ground",
+      "parentId": null,
+      "siblingOrder": 6
     }
   ],
   "format": "dpe.scene",
-  "formatVersion": 2,
-  "engineVersion": "0.1.0-slice1",
+  "formatVersion": 3,
+  "engineVersion": "0.2.0-slice2",
   "name": "Main",
+  "physicsSettings": {
+    "fixedTimeStepSeconds": 0.016666666666666666,
+    "maxCatchUpTicks": 4,
+    "box2DSolverSubsteps": 4,
+    "joltCollisionSteps": 1,
+    "gravity2D": { "x": 0.0, "y": -9.81 },
+    "gravity3D": { "x": 0.0, "y": -9.81, "z": 0.0 }
+  },
+  "prefabInstances": [],
   "sceneId": "af8ffc47-d69b-4ba9-886a-8b8876dd0ed1"
 }

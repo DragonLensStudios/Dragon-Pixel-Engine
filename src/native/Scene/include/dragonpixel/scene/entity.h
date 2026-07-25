@@ -4,6 +4,7 @@
 #include <dragonpixel/scene/component_record.h>
 
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -16,5 +17,8 @@ struct entity final
     std::optional<core::uuid> parent_id;
     std::vector<component_record> components;
     bool enabled{true};
+    std::uint32_t sibling_order{};
+
+    friend bool operator==(const entity&, const entity&) = default;
 };
 }

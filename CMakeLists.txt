@@ -14,6 +14,9 @@ option(DPE_ENABLE_ASAN "Enable AddressSanitizer for supported native targets" OF
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Portable native modules are static today but are also linked into the public
+# shared C ABI. Make that composition valid in clean Unix and ASan builds.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(DragonPixelWarnings)

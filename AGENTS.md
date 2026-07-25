@@ -19,7 +19,7 @@ Before planning, reviewing, or changing architecture or implementation:
 2. Read the Design and Prompt/Result documents completely.
 3. Confirm their design revision fields match this file.
 
-The current synchronized design revision is `DPE-ARCH-0005`, last reviewed 2026-07-24. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
+The current synchronized design revision is `DPE-ARCH-0007`, last reviewed 2026-07-25. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
 
 The first-structure prompt is immutable historical evidence. The Notes file is a living intake/context record and may receive user-supplied additions, but those additions must be mirrored. Neither file overrides the current Design or Prompt/Result documents.
 
@@ -56,6 +56,7 @@ Implementation progress that does not change architecture should update normal r
 - Store every durable project document, implementation plan, architecture/research result, and substantive generated response as Markdown in both documentation locations.
 - Store every plan under `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Plans` and the repository `docs\Plans` directory. Use the same relative path, filename, and UTF-8/LF bytes in both locations.
 - Create the plan before executing its work, maintain its status, decisions, verification evidence, blockers, and handoff notes while the work proceeds, and mark its final disposition before ending the work item.
+- Before a substantive final response, append the delivered changes, exact verification, remaining blockers, and next handoff to the active mirrored plan or the appropriate mirrored evidence document. The final response must agree with that durable record.
 - Add material to the appropriate existing living document when it belongs there. Otherwise create a descriptive same-named Markdown file in both `C:\Projects\Documentation\Engines\Dragon Pixel Engine` and repository `docs`.
 - A chat response alone is not the durable project record. Record decisions, completed work, verification results, blockers, and meaningful handoff information in the appropriate mirrored Markdown before ending the work item.
 - Keep mirrored filenames and relative organization identical. Use physical files, not links or symlinks.
@@ -85,16 +86,24 @@ Implementation progress that does not change architecture should update normal r
 - Preserve unknown or incompatible component records without data loss.
 - Keep Python/AI external to the real-time loop and behind capabilities, staging, validation, cancellation, and audit logs.
 - Validate Windows, macOS, and Linux from Slice 1. Do not remove a failing platform from the matrix merely to pass a milestone.
+- Production viewport acceptance must use scene-driven MonoGame/KNI graphics-device frames, revision-correlated picking, and input-to-present evidence. Synthetic frames may remain diagnostic fixtures but cannot satisfy a rendering gate.
+- Keep Box2D and Jolt private behind engine-owned physics interfaces and neutral DTO/C ABI batches. Backend handles and runtime state are transient and never serialized.
+- Linked prefab sources, mappings, normalized overrides, and fallbacks are distinct from locally owned entity records. Runtime snapshots flatten provenance, and every prefab write uses validated command and recovery paths.
 
 ## Current Work Boundary
 
-The current phase is Slice 1 cross-platform acceptance. POCs A-D, S1.0, and the local core-editor vertical slice pass on Windows and Ubuntu in Release and native AddressSanitizer configurations. The remaining work is to:
+The active work item is the mirrored plan `Dragon Pixel Engine Functional Editor Slice 1 Closure and Complete Slice 2 Plan.md`. It expands implementation to complete Slice 2 while preserving every original Slice 1 gate.
 
-1. Execute the same Release/AddressSanitizer matrix on macOS 14+ arm64.
-2. Fix any portability or conformance failures without narrowing the supported matrix.
-3. Record macOS evidence, review ADRs 0001-0007, and close the Slice 1 plan only when every acceptance statement has executed three-platform proof.
+Proceed in evidence-backed increments:
 
-Do not begin Slice 2 or claim Unity/KNI production support while the macOS and documented acceptance gates remain open.
+1. Repair the Windows path-with-spaces launcher, absolute frame pacing, and POC B input-to-present instrumentation. macOS currently passes 14 of 15 tests but fails the unchanged 1280×720/30 FPS viewport gate.
+2. Complete POCs E-H and keep the corresponding ADRs Proposed until their three-platform evidence passes.
+3. Implement service-backed document/command/project foundations and real scene-driven framework rendering/picking.
+4. Implement private Box2D/Jolt physics and linked nested prefabs through the accepted contracts.
+5. Complete the Qt Slice 2 hierarchy, typed Inspector, Project Explorer, unified 2D/3D Scene View, workspaces, Console, accessibility, and designer workflows.
+6. Close Slice 1 only with its original three-platform acceptance. Close Slice 2 only when the documented 2D/3D nested-prefab and physics designer scenarios pass without JSON editing.
+
+Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, or broaden into Slice 3 project lifecycle/packaging/Unity work.
 
 ## Repository Practices
 

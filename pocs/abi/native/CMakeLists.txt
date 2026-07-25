@@ -22,6 +22,11 @@ else()
 endif()
 
 add_test(NAME poc_a.native COMMAND dpe_poc_a_native_tests)
+if(WIN32)
+    set_tests_properties(poc_a.native PROPERTIES
+        ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:DragonPixelCAbi>"
+    )
+endif()
 
 find_program(DPE_DOTNET_EXECUTABLE dotnet REQUIRED)
 set(DPE_POC_A_MANAGED_PROJECT

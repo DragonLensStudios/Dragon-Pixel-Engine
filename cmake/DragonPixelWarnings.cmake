@@ -3,6 +3,13 @@ function(dpe_configure_native_target target)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /EHsc)
         if(DPE_ENABLE_ASAN)
             target_compile_options(${target} PRIVATE /fsanitize=address /Zi)
+            # Static third-party libraries (including Jolt) are built by vcpkg
+            # without MSVC STL container annotations. Keep one consistent STL
+            # ABI while retaining address instrumentation for engine targets.
+            target_compile_definitions(${target} PRIVATE
+                _DISABLE_STRING_ANNOTATION
+                _DISABLE_VECTOR_ANNOTATION
+            )
         endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -33,9 +40,17 @@ function(dpe_configure_managed_asan_test test_name)
             message(FATAL_ERROR "Clang ASan shared runtime was not found: ${_dpe_asan_runtime}")
         endif()
 
-        set_tests_properties(${test_name} PROPERTIES
-            ENVIRONMENT "LD_PRELOAD=${_dpe_asan_runtime};ASAN_OPTIONS=detect_leaks=0"
-        )
+        if(ARGC GREATER 1 AND ARGV1 STREQUAL "NATIVE_HOST")
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+                "DPE_ASAN_RUNTIME=${_dpe_asan_runtime}"
+                "ASAN_OPTIONS=detect_leaks=0"
+            )
+        else()
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+                "LD_PRELOAD=${_dpe_asan_runtime}"
+                "ASAN_OPTIONS=detect_leaks=0"
+            )
+        endif()
     elseif(DPE_ENABLE_ASAN AND APPLE)
         set(_dpe_asan_library_name "libclang_rt.asan_osx_dynamic.dylib")
         execute_process(
@@ -48,9 +63,17 @@ function(dpe_configure_managed_asan_test test_name)
             message(FATAL_ERROR "Apple Clang ASan dynamic runtime was not found: ${_dpe_asan_runtime}")
         endif()
 
-        set_tests_properties(${test_name} PROPERTIES
-            ENVIRONMENT
-                "DYLD_INSERT_LIBRARIES=${_dpe_asan_runtime};ASAN_OPTIONS=detect_leaks=0;DPE_ASAN_RUNTIME=${_dpe_asan_runtime}"
-        )
+        if(ARGC GREATER 1 AND ARGV1 STREQUAL "NATIVE_HOST")
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+                "DPE_ASAN_RUNTIME=${_dpe_asan_runtime}"
+                "ASAN_OPTIONS=detect_leaks=0"
+            )
+        else()
+            set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+                "DYLD_INSERT_LIBRARIES=${_dpe_asan_runtime}"
+                "ASAN_OPTIONS=detect_leaks=0"
+                "DPE_ASAN_RUNTIME=${_dpe_asan_runtime}"
+            )
+        endif()
     endif()
 endfunction()

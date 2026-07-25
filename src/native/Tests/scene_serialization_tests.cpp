@@ -8,11 +8,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -22,7 +24,13 @@ using dragonpixel::metadata::runtime_owner;
 using dragonpixel::scene::command;
 using dragonpixel::scene::component_record;
 using dragonpixel::scene::create_entity_command;
+using dragonpixel::scene::create_preset_command;
+using dragonpixel::scene::delete_subtree_command;
+using dragonpixel::scene::duplicate_subtree_command;
+using dragonpixel::scene::entity_id_remap;
+using dragonpixel::scene::entity_preset;
 using dragonpixel::scene::reparent_entity_command;
+using dragonpixel::scene::reorder_entity_command;
 using dragonpixel::scene::scene;
 using dragonpixel::scene::upsert_component_command;
 
@@ -136,12 +144,39 @@ scene create_sample_scene()
     return result;
 }
 
+const component_record* find_component(const dragonpixel::scene::entity& value, std::string_view type_id)
+{
+    const auto found = std::find_if(value.components.begin(), value.components.end(), [&](const auto& item) {
+        return item.type_id == type_id;
+    });
+    return found == value.components.end() ? nullptr : &*found;
+}
+
 void verify_scene_round_trip()
 {
     const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
-    require(registry.size() == 7, "Default metadata registration failed.");
+    require(registry.size() >= 7, "Default metadata registration failed.");
     require(registry.find(dragonpixel::metadata::builtin_component_ids::transform)->schema_version == 2,
         "Transform schema version was wrong.");
+    const auto* camera_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::camera);
+    require(camera_descriptor != nullptr, "Camera metadata registration failed.");
+    const auto primary_property = std::find_if(
+        camera_descriptor->properties.begin(),
+        camera_descriptor->properties.end(),
+        [](const auto& property) { return property.property_id == "dpe.camera.primary"; });
+    require(primary_property != camera_descriptor->properties.end()
+            && primary_property->default_json == "true",
+        "Camera metadata did not provide a valid primary-camera default.");
+    const auto sprite_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::sprite);
+    require(sprite_descriptor != nullptr, "Sprite metadata registration failed.");
+    const auto sprite_asset = std::find_if(
+        sprite_descriptor->properties.begin(),
+        sprite_descriptor->properties.end(),
+        [](const auto& property) { return property.property_id == "dpe.sprite.asset"; });
+    require(sprite_asset != sprite_descriptor->properties.end()
+            && sprite_asset->reference_filter == "sprite"
+            && !sprite_asset->default_json.empty(),
+        "Sprite metadata did not provide its filtered asset-reference contract.");
 
     const auto source = create_sample_scene();
     const auto first_json = dragonpixel::serialization::write_scene_json(source);
@@ -156,10 +191,13 @@ void verify_scene_round_trip()
     require(first_json == second_json, "Scene JSON was not byte-deterministic after reload.");
 
     const auto parsed = nlohmann::ordered_json::parse(second_json);
-    require(parsed.at("$schema") == "https://dragonpixel.dev/schemas/v2/scene.schema.json"
-            && parsed.at("engineVersion") == "0.1.0-slice1"
-            && parsed.at("formatVersion") == 2 && parsed.at("entities").at(1).at("enabled") == true,
-        "Scene v2 enabled-state envelope was not serialized.");
+    require(parsed.at("$schema") == "https://dragonpixel.dev/schemas/v3/scene.schema.json"
+            && parsed.at("engineVersion") == "0.2.0-slice2"
+            && parsed.at("formatVersion") == 3 && parsed.at("entities").at(1).at("enabled") == true
+            && parsed.at("entities").at(1).at("siblingOrder") == 0
+            && parsed.at("physicsSettings").at("maxCatchUpTicks") == 4
+            && parsed.at("prefabInstances").empty(),
+        "Scene v3 ordering/physics/prefab envelope was not serialized.");
     const auto& components = parsed.at("entities").at(1).at("components");
     const auto unknown = std::find_if(components.begin(), components.end(), [](const auto& item) {
         return item.at("typeId") == unknown_component_id;
@@ -174,7 +212,7 @@ void verify_scene_round_trip()
     missing_schema.erase("$schema");
     const auto rejected = dragonpixel::serialization::read_scene_json(missing_schema.dump(), registry);
     require(!rejected.value.has_value() && !rejected.diagnostics.empty(),
-        "Scene v2 without its canonical schema URI was accepted.");
+        "Scene v3 without its canonical schema URI was accepted.");
 }
 
 void verify_component_migration()
@@ -202,13 +240,261 @@ void verify_component_migration()
         })},
     };
     const auto loaded = dragonpixel::serialization::read_scene_json(root.dump(), registry);
-    require(loaded.value.has_value() && loaded.migrations.size() == 2,
-        "Scene/document and Transform migrations did not each run once.");
+    require(loaded.value.has_value() && loaded.migrations.size() == 3,
+        "Scene v1-to-v3 and Transform migrations did not each run once.");
     const auto migrated = nlohmann::ordered_json::parse(dragonpixel::serialization::write_scene_json(*loaded.value));
     const auto& component = migrated.at("entities").at(0).at("components").at(0);
     require(component.at("schemaVersion") == 2, "Migrated component version was not advanced.");
     require(component.at("properties").contains("dpe.transform.position"), "Migrated property ID was missing.");
     require(!component.at("properties").contains("dpe.transform.translation"), "Legacy property ID survived migration.");
+}
+
+void verify_scene_v2_migration_and_v3_preservation()
+{
+    const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
+    auto legacy = nlohmann::ordered_json{
+        {"$schema", "https://dragonpixel.dev/schemas/v2/scene.schema.json"},
+        {"format", "dpe.scene"},
+        {"formatVersion", 2},
+        {"engineVersion", "0.1.0-slice1"},
+        {"sceneId", "20000000-0000-4000-8000-000000000001"},
+        {"name", "Version two"},
+        {"entities", nlohmann::ordered_json::array({
+            {
+                {"id", "20000000-0000-4000-8000-000000000011"},
+                {"name", "First root"},
+                {"parentId", nullptr},
+                {"enabled", true},
+                {"components", nlohmann::ordered_json::array()},
+            },
+            {
+                {"id", "20000000-0000-4000-8000-000000000012"},
+                {"name", "Second root"},
+                {"parentId", nullptr},
+                {"enabled", true},
+                {"components", nlohmann::ordered_json::array()},
+            },
+            {
+                {"id", "20000000-0000-4000-8000-000000000013"},
+                {"name", "Child"},
+                {"parentId", "20000000-0000-4000-8000-000000000011"},
+                {"enabled", true},
+                {"components", nlohmann::ordered_json::array()},
+            },
+        })},
+    };
+    const auto migrated = dragonpixel::serialization::read_scene_json(legacy.dump(), registry);
+    require(migrated.value.has_value() && migrated.migrations.size() == 1,
+        "Scene v2 did not report exactly one document migration to v3.");
+    require(migrated.value->entities()[0].sibling_order == 0
+            && migrated.value->entities()[1].sibling_order == 1
+            && migrated.value->entities()[2].sibling_order == 0,
+        "Scene v2 storage order was not deterministically migrated per parent.");
+
+    auto version_three = nlohmann::ordered_json::parse(
+        dragonpixel::serialization::write_scene_json(*migrated.value));
+    version_three["physicsSettings"]["fixedTimeStepSeconds"] = 0.02;
+    version_three["physicsSettings"]["gravity2D"]["y"] = -12.5;
+    version_three["physicsSettings"]["gravity3D"]["z"] = 1.25;
+    version_three["prefabInstances"] = nlohmann::ordered_json::array({
+        {
+            {"instanceId", "20000000-0000-4000-8000-000000000021"},
+            {"sourceAssetId", "20000000-0000-4000-8000-000000000022"},
+            {"vendorFallback", {{"preserve", true}, {"payload", {1, "two", nullptr}}}},
+        },
+    });
+    const auto loaded = dragonpixel::serialization::read_scene_json(version_three.dump(), registry);
+    require(loaded.value.has_value() && loaded.migrations.empty(), "Valid scene v3 did not load directly.");
+    require(loaded.value->physics_settings().fixed_time_step_seconds == 0.02
+            && loaded.value->physics_settings().gravity_2d.y == -12.5
+            && loaded.value->physics_settings().gravity_3d.z == 1.25,
+        "Scene v3 physics settings changed during load.");
+    require(loaded.value->prefab_instances().at(0).at("vendorFallback").at("preserve") == true,
+        "Opaque linked-prefab fallback data was not retained.");
+    const auto reloaded = dragonpixel::serialization::read_scene_json(
+        dragonpixel::serialization::write_scene_json(*loaded.value), registry);
+    require(reloaded.value.has_value()
+            && reloaded.value->prefab_instances() == loaded.value->prefab_instances(),
+        "Scene v3 prefab instance records did not round-trip losslessly.");
+}
+
+void verify_history_validation_and_presets()
+{
+    scene value{parse_uuid("30000000-0000-4000-8000-000000000001"), "History"};
+    const auto empty_id = parse_uuid("30000000-0000-4000-8000-000000000011");
+    const auto sprite_id = parse_uuid("30000000-0000-4000-8000-000000000012");
+    const std::vector<command> create_presets{
+        create_preset_command{empty_id, "Empty GameObject", entity_preset::empty},
+        create_preset_command{
+            sprite_id,
+            "Sprite GameObject",
+            entity_preset::sprite,
+            std::nullopt,
+            std::nullopt,
+            std::string{"30000000-0000-4000-8000-000000000099"},
+        },
+    };
+
+    value.mark_savepoint();
+    require(!value.is_dirty() && !value.can_undo(), "New scene did not start at a clean savepoint.");
+    const auto preview = value.dry_run_transaction(create_presets);
+    require(preview.succeeded && value.entities().empty() && value.history_size() == 0,
+        "Dry-run validation mutated authoritative scene state or history.");
+    const auto committed = value.apply_transaction(create_presets, "Create two GameObjects");
+    require(committed.succeeded && committed.applied_count == 2
+            && value.history_size() == 1 && value.history_position() == 1 && value.is_dirty(),
+        "Compound preset transaction was not recorded as one dirty history item.");
+    const auto* empty = value.find_entity(empty_id);
+    const auto* sprite = value.find_entity(sprite_id);
+    require(empty != nullptr && sprite != nullptr
+            && find_component(*empty, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
+            && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
+            && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::sprite) != nullptr,
+        "GameObject presets did not include mandatory Transform and preset components.");
+
+    require(value.undo().succeeded && value.entities().empty() && !value.is_dirty() && value.can_redo(),
+        "Undo did not restore the initial clean savepoint for a compound transaction.");
+    require(value.redo().succeeded && value.entities().size() == 2 && value.is_dirty(),
+        "Redo did not restore the complete compound transaction.");
+    value.mark_savepoint();
+    require(!value.is_dirty(), "Marking the current history position as saved did not clear dirty state.");
+
+    const auto original_history_size = value.history_size();
+    require(value.apply(command{dragonpixel::scene::rename_entity_command{empty_id, "Empty GameObject"}}).succeeded
+            && value.history_size() == original_history_size && !value.is_dirty(),
+        "A no-op command incorrectly created history or dirty state.");
+    require(value.apply(command{dragonpixel::scene::rename_entity_command{empty_id, "Renamed"}}).succeeded
+            && value.is_dirty(),
+        "A real edit did not advance dirty history.");
+    require(value.undo().succeeded && !value.is_dirty(), "Undo to the savepoint did not clear dirty state.");
+    require(value.apply(command{dragonpixel::scene::set_entity_enabled_command{empty_id, false}}).succeeded
+            && !value.can_redo() && value.is_dirty(),
+        "A new edit after Undo did not truncate the redo branch.");
+
+    const auto history_before_rejection = value.history_size();
+    const std::vector<command> invalid{
+        dragonpixel::scene::rename_entity_command{empty_id, "Must roll back"},
+        reparent_entity_command{empty_id, parse_uuid("30000000-0000-4000-8000-000000000099")},
+    };
+    require(!value.dry_run_transaction(invalid).succeeded
+            && !value.apply_transaction(invalid).succeeded
+            && value.find_entity(empty_id)->name == "Empty GameObject"
+            && value.history_size() == history_before_rejection,
+        "Rejected validation/transaction leaked state or history.");
+}
+
+void verify_hierarchy_duplicate_and_delete()
+{
+    const auto root_id = parse_uuid("40000000-0000-4000-8000-000000000011");
+    const auto external_id = parse_uuid("40000000-0000-4000-8000-000000000012");
+    const auto child_id = parse_uuid("40000000-0000-4000-8000-000000000013");
+    const auto grandchild_id = parse_uuid("40000000-0000-4000-8000-000000000014");
+    const auto duplicate_root_id = parse_uuid("40000000-0000-4000-8000-000000000021");
+    const auto duplicate_child_id = parse_uuid("40000000-0000-4000-8000-000000000022");
+    const auto duplicate_grandchild_id = parse_uuid("40000000-0000-4000-8000-000000000023");
+    scene value{parse_uuid("40000000-0000-4000-8000-000000000001"), "Hierarchy"};
+
+    require(value.apply(command{create_preset_command{root_id, "Root", entity_preset::empty}}).succeeded
+            && value.apply(command{create_preset_command{external_id, "External", entity_preset::empty}}).succeeded
+            && value.apply(command{create_preset_command{child_id, "Child", entity_preset::empty, root_id}}).succeeded
+            && value.apply(command{create_preset_command{grandchild_id, "Grandchild", entity_preset::empty, child_id}}).succeeded,
+        "Could not build hierarchy fixture.");
+
+    component_record child_rotator{
+        std::string{dragonpixel::metadata::builtin_component_ids::rotator},
+        1,
+        runtime_owner::managed,
+        {{"dpe.rotator.degrees_per_second", 15.0}, {"dpe.rotator.target", grandchild_id.to_string()}},
+        false,
+        nlohmann::ordered_json::object(),
+        true,
+        "DragonPixel.Managed.RotatorComponent",
+    };
+    component_record external_rotator = child_rotator;
+    external_rotator.properties["dpe.rotator.target"] = child_id.to_string();
+    auto opaque_raw = nlohmann::ordered_json{
+        {"typeId", unknown_component_id},
+        {"qualifiedName", "Vendor.Opaque.Reference"},
+        {"schemaVersion", 9},
+        {"owner", "unknown"},
+        {"enabled", true},
+        {"properties", {{"untypedEntity", child_id.to_string()}, {"keep", true}}},
+        {"vendorData", {{"root", root_id.to_string()}}},
+    };
+    component_record opaque{
+        unknown_component_id,
+        9,
+        runtime_owner::native,
+        opaque_raw.at("properties"),
+        true,
+        opaque_raw,
+        true,
+        "Vendor.Opaque.Reference",
+    };
+    require(value.apply(command{upsert_component_command{child_id, child_rotator}}).succeeded
+            && value.apply(command{upsert_component_command{external_id, external_rotator}}).succeeded
+            && value.apply(command{upsert_component_command{grandchild_id, opaque}}).succeeded,
+        "Could not attach duplication/reference fixtures.");
+
+    const auto history_before_invalid_move = value.history_size();
+    require(value.apply(command{reorder_entity_command{external_id, 0}}).succeeded
+            && value.find_entity(external_id)->sibling_order == 0
+            && value.find_entity(root_id)->sibling_order == 1,
+        "Root sibling reorder did not update explicit order.");
+    require(value.apply(command{reparent_entity_command{external_id, root_id, 0}}).succeeded
+            && value.find_entity(external_id)->parent_id == root_id
+            && value.find_entity(external_id)->sibling_order == 0
+            && value.find_entity(child_id)->sibling_order == 1,
+        "Reparent with an explicit sibling insertion point failed.");
+    require(!value.apply(command{reparent_entity_command{root_id, grandchild_id}}).succeeded
+            && value.history_size() == history_before_invalid_move + 2,
+        "Hierarchy cycle rejection changed state or history.");
+    require(value.undo().succeeded && !value.find_entity(external_id)->parent_id
+            && value.find_entity(external_id)->sibling_order == 0,
+        "Undo did not restore reparent and root ordering.");
+
+    const duplicate_subtree_command duplicate{
+        root_id,
+        {
+            entity_id_remap{root_id, duplicate_root_id},
+            entity_id_remap{child_id, duplicate_child_id},
+            entity_id_remap{grandchild_id, duplicate_grandchild_id},
+        },
+    };
+    require(value.apply(command{duplicate}, "Duplicate hierarchy").succeeded,
+        "Subtree duplication with deterministic caller-supplied IDs failed.");
+    const auto* duplicated_root = value.find_entity(duplicate_root_id);
+    const auto* duplicated_child = value.find_entity(duplicate_child_id);
+    const auto* duplicated_grandchild = value.find_entity(duplicate_grandchild_id);
+    require(duplicated_root != nullptr && duplicated_child != nullptr && duplicated_grandchild != nullptr
+            && duplicated_root->name == "Root Copy"
+            && duplicated_child->parent_id == duplicate_root_id
+            && duplicated_grandchild->parent_id == duplicate_child_id,
+        "Duplicated hierarchy identities or parents were incorrect.");
+    const auto* duplicated_rotator = find_component(
+        *duplicated_child, dragonpixel::metadata::builtin_component_ids::rotator);
+    const auto* duplicated_opaque = find_component(*duplicated_grandchild, unknown_component_id);
+    require(duplicated_rotator != nullptr
+            && duplicated_rotator->properties.at("dpe.rotator.target") == duplicate_grandchild_id.to_string(),
+        "Known entity reference values were not remapped inside the duplicated subtree.");
+    require(duplicated_opaque != nullptr && duplicated_opaque->raw_record == opaque_raw,
+        "Opaque component payload was altered while duplicating its entity.");
+
+    const auto before_delete = dragonpixel::serialization::write_scene_json(value);
+    require(value.apply(command{delete_subtree_command{root_id}}, "Delete subtree").succeeded
+            && value.find_entity(root_id) == nullptr
+            && value.find_entity(child_id) == nullptr
+            && value.find_entity(grandchild_id) == nullptr,
+        "Subtree delete did not remove every descendant.");
+    const auto* retained_external = value.find_entity(external_id);
+    const auto* retained_reference = find_component(
+        *retained_external, dragonpixel::metadata::builtin_component_ids::rotator);
+    require(retained_reference != nullptr
+            && retained_reference->properties.at("dpe.rotator.target") == child_id.to_string(),
+        "Subtree delete erased an incoming UUID instead of preserving a repairable dangling reference.");
+    require(value.undo().succeeded
+            && dragonpixel::serialization::write_scene_json(value) == before_delete,
+        "Undo did not restore deleted descendants, opaque payloads, references, and ordering exactly.");
 }
 
 void verify_atomic_transactions()
@@ -239,6 +525,49 @@ void verify_atomic_transactions()
         "Invalid command transaction did not report its rejected operation.");
     require(value.find_entity(child_id)->name == "Transaction committed",
         "Rejected transaction leaked a partial entity rename.");
+
+    const auto before_order = value.find_entity(child_id)->components;
+    require(before_order.size() >= 2, "Component reorder fixture was incomplete.");
+    require(value.apply(command{dragonpixel::scene::reorder_component_command{
+                child_id, before_order.front().type_id, before_order.size() - 1}},
+                "Reorder component").succeeded,
+        "Valid component reorder was rejected.");
+    require(value.find_entity(child_id)->components.back().type_id == before_order.front().type_id,
+        "Component reorder did not move the requested record.");
+    require(value.undo().succeeded && value.find_entity(child_id)->components == before_order,
+        "Undo did not restore exact component ordering and payloads.");
+}
+
+void verify_prefab_instance_command_history()
+{
+    const auto scene_id = parse_uuid("88888888-8888-4888-8888-888888888888");
+    scene value{scene_id, "Prefab command test"};
+    const auto opaque_instances = nlohmann::ordered_json::array({
+        {
+            {"instanceId", "99999999-9999-4999-8999-999999999999"},
+            {"sourceAssetId", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+            {"vendorExtension", {
+                {"opaque", true},
+                {"ordering", nlohmann::ordered_json::array({3, 1, 2})},
+            }},
+        },
+    });
+
+    const auto applied = value.apply(
+        command{dragonpixel::scene::set_prefab_instances_command{opaque_instances}},
+        "Set linked prefab instances");
+    require(applied.succeeded, "Typed prefab instance command was rejected.");
+    require(value.prefab_instances() == opaque_instances && value.is_dirty(),
+        "Typed prefab command did not preserve the complete opaque record.");
+    require(value.undo().succeeded && value.prefab_instances().empty() && !value.is_dirty(),
+        "Undo did not restore the exact prefab before-image and clean savepoint.");
+    require(value.redo().succeeded && value.prefab_instances() == opaque_instances,
+        "Redo did not restore the exact opaque prefab record.");
+
+    const auto rejected = value.apply(command{dragonpixel::scene::set_prefab_instances_command{
+        nlohmann::ordered_json::object()}});
+    require(!rejected.succeeded && value.prefab_instances() == opaque_instances,
+        "A non-array prefab envelope was accepted or mutated state on failure.");
 }
 
 void verify_atomic_save(const std::filesystem::path& root)
@@ -272,10 +601,14 @@ int main(int argc, char* argv[])
         const auto generated_root = std::filesystem::absolute(argv[1]);
         verify_scene_round_trip();
         verify_component_migration();
+        verify_scene_v2_migration_and_v3_preservation();
+        verify_history_validation_and_presets();
+        verify_hierarchy_duplicate_and_delete();
         verify_atomic_transactions();
+        verify_prefab_instance_command_history();
         verify_atomic_save(generated_root);
-        std::cout << "S1 native core passed: commands, hierarchy, metadata, deterministic round trip, "
-                     "opaque preservation, migration, atomic save, and recovery.\n";
+        std::cout << "Native authoring core passed: validated command history, presets, hierarchy, duplication, "
+                     "subtree deletion, deterministic scene v3, opaque preservation, migration, atomic save, and recovery.\n";
         return 0;
     }
     catch (const std::exception& exception)

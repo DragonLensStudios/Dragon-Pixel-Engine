@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v3/scene.schema.json",
+  "title": "Dragon Pixel Engine scene document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "format",
+    "formatVersion",
+    "sceneId",
+    "engineVersion",
+    "physicsSettings",
+    "prefabInstances",
+    "entities"
+  ],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v3/scene.schema.json" },
+    "format": { "const": "dpe.scene" },
+    "formatVersion": { "const": 3 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "sceneId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "physicsSettings": { "$ref": "#/$defs/physicsSettings" },
+    "prefabInstances": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "$defs": {
+    "physicsSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixedTimeStepSeconds",
+        "maxCatchUpTicks",
+        "box2DSolverSubsteps",
+        "joltCollisionSteps",
+        "gravity2D",
+        "gravity3D"
+      ],
+      "properties": {
+        "fixedTimeStepSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "maxCatchUpTicks": { "type": "integer", "minimum": 1 },
+        "box2DSolverSubsteps": { "type": "integer", "minimum": 1 },
+        "joltCollisionSteps": { "type": "integer", "minimum": 1 },
+        "gravity2D": { "$ref": "#/$defs/vector2" },
+        "gravity3D": { "$ref": "#/$defs/vector3" }
+      }
+    },
+    "vector2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "vector3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "parentId", "enabled", "siblingOrder", "components"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "parentId": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "uuid" }
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "siblingOrder": { "type": "integer", "minimum": 0 },
+        "components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/componentRecord" }
+        }
+      }
+    },
+    "componentRecord": {
+      "type": "object",
+      "required": ["typeId", "qualifiedName", "schemaVersion", "owner", "enabled", "properties"],
+      "properties": {
+        "typeId": { "type": "string", "minLength": 1 },
+        "qualifiedName": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "owner": { "enum": ["native", "managed", "unknown"] },
+        "enabled": { "type": "boolean" },
+        "properties": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

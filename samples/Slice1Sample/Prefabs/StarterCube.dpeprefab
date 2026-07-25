@@ -1,0 +1,74 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/prefab.schema.json",
+  "dependencies": [],
+  "engineVersion": "0.2.0-slice2",
+  "entities": [
+    {
+      "components": [
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.transform.position": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "dpe.transform.rotation": {
+              "w": 1.0,
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "dpe.transform.scale": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "qualifiedName": "DragonPixel.Native.TransformComponent",
+          "schemaVersion": 2,
+          "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.mesh.asset": "a07de004-0265-4745-b4ee-2a0f1143f28c",
+            "dpe.mesh.material": "builtin://orange-material"
+          },
+          "qualifiedName": "DragonPixel.Native.StaticMeshComponent",
+          "schemaVersion": 1,
+          "typeId": "9be44558-78e9-4912-bee5-046b5ad0a410"
+        },
+        {
+          "enabled": true,
+          "owner": "native",
+          "properties": {
+            "dpe.material.base_color": {
+              "a": 1.0,
+              "b": 0.15,
+              "g": 0.35,
+              "r": 0.95
+            },
+            "dpe.material.roughness": 0.55
+          },
+          "qualifiedName": "DragonPixel.Native.MaterialComponent",
+          "schemaVersion": 1,
+          "typeId": "90d93631-746a-4f52-9f95-4895e27edf51"
+        }
+      ],
+      "enabled": true,
+      "id": "7d788c59-f40c-4269-8e18-d37e8a15dd55",
+      "name": "Starter Cube Prefab",
+      "parentId": null,
+      "siblingOrder": 0
+    }
+  ],
+  "format": "dpe.prefab",
+  "formatVersion": 1,
+  "prefabId": "6c6bbce5-c992-4230-b45d-1b8836b57e71",
+  "prefabInstances": [],
+  "revision": "9c4802d0e5b9ee5fe6e18215ad828aaad843fc077dad1783e56a684c94316530",
+  "rootEntityId": "7d788c59-f40c-4269-8e18-d37e8a15dd55"
+}

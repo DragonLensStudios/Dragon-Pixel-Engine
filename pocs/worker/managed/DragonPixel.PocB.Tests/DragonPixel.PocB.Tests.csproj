@@ -4,5 +4,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>DragonPixel.PocB.Tests</AssemblyName>
     <RootNamespace>DragonPixel.PocB.Tests</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 </Project>

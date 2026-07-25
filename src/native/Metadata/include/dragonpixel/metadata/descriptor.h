@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,17 @@ struct property_descriptor final
     value_type type{value_type::string};
     std::uint32_t order{};
     bool read_only{};
+    std::string default_json;
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+    std::optional<double> step;
+    std::string units;
+    std::vector<std::string> enum_choices;
+    bool nullable{};
+    std::string reference_filter;
+    std::string category;
+    std::string tooltip;
+    std::string drawer_key;
 };
 
 struct component_descriptor final

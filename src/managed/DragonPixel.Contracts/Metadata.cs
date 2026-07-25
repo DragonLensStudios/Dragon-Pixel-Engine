@@ -59,6 +59,17 @@ public sealed class DpePropertyAttribute : Attribute
     public PropertyValueKind ValueKind { get; }
     public int Order { get; set; }
     public bool ReadOnly { get; set; }
+    public string DefaultJson { get; set; } = string.Empty;
+    public double Minimum { get; set; } = double.NaN;
+    public double Maximum { get; set; } = double.NaN;
+    public double Step { get; set; } = double.NaN;
+    public string Units { get; set; } = string.Empty;
+    public string[] EnumChoices { get; set; } = Array.Empty<string>();
+    public bool Nullable { get; set; }
+    public string ReferenceFilter { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Tooltip { get; set; } = string.Empty;
+    public string DrawerKey { get; set; } = string.Empty;
 }
 
 public sealed class ComponentMetadata
@@ -78,4 +89,15 @@ public sealed class PropertyMetadata
     public PropertyValueKind ValueKind { get; set; }
     public int Order { get; set; }
     public bool ReadOnly { get; set; }
+    public string DefaultJson { get; set; } = string.Empty;
+    public double? Minimum { get; set; }
+    public double? Maximum { get; set; }
+    public double? Step { get; set; }
+    public string Units { get; set; } = string.Empty;
+    public IReadOnlyList<string> EnumChoices { get; set; } = Array.Empty<string>();
+    public bool Nullable { get; set; }
+    public string ReferenceFilter { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Tooltip { get; set; } = string.Empty;
+    public string DrawerKey { get; set; } = string.Empty;
 }

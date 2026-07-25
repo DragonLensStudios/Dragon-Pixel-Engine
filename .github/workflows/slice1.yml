@@ -82,6 +82,15 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.203
+      - name: Bootstrap pinned vcpkg registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          vcpkg_root="$RUNNER_TEMP/vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$vcpkg_root"
+          git -C "$vcpkg_root" checkout 40f3c709db80acf154ac4b17a1f83c564ebd022e
+          "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
       - name: Install Qt for Linux
         if: runner.os == 'Linux'
         uses: jurplel/install-qt-action@v4
@@ -98,10 +107,10 @@ jobs:
           cache: true
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-18-dev ninja-build nlohmann-json3-dev libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-18-dev ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install ninja nlohmann-json
+        run: brew install ninja
       - name: Configure, build, and test
         shell: bash
         run: |
@@ -112,12 +121,10 @@ jobs:
             configure=unix-clang-asan
             build=unix-asan
           fi
-          prefix_path="$QT_ROOT_DIR"
           if [[ '${{ runner.os }}' == 'macOS' ]]; then
             [[ "$(uname -m)" == 'arm64' ]] || { echo "Expected macOS arm64 runner, got $(uname -m)" >&2; exit 1; }
-            prefix_path="$prefix_path;$(brew --prefix nlohmann-json)"
           fi
-          cmake --preset "$configure" -DCMAKE_PREFIX_PATH="$prefix_path"
+          cmake --preset "$configure" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           cmake --build --preset "$build"
           if [[ '${{ runner.os }}' == 'macOS' ]]; then
             "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION

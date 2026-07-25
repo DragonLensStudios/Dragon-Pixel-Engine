@@ -1,6 +1,8 @@
 add_subdirectory(Core)
 add_subdirectory(Metadata)
+add_subdirectory(Physics)
 add_subdirectory(Scene)
 add_subdirectory(Serialization)
+add_subdirectory(Prefab)
 add_subdirectory(CAbi)
 add_subdirectory(Tests)

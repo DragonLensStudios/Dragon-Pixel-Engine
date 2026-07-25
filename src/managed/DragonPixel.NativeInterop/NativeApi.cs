@@ -7,7 +7,7 @@ namespace DragonPixel.NativeInterop;
 public sealed class NativeApiSession
 {
     private const uint AbiMajor = 1;
-    private const uint AbiMinor = 0;
+    private const uint AbiMinor = 1;
     private static readonly object ResolverLock = new();
     private static string? _libraryPath;
     private static nint _libraryHandle;
@@ -46,7 +46,75 @@ public sealed class NativeApiSession
         {
             throw new InvalidOperationException($"Native runtime creation failed with {status}.");
         }
-        return new NativeRuntimeHandle(runtime, _api.DestroyRuntime);
+        return new NativeRuntimeHandle(this, runtime, _api.DestroyRuntime);
+    }
+
+    internal unsafe NativePhysicsWorldHandle CreatePhysicsWorld(
+        NativeRuntimeHandle runtime,
+        DragonPixel.Contracts.ScenePhysicsSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentNullException.ThrowIfNull(settings);
+        if (!Capabilities.HasFlag(DpeCapabilities.PhysicsV1) || _api.AcquirePhysicsApi == 0)
+        {
+            throw new NotSupportedException("The native runtime did not negotiate the physics v1 capability.");
+        }
+
+        var runtimeReference = false;
+        runtime.DangerousAddRef(ref runtimeReference);
+        try
+        {
+            var acquire = (delegate* unmanaged[Cdecl]<ulong, uint, uint, DpePhysicsApiV1*, nuint, DpeStatus>)_api.AcquirePhysicsApi;
+            DpePhysicsApiV1 physicsApi = default;
+            var status = acquire(runtime.Value, 1, 0, &physicsApi, (nuint)sizeof(DpePhysicsApiV1));
+            ThrowIfFailed(status, "acquire physics API");
+            if (physicsApi.StructSize < sizeof(DpePhysicsApiV1) || physicsApi.AbiMajor != 1)
+            {
+                throw new InvalidOperationException("Native physics API returned an incompatible function table.");
+            }
+
+            DpePhysicsWorldSettingsV1 nativeSettings = default;
+            nativeSettings.StructSize = (uint)sizeof(DpePhysicsWorldSettingsV1);
+            nativeSettings.MaximumCatchUpTicks = checked((uint)settings.MaximumCatchUpTicks);
+            nativeSettings.Box2DSolverSubsteps = checked((uint)settings.Box2DSolverSubsteps);
+            nativeSettings.JoltCollisionSteps = checked((uint)settings.JoltCollisionSteps);
+            nativeSettings.FixedTimeStepSeconds = settings.FixedTimeStepSeconds;
+            nativeSettings.Gravity2D[0] = settings.Gravity2D.X;
+            nativeSettings.Gravity2D[1] = settings.Gravity2D.Y;
+            nativeSettings.Gravity3D[0] = settings.Gravity3D.X;
+            nativeSettings.Gravity3D[1] = settings.Gravity3D.Y;
+            nativeSettings.Gravity3D[2] = settings.Gravity3D.Z;
+
+            ulong world = 0;
+            var create = (delegate* unmanaged[Cdecl]<ulong, DpePhysicsWorldSettingsV1*, ulong*, DpeStatus>)physicsApi.CreateWorld;
+            status = create(runtime.Value, &nativeSettings, &world);
+            ThrowIfFailed(status, "create physics world");
+            try
+            {
+                return new NativePhysicsWorldHandle(physicsApi, runtime, world);
+            }
+            catch
+            {
+                var destroy = (delegate* unmanaged[Cdecl]<ulong, DpeStatus>)physicsApi.DestroyWorld;
+                _ = destroy(world);
+                throw;
+            }
+        }
+        finally
+        {
+            if (runtimeReference)
+            {
+                runtime.DangerousRelease();
+            }
+        }
+    }
+
+    private static void ThrowIfFailed(DpeStatus status, string operation)
+    {
+        if (status != DpeStatus.Ok)
+        {
+            throw new InvalidOperationException($"Failed to {operation}: {status}.");
+        }
     }
 
     private static void ConfigureResolver(string nativeLibraryPath)
@@ -89,21 +157,26 @@ public sealed class NativeApiSession
 
 public sealed class NativeRuntimeHandle : SafeHandle
 {
+    private readonly NativeApiSession _session;
     private readonly nint _destroy;
 
-    internal NativeRuntimeHandle(ulong value, nint destroy) : base(IntPtr.Zero, ownsHandle: true)
+    internal NativeRuntimeHandle(NativeApiSession session, ulong value, nint destroy) : base(IntPtr.Zero, ownsHandle: true)
     {
+        _session = session;
         _destroy = destroy;
         SetHandle(unchecked((nint)(long)value));
     }
 
     public override bool IsInvalid => handle == IntPtr.Zero;
+    internal ulong Value => unchecked((ulong)handle.ToInt64());
+
+    public NativePhysicsWorldHandle CreatePhysicsWorld(DragonPixel.Contracts.ScenePhysicsSettings? settings = null) =>
+        _session.CreatePhysicsWorld(this, settings ?? new DragonPixel.Contracts.ScenePhysicsSettings());
 
     protected override unsafe bool ReleaseHandle()
     {
         var destroy = (delegate* unmanaged[Cdecl]<ulong, DpeStatus>)_destroy;
-        var value = unchecked((ulong)handle.ToInt64());
-        return destroy(value) == DpeStatus.Ok;
+        return destroy(Value) == DpeStatus.Ok;
     }
 }
 

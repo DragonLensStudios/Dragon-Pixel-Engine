@@ -9,7 +9,10 @@
 #include <QLocalSocket>
 #include <QObject>
 #include <QProcess>
+#include <QPoint>
+#include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include <cstdint>
@@ -23,12 +26,22 @@ public:
     ~WorkerClient() override;
 
     void start_session(const QString& adapter, const QString& snapshot);
+    void reload_snapshot(const QString& snapshot);
+    void resize_viewport(const QSize& size);
+    void update_viewport(
+        const QJsonObject& camera,
+        const QStringList& selection,
+        std::uint64_t camera_revision,
+        std::uint64_t command_revision);
+    void pick(const QPoint& frame_position);
     void pause();
     void resume();
+    void set_preview_simulation(bool enabled);
     void stop_and_discard();
     void force_crash();
 
     [[nodiscard]] bool has_frame() const noexcept { return last_sequence_ > 0; }
+    [[nodiscard]] const QString& adapter_name() const noexcept { return adapter_; }
     [[nodiscard]] qint64 process_id() const noexcept { return process_id_; }
     [[nodiscard]] int recovery_count() const noexcept { return recovery_count_; }
     [[nodiscard]] bool recovered_after_crash() const noexcept
@@ -38,8 +51,10 @@ public:
 
 signals:
     void frame_ready(const QImage& image);
+    void pick_ready(const QString& entity_id, std::uint64_t frame_revision);
     void status_message(const QString& message);
     void runtime_stopped();
+    void preview_simulation_changed(bool enabled);
 
 private:
     void launch();
@@ -65,6 +80,11 @@ private:
     QString capability_token_;
     QString session_kind_;
     std::uint64_t last_sequence_{};
+    std::uint64_t snapshot_revision_{};
+    std::uint64_t camera_revision_{};
+    std::uint64_t command_revision_{};
+    std::uint64_t input_revision_{};
+    std::uint64_t last_frame_revision_{};
     std::uint64_t lifecycle_generation_{};
     std::uint64_t process_generation_{};
     std::uint64_t frame_process_generation_{};
@@ -72,6 +92,10 @@ private:
     int next_request_id_{};
     int recovery_count_{};
     qint64 process_id_{};
+    QSize viewport_size_{960, 540};
+    QJsonObject cached_camera_;
+    QStringList cached_selection_;
     bool desired_running_{};
     bool shutting_down_{};
+    bool preview_simulation_enabled_{};
 };

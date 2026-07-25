@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -8,22 +10,62 @@ namespace DragonPixel.PocB.Tests;
 
 internal static class Program
 {
-    private const int HeaderSize = 64;
     private const int FrameMagic = 0x46504544;
+    private const int Version1HeaderSize = 64;
+    private const int Version2HeaderSize = 96;
+    private const int LatencySampleCount = 21;
+    private const string SpriteId = "e75d033b-bba0-4f8f-8f54-c7a1e6990aef";
+    private const string CubeId = "3466ea8a-d7d4-458c-83ae-cc33291e5c26";
 
     private static async Task<int> Main(string[] args)
     {
         try
         {
-            if (args.Length != 3)
+            if (args.Length is not (4 or 6)
+                || (args.Length == 6 && args[4] != "--adapter"))
             {
-                throw new ArgumentException("Usage: POC-B tests <MonoGame worker DLL> <KNI worker DLL> <temporary directory>");
+                throw new ArgumentException(
+                    "Usage: POC-B/E tests <MonoGame worker DLL> <KNI worker DLL> <temporary directory> "
+                    + "<native C ABI library> "
+                    + "[--adapter monogame|kni]");
             }
 
             Directory.CreateDirectory(args[2]);
-            await VerifyWorkerAsync("MonoGame", Path.GetFullPath(args[0]), Path.Combine(args[2], "monogame.frame"));
-            await VerifyWorkerAsync("KNI", Path.GetFullPath(args[1]), Path.Combine(args[2], "kni.frame"));
-            Console.WriteLine("POC B passed for MonoGame and KNI workers.");
+            var nativeLibrary = Path.GetFullPath(args[3]);
+            var requestedAdapter = args.Length == 6 ? args[5].ToLowerInvariant() : "both";
+            if (requestedAdapter is not ("both" or "monogame" or "kni"))
+            {
+                throw new ArgumentException("--adapter must be monogame or kni.");
+            }
+            var runs = new List<AdapterRun>();
+            if (requestedAdapter is "both" or "monogame")
+            {
+                runs.Add(await RunIndependentlyAsync(
+                    "MonoGame",
+                    Path.GetFullPath(args[0]),
+                    Path.Combine(args[2], "monogame"),
+                    nativeLibrary));
+            }
+            if (requestedAdapter is "both" or "kni")
+            {
+                runs.Add(await RunIndependentlyAsync(
+                    "KNI",
+                    Path.GetFullPath(args[1]),
+                    Path.Combine(args[2], "kni"),
+                    nativeLibrary));
+            }
+            var failures = runs.Where(static run => run.Exception is not null).ToArray();
+            if (failures.Length != 0)
+            {
+                Console.Error.WriteLine(
+                    $"POC B/E failed for {string.Join(", ", failures.Select(static run => run.Adapter))}; "
+                    + "all adapter runs were recorded independently.");
+                return 1;
+            }
+
+            Console.WriteLine(
+                $"POC B/E passed with scene-driven {string.Join(" and ", runs.Select(static run => run.Adapter))} "
+                + "device frames.");
             return 0;
         }
         catch (Exception exception)
@@ -33,85 +75,716 @@ internal static class Program
         }
     }
 
-    private static async Task VerifyWorkerAsync(string expectedAdapter, string workerDll, string frameFile)
+    private static async Task<AdapterRun> RunIndependentlyAsync(
+        string expectedAdapter,
+        string workerDll,
+        string runDirectory,
+        string nativeLibrary)
     {
+        try
+        {
+            Directory.CreateDirectory(runDirectory);
+            await VerifyWorkerAsync(expectedAdapter, workerDll, runDirectory, nativeLibrary);
+            await VerifyV1CompatibilityAsync(expectedAdapter, workerDll, runDirectory, nativeLibrary);
+            return new AdapterRun(expectedAdapter, null);
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"{expectedAdapter} FAILED:{Environment.NewLine}{exception}");
+            return new AdapterRun(expectedAdapter, exception);
+        }
+    }
+
+    private static async Task VerifyWorkerAsync(
+        string expectedAdapter,
+        string workerDll,
+        string runDirectory,
+        string nativeLibrary)
+    {
+        var frameFile = Path.Combine(runDirectory, "device-v2.frame");
         File.Delete(frameFile);
-        using var worker = StartWorker(workerDll, frameFile);
-        var latency = Stopwatch.StartNew();
-        var handshake = await worker.CallAsync("handshake");
-        latency.Stop();
+        var snapshots = CreateSnapshots(runDirectory);
+        using var worker = StartWorker(
+            workerDll,
+            frameFile,
+            nativeLibrary,
+            frameVersion: 2,
+            width: 1280,
+            height: 720);
+
+        var controlTimer = Stopwatch.StartNew();
+        var handshake = await worker.CallAsync(
+            "handshake",
+            new JsonObject { ["protocolVersion"] = 2 });
+        controlTimer.Stop();
         Assert(handshake["adapter"]!.GetValue<string>() == expectedAdapter, "Worker reported the wrong adapter.");
         Assert(handshake["pixelFormat"]!.GetValue<string>() == "BGRA8", "Worker did not negotiate BGRA8.");
-        Assert(latency.ElapsedMilliseconds < 1000, "Initial control response exceeded one second.");
+        Assert(handshake["frameLayoutVersion"]!.GetValue<int>() == 2, "Worker did not negotiate frame layout v2.");
+        Assert(handshake["frameHeaderSize"]!.GetValue<int>() == Version2HeaderSize, "Frame v2 header size was wrong.");
+        Assert(handshake["sceneDrivenGraphics"]!.GetValue<bool>(), "Worker did not declare scene-driven graphics.");
+        Assert(handshake["idBufferPicking"]!.GetValue<bool>(), "Worker did not negotiate ID-buffer picking.");
+        Assert(handshake["revisionCorrelatedFrames"]!.GetValue<bool>(), "Worker did not negotiate revision correlation.");
+        Assert(
+            handshake["backend"]!.GetValue<string>().Contains(expectedAdapter, StringComparison.Ordinal),
+            "Worker backend diagnostics did not identify the selected adapter.");
+        Assert(controlTimer.ElapsedMilliseconds < 1000, "Initial control response exceeded one second.");
 
         await worker.CallAsync("initialize");
+        await worker.CallAsync(
+            "setViewport",
+            new JsonObject
+            {
+                ["width"] = 1280,
+                ["height"] = 720,
+                ["cameraRevision"] = 1,
+                ["commandRevision"] = 1,
+                ["camera"] = OrthographicCamera(),
+            });
+        await LoadSnapshotAsync(worker, snapshots[1], 1, reload: false);
         await worker.CallAsync("play");
-        var firstFrame = await ReadFrameAfterAsync(frameFile, 0, TimeSpan.FromSeconds(5));
-        Assert(firstFrame.Width == 1280 && firstFrame.Height == 720 && firstFrame.Stride == 5120,
-            "Frame dimensions or stride were invalid.");
-        Assert(firstFrame.PixelFormat == 1 && firstFrame.ContentFlags == 3,
-            "Frame did not declare BGRA8 sprite and static-mesh content.");
-        Assert(firstFrame.DistinctColorEstimate > 5, "Frame did not contain rendered scene variation.");
 
-        await Task.Delay(1500);
-        var warmedFrame = await ReadFrameAfterAsync(frameFile, firstFrame.Sequence, TimeSpan.FromSeconds(3));
-        var rateStart = warmedFrame.Sequence;
-        var rateTimer = Stopwatch.StartNew();
-        await Task.Delay(2000);
-        var rateEnd = await ReadFrameAfterAsync(frameFile, rateStart, TimeSpan.FromSeconds(2));
-        rateTimer.Stop();
-        var framesPerSecond = ((rateEnd.Sequence - rateStart) / 2.0) / rateTimer.Elapsed.TotalSeconds;
+        var spriteFrame = await ReadFrameAfterAsync(frameFile, 0, 1, TimeSpan.FromSeconds(8));
+        Assert(spriteFrame.Width == 1280 && spriteFrame.Height == 720 && spriteFrame.Stride == 5120,
+            "Frame dimensions or stride were invalid.");
+        Assert(spriteFrame.PixelFormat == 1 && spriteFrame.ContentFlags == 1,
+            "Sprite-only snapshot did not produce the expected device-frame content flags.");
+        Assert(spriteFrame.DistinctColorEstimate >= 3, "Device frame did not contain rendered sprite variation.");
+        await AssertPickAsync(worker, 496, 360, spriteFrame.FrameRevision, SpriteId);
+        await AssertStalePickIsRejectedAsync(worker, spriteFrame.FrameRevision);
+
+        await LoadSnapshotAsync(worker, snapshots[2], 2, reload: true);
+        var addedFrame = await ReadFrameAfterAsync(frameFile, spriteFrame.Sequence, 2, TimeSpan.FromSeconds(4));
+        Assert(addedFrame.ContentFlags == 3, "Adding a mesh did not update frame content flags.");
+        Assert(addedFrame.PixelSha256 != spriteFrame.PixelSha256, "Adding a mesh did not change device pixels.");
+        await AssertPickAsync(worker, 784, 360, addedFrame.FrameRevision, CubeId);
+
+        await LoadSnapshotAsync(worker, snapshots[3], 3, reload: true);
+        var movedFrame = await ReadFrameAfterAsync(frameFile, addedFrame.Sequence, 3, TimeSpan.FromSeconds(4));
+        Assert(movedFrame.PixelSha256 != addedFrame.PixelSha256, "Moving the mesh did not change device pixels.");
+        await AssertPickAsync(worker, 640, 360, movedFrame.FrameRevision, CubeId);
+        await AssertPickAsync(worker, 784, 360, movedFrame.FrameRevision, null);
+
+        await LoadSnapshotAsync(worker, snapshots[4], 4, reload: true);
+        var coloredFrame = await ReadFrameAfterAsync(frameFile, movedFrame.Sequence, 4, TimeSpan.FromSeconds(4));
+        Assert(coloredFrame.PixelSha256 != movedFrame.PixelSha256, "Changing material color did not change device pixels.");
+        await AssertPickAsync(worker, 640, 360, coloredFrame.FrameRevision, CubeId);
+
+        await LoadSnapshotAsync(worker, snapshots[5], 5, reload: true);
+        var disabledFrame = await ReadFrameAfterAsync(frameFile, coloredFrame.Sequence, 5, TimeSpan.FromSeconds(4));
+        Assert(disabledFrame.ContentFlags == 1, "Disabling the mesh did not remove mesh content.");
+        Assert(disabledFrame.PixelSha256 != coloredFrame.PixelSha256, "Disabling the mesh did not change device pixels.");
+        await AssertPickAsync(worker, 640, 360, disabledFrame.FrameRevision, null);
+
+        await LoadSnapshotAsync(worker, snapshots[6], 6, reload: true);
+        var enabledFrame = await ReadFrameAfterAsync(frameFile, disabledFrame.Sequence, 6, TimeSpan.FromSeconds(4));
+        Assert(enabledFrame.ContentFlags == 3, "Re-enabling the mesh did not restore mesh content.");
+        await LoadSnapshotAsync(worker, snapshots[7], 7, reload: true);
+        var deletedFrame = await ReadFrameAfterAsync(frameFile, enabledFrame.Sequence, 7, TimeSpan.FromSeconds(4));
+        Assert(deletedFrame.ContentFlags == 1, "Deleting the mesh did not remove mesh content.");
+        Assert(deletedFrame.PixelSha256 != enabledFrame.PixelSha256, "Deleting the mesh did not change device pixels.");
+        await AssertPickAsync(worker, 640, 360, deletedFrame.FrameRevision, null);
+
+        await LoadSnapshotAsync(worker, snapshots[8], 8, reload: true);
+        var colliderBaselineFrame = await ReadFrameAfterAsync(
+            frameFile,
+            deletedFrame.Sequence,
+            8,
+            TimeSpan.FromSeconds(4));
+        Assert(colliderBaselineFrame.ContentFlags == 3,
+            "The collider baseline did not retain its sprite and mesh content flags.");
+        await AssertPickAsync(worker, 496, 360, colliderBaselineFrame.FrameRevision, SpriteId);
+        await AssertPickAsync(worker, 640, 360, colliderBaselineFrame.FrameRevision, CubeId);
+
+        var colliderFrame = colliderBaselineFrame;
+        foreach (var (revision, colliderName) in new[]
+                 {
+                     (9, "BoxCollider2D"),
+                     (10, "CircleCollider2D"),
+                     (11, "BoxCollider3D"),
+                     (12, "SphereCollider3D"),
+                     (13, "all collider kinds"),
+                 })
+        {
+            await LoadSnapshotAsync(worker, snapshots[revision], revision, reload: true);
+            colliderFrame = await ReadFrameAfterAsync(
+                frameFile,
+                colliderFrame.Sequence,
+                revision,
+                TimeSpan.FromSeconds(4));
+            Assert(colliderFrame.ContentFlags == colliderBaselineFrame.ContentFlags,
+                $"{colliderName} overlays incorrectly changed runtime content flags.");
+            Assert(colliderFrame.PixelSha256 != colliderBaselineFrame.PixelSha256,
+                $"Adding {colliderName} did not change Edit-mode device pixels.");
+        }
+        await AssertPickAsync(worker, 496, 360, colliderFrame.FrameRevision, SpriteId);
+        await AssertPickAsync(worker, 640, 360, colliderFrame.FrameRevision, CubeId);
+
+        var resized = await worker.CallAsync(
+            "resizeViewport",
+            new JsonObject
+            {
+                ["width"] = 640,
+                ["height"] = 360,
+                ["cameraRevision"] = 2,
+                ["commandRevision"] = 2,
+            });
+        Assert(resized["width"]!.GetValue<int>() == 640, "Viewport resize was not acknowledged.");
+        var smallFrame = await ReadFrameAfterAsync(
+            frameFile,
+            colliderFrame.Sequence,
+            13,
+            TimeSpan.FromSeconds(4),
+            minimumCameraRevision: 2);
+        Assert(smallFrame.Width == 640 && smallFrame.Height == 360, "Resized frame dimensions were not published.");
+        await worker.CallAsync(
+            "resizeViewport",
+            new JsonObject
+            {
+                ["width"] = 1280,
+                ["height"] = 720,
+                ["cameraRevision"] = 3,
+                ["commandRevision"] = 3,
+            });
+        var fullFrame = await ReadFrameAfterAsync(
+            frameFile,
+            smallFrame.Sequence,
+            13,
+            TimeSpan.FromSeconds(4),
+            minimumCameraRevision: 3);
+        Assert(fullFrame.Width == 1280 && fullFrame.Height == 720, "Full viewport size was not restored.");
+
+        await Task.Delay(750);
+        FrameHeader rateStart;
+        FrameHeader rateEnd;
+        using (var rateReader = new SharedFrameReader(frameFile))
+        {
+            rateStart = await ReadFrameHeaderAfterAsync(
+                rateReader,
+                fullFrame.Sequence,
+                13,
+                TimeSpan.FromSeconds(3));
+            await Task.Delay(2000);
+            rateEnd = await ReadFrameHeaderAfterAsync(
+                rateReader,
+                rateStart.Sequence,
+                13,
+                TimeSpan.FromSeconds(2));
+        }
+        var presentedDuration = TimeSpan.FromTicks(rateEnd.TimestampTicks - rateStart.TimestampTicks);
+        Assert(presentedDuration > TimeSpan.Zero, "Presented-frame timestamps did not advance.");
+        var framesPerSecond = ((rateEnd.Sequence - rateStart.Sequence) / 2.0) / presentedDuration.TotalSeconds;
         var diagnostics = await worker.CallAsync("diagnostics");
         var timings = diagnostics["lastFrameTimingsMs"]!.AsObject();
         var timingSummary =
-            $"adapter {timings["adapter"]!.GetValue<double>():F1} ms, " +
-            $"render {timings["render"]!.GetValue<double>():F1} ms, " +
-            $"publish {timings["publish"]!.GetValue<double>():F1} ms";
+            $"device render/readback {timings["adapter"]!.GetValue<double>():F1} ms, "
+            + $"publish {timings["publish"]!.GetValue<double>():F1} ms";
+        Assert(string.IsNullOrEmpty(diagnostics["renderFault"]!.GetValue<string>()),
+            $"Framework render faulted: {diagnostics["renderFault"]}");
+        Assert(
+            diagnostics["device"]!.GetValue<string>() != "not initialized",
+            "Diagnostics did not identify the actual initialized graphics device.");
         Assert(framesPerSecond >= 30.0,
             $"{expectedAdapter} frame rate was only {framesPerSecond:F1} FPS ({timingSummary}).");
 
-        await worker.CallAsync("pause");
-        await Task.Delay(100);
-        var pausedSequence = ReadFrame(frameFile).Sequence;
-        await Task.Delay(250);
-        Assert(ReadFrame(frameFile).Sequence == pausedSequence, "Pause did not stop frame publication.");
+        var inputToPresentSamples = new double[LatencySampleCount];
+        using (var correlationReader = new SharedFrameReader(frameFile))
+        {
+            for (var index = 0; index < inputToPresentSamples.Length; index++)
+            {
+                var inputRevision = index + 1L;
+                var inputTimestamp = Stopwatch.GetTimestamp();
+                var acknowledgement = await worker.CallAsync(
+                    "viewportInput",
+                    new JsonObject
+                    {
+                        ["inputRevision"] = inputRevision,
+                        ["cameraRevision"] = 3,
+                        ["commandRevision"] = inputRevision + 3,
+                    });
+                Assert(
+                    acknowledgement["inputRevision"]!.GetValue<long>() == inputRevision,
+                    "Worker acknowledged the wrong input revision.");
+                var correlatedFrame = await ReadFrameForInputRevisionAsync(
+                    correlationReader,
+                    inputRevision,
+                    TimeSpan.FromSeconds(2));
+                Assert(correlatedFrame.InputRevision >= inputRevision && correlatedFrame.Sequence > 0,
+                    "Presented frame did not carry the requested input revision.");
+                inputToPresentSamples[index] = Stopwatch.GetElapsedTime(inputTimestamp).TotalMilliseconds;
+            }
+        }
 
-        await worker.CallAsync("resume");
-        var resumed = await ReadFrameAfterAsync(frameFile, pausedSequence, TimeSpan.FromSeconds(2));
-        await worker.CallAsync("stop");
-        await Task.Delay(100);
-        var stoppedSequence = ReadFrame(frameFile).Sequence;
-        await Task.Delay(250);
-        Assert(ReadFrame(frameFile).Sequence == stoppedSequence, "Stop did not stop frame publication.");
-        Assert(resumed.Sequence > pausedSequence, "Resume did not restart frame publication.");
+        Array.Sort(inputToPresentSamples);
+        var medianInputToPresentMilliseconds = inputToPresentSamples[inputToPresentSamples.Length / 2];
+        Assert(medianInputToPresentMilliseconds < 100.0,
+            $"{expectedAdapter} median input-to-present latency was "
+            + $"{medianInputToPresentMilliseconds:F1} ms, above the 100 ms gate.");
 
-        await worker.CallAsync("play");
-        await ReadFrameAfterAsync(frameFile, stoppedSequence, TimeSpan.FromSeconds(2));
+        var postLatencyDiagnostics = await worker.CallAsync("diagnostics");
+        Assert(
+            postLatencyDiagnostics["presentedInputRevision"]!.GetValue<long>() == LatencySampleCount,
+            "Worker diagnostics did not retain the last presented input revision.");
+
+        long stoppedSequence;
+        using (var lifecycleReader = new SharedFrameReader(frameFile))
+        {
+            await worker.CallAsync("pause");
+            await Task.Delay(100);
+            var pausedFrame = lifecycleReader.ReadHeader();
+            var pausedSequence = pausedFrame.Sequence;
+            await AssertPickTimeoutIsStructuredAsync(worker, pausedFrame.FrameRevision + 1_000_000);
+            await AssertPickAsync(worker, 496, 360, pausedFrame.FrameRevision, SpriteId);
+            await Task.Delay(250);
+            Assert(lifecycleReader.ReadHeader().Sequence == pausedSequence, "Pause did not stop frame publication.");
+
+            await worker.CallAsync("resume");
+            var resumed = await ReadFrameHeaderAfterAsync(
+                lifecycleReader,
+                pausedSequence,
+                13,
+                TimeSpan.FromSeconds(2));
+            await worker.CallAsync("stop");
+            await Task.Delay(100);
+            stoppedSequence = lifecycleReader.ReadHeader().Sequence;
+            await Task.Delay(250);
+            Assert(lifecycleReader.ReadHeader().Sequence == stoppedSequence, "Stop did not stop frame publication.");
+            Assert(resumed.Sequence > pausedSequence, "Resume did not restart frame publication.");
+
+            await worker.CallAsync("play");
+            await ReadFrameHeaderAfterAsync(
+                lifecycleReader,
+                stoppedSequence,
+                13,
+                TimeSpan.FromSeconds(2));
+        }
         var firstProcessId = worker.ProcessId;
         await worker.CallAsync("crash");
         await worker.WaitForExitAsync(TimeSpan.FromSeconds(5));
         Assert(worker.ExitCode == 86, "Forced worker crash did not cross the process boundary.");
 
         var recoveryTimer = Stopwatch.StartNew();
-        using var restarted = StartWorker(workerDll, frameFile);
-        var restartedHandshake = await restarted.CallAsync("handshake");
+        File.Delete(frameFile);
+        using var restarted = StartWorker(
+            workerDll,
+            frameFile,
+            nativeLibrary,
+            frameVersion: 2,
+            width: 1280,
+            height: 720);
+        var restartedHandshake = await restarted.CallAsync(
+            "handshake",
+            new JsonObject { ["protocolVersion"] = 2 });
         Assert(restartedHandshake["adapter"]!.GetValue<string>() == expectedAdapter,
             "Restarted worker reported the wrong adapter.");
         Assert(restarted.ProcessId != firstProcessId, "Crash recovery reused the terminated process.");
+        await LoadSnapshotAsync(restarted, snapshots[1], 1, reload: false);
         await restarted.CallAsync("play");
-        await ReadFrameAfterAsync(frameFile, 0, TimeSpan.FromSeconds(5));
+        await ReadFrameAfterAsync(frameFile, 0, 1, TimeSpan.FromSeconds(8));
         recoveryTimer.Stop();
-        Assert(recoveryTimer.Elapsed < TimeSpan.FromSeconds(5), "Worker crash recovery exceeded five seconds.");
+        Assert(recoveryTimer.Elapsed < TimeSpan.FromSeconds(8), "Worker crash recovery exceeded eight seconds.");
         await restarted.CallAsync("shutdown");
         await restarted.WaitForExitAsync(TimeSpan.FromSeconds(5));
         Assert(restarted.ExitCode == 0, "Worker did not shut down cleanly.");
 
         Console.WriteLine(
-            $"{expectedAdapter}: {framesPerSecond:F1} FPS, control {latency.Elapsed.TotalMilliseconds:F1} ms, " +
-            $"crash recovery {recoveryTimer.Elapsed.TotalMilliseconds:F1} ms, {timingSummary}.");
+            $"{expectedAdapter}: real scene-driven frames, {framesPerSecond:F1} FPS, median input-to-present "
+            + $"{medianInputToPresentMilliseconds:F1} ms, control {controlTimer.Elapsed.TotalMilliseconds:F1} ms, "
+            + $"crash recovery {recoveryTimer.Elapsed.TotalMilliseconds:F1} ms, {timingSummary}, "
+            + $"backend {diagnostics["backend"]}, device {diagnostics["device"]}.");
     }
 
-    private static WorkerProcess StartWorker(string workerDll, string frameFile)
+    private static async Task VerifyV1CompatibilityAsync(
+        string expectedAdapter,
+        string workerDll,
+        string runDirectory,
+        string nativeLibrary)
+    {
+        var frameFile = Path.Combine(runDirectory, "compat-v1.frame");
+        File.Delete(frameFile);
+        var snapshot = Path.Combine(runDirectory, "snapshot-1.dpescene");
+        using var worker = StartWorker(
+            workerDll,
+            frameFile,
+            nativeLibrary,
+            frameVersion: 1,
+            width: 320,
+            height: 180);
+        var handshake = await worker.CallAsync("handshake");
+        Assert(handshake["protocolVersion"]!.GetValue<int>() == 1, "Protocol v1 handshake regressed.");
+        Assert(handshake["frameLayoutVersion"]!.GetValue<int>() == 1, "Frame layout v1 handshake regressed.");
+        Assert(handshake["frameHeaderSize"]!.GetValue<int>() == Version1HeaderSize, "Frame layout v1 header changed.");
+        Assert(handshake["adapter"]!.GetValue<string>() == expectedAdapter, "v1 adapter identity regressed.");
+        await LoadSnapshotAsync(worker, snapshot, 1, reload: false);
+        await worker.CallAsync("play");
+        var frame = await ReadFrameAfterAsync(frameFile, 0, 0, TimeSpan.FromSeconds(8));
+        Assert(frame.Version == 1 && frame.Width == 320 && frame.Height == 180,
+            "A v1 client could not read the legacy shared-frame prefix.");
+        await worker.CallAsync("shutdown");
+        await worker.WaitForExitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static Dictionary<int, string> CreateSnapshots(string directory)
+    {
+        var configurations = new[]
+        {
+            new SnapshotConfiguration(1, IncludeCube: false, CubeEnabled: false, CubeX: 2, CubeColor: "red"),
+            new SnapshotConfiguration(2, IncludeCube: true, CubeEnabled: true, CubeX: 2, CubeColor: "red"),
+            new SnapshotConfiguration(3, IncludeCube: true, CubeEnabled: true, CubeX: 0, CubeColor: "red"),
+            new SnapshotConfiguration(4, IncludeCube: true, CubeEnabled: true, CubeX: 0, CubeColor: "green"),
+            new SnapshotConfiguration(5, IncludeCube: true, CubeEnabled: false, CubeX: 0, CubeColor: "green"),
+            new SnapshotConfiguration(6, IncludeCube: true, CubeEnabled: true, CubeX: 0, CubeColor: "blue"),
+            new SnapshotConfiguration(7, IncludeCube: false, CubeEnabled: false, CubeX: 0, CubeColor: "blue"),
+            new SnapshotConfiguration(
+                8,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true),
+            new SnapshotConfiguration(
+                9,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true,
+                IncludeBox2D: true),
+            new SnapshotConfiguration(
+                10,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true,
+                IncludeCircle2D: true),
+            new SnapshotConfiguration(
+                11,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true,
+                IncludeBox3D: true),
+            new SnapshotConfiguration(
+                12,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true,
+                IncludeSphere3D: true),
+            new SnapshotConfiguration(
+                13,
+                IncludeCube: true,
+                CubeEnabled: true,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeColliderFixture: true,
+                IncludeBox2D: true,
+                IncludeCircle2D: true,
+                IncludeBox3D: true,
+                IncludeSphere3D: true),
+        };
+        var paths = new Dictionary<int, string>();
+        foreach (var configuration in configurations)
+        {
+            var path = Path.Combine(directory, $"snapshot-{configuration.Revision}.dpescene");
+            File.WriteAllText(path, CreateSnapshot(configuration), new UTF8Encoding(false));
+            paths[configuration.Revision] = path;
+        }
+        return paths;
+    }
+
+    private static string CreateSnapshot(SnapshotConfiguration configuration)
+    {
+        var color = configuration.CubeColor switch
+        {
+            "green" => "{ \"r\": 0.1, \"g\": 0.95, \"b\": 0.2, \"a\": 1.0 }",
+            "blue" => "{ \"r\": 0.15, \"g\": 0.3, \"b\": 1.0, \"a\": 1.0 }",
+            _ => "{ \"r\": 1.0, \"g\": 0.15, \"b\": 0.1, \"a\": 1.0 }",
+        };
+        var box2D = configuration.IncludeBox2D
+            ? """
+                ,{
+                  "typeId": "edbe79a3-4e97-4440-a23d-05c2d8faa1ca",
+                  "qualifiedName": "DragonPixel.Native.BoxCollider2DComponent",
+                  "schemaVersion": 1,
+                  "owner": "native",
+                  "enabled": true,
+                  "properties": {
+                    "dpe.physics2d.size": { "x": 2.0, "y": 1.5 },
+                    "dpe.physics2d.offset": { "x": 0.15, "y": 0.0 },
+                    "dpe.physics.sensor": false
+                  }
+                }
+                """
+            : string.Empty;
+        var circle2D = configuration.IncludeCircle2D
+            ? """
+                ,{
+                  "typeId": "aee65743-286c-431e-8aaf-321cac47eaa1",
+                  "qualifiedName": "DragonPixel.Native.CircleCollider2DComponent",
+                  "schemaVersion": 1,
+                  "owner": "native",
+                  "enabled": true,
+                  "properties": {
+                    "dpe.physics2d.radius": 0.85,
+                    "dpe.physics2d.offset": { "x": -0.15, "y": 0.15 },
+                    "dpe.physics.sensor": true
+                  }
+                }
+                """
+            : string.Empty;
+        var box3D = configuration.IncludeBox3D
+            ? """
+                ,{
+                  "typeId": "bfc9ff93-a892-4c1f-ad8f-f13d8bc1ba38",
+                  "qualifiedName": "DragonPixel.Native.BoxCollider3DComponent",
+                  "schemaVersion": 1,
+                  "owner": "native",
+                  "enabled": true,
+                  "properties": {
+                    "dpe.physics3d.size": { "x": 1.4, "y": 1.4, "z": 1.4 },
+                    "dpe.physics3d.offset": { "x": 0.15, "y": 0.0, "z": 0.0 },
+                    "dpe.physics.sensor": false
+                  }
+                }
+                """
+            : string.Empty;
+        var sphere3D = configuration.IncludeSphere3D
+            ? """
+                ,{
+                  "typeId": "11f84a3a-b568-4107-ad02-c53a86e50971",
+                  "qualifiedName": "DragonPixel.Native.SphereCollider3DComponent",
+                  "schemaVersion": 1,
+                  "owner": "native",
+                  "enabled": true,
+                  "properties": {
+                    "dpe.physics3d.radius": 0.7,
+                    "dpe.physics3d.offset": { "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "dpe.physics.sensor": true
+                  }
+                }
+                """
+            : string.Empty;
+        var cube = configuration.IncludeCube
+            ? $$"""
+                ,{
+                  "id": "{{CubeId}}",
+                  "name": "POC E Cube",
+                  "parentId": null,
+                  "enabled": {{configuration.CubeEnabled.ToString().ToLowerInvariant()}},
+                  "components": [
+                    {
+                      "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e",
+                      "qualifiedName": "DragonPixel.Native.TransformComponent",
+                      "schemaVersion": 2,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": {
+                        "dpe.transform.position": { "x": {{configuration.CubeX}}, "y": 0.0, "z": 0.0 },
+                        "dpe.transform.rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+                        "dpe.transform.scale": { "x": 1.5, "y": 1.5, "z": 1.5 }
+                      }
+                    },
+                    {
+                      "typeId": "9be44558-78e9-4912-bee5-046b5ad0a410",
+                      "qualifiedName": "DragonPixel.Native.StaticMeshComponent",
+                      "schemaVersion": 1,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": { "dpe.mesh.asset": "builtin://unit-cube" }
+                    },
+                    {
+                      "typeId": "90d93631-746a-4f52-9f95-4895e27edf51",
+                      "qualifiedName": "DragonPixel.Native.MaterialComponent",
+                      "schemaVersion": 1,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": { "dpe.material.base_color": {{color}} }
+                    }
+                    {{box3D}}
+                  ]
+                }
+                """
+            : string.Empty;
+        var colliderFixture = configuration.IncludeColliderFixture
+            ? $$"""
+                ,{
+                  "id": "6d52666e-98c1-4079-b3f1-2255f36b3528",
+                  "name": "POC E Sphere Collider",
+                  "parentId": null,
+                  "enabled": true,
+                  "components": [
+                    {
+                      "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e",
+                      "qualifiedName": "DragonPixel.Native.TransformComponent",
+                      "schemaVersion": 2,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": {
+                        "dpe.transform.position": { "x": 2.0, "y": 1.5, "z": 0.0 },
+                        "dpe.transform.rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+                        "dpe.transform.scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+                      }
+                    }
+                    {{sphere3D}}
+                  ]
+                }
+                """
+            : string.Empty;
+        return $$"""
+            {
+              "$schema": "https://dragonpixel.dev/schemas/v2/scene.schema.json",
+              "format": "dpe.scene",
+              "formatVersion": 2,
+              "engineVersion": "0.2.0-poc-e",
+              "snapshotRevision": {{configuration.Revision}},
+              "sceneId": "af8ffc47-d69b-4ba9-886a-8b8876dd0ed1",
+              "name": "POC E Scene",
+              "entities": [
+                {
+                  "id": "{{SpriteId}}",
+                  "name": "POC E Sprite",
+                  "parentId": null,
+                  "enabled": true,
+                  "components": [
+                    {
+                      "typeId": "52e52fbd-ea15-40c5-bd9a-7dd320f7cd1e",
+                      "qualifiedName": "DragonPixel.Native.TransformComponent",
+                      "schemaVersion": 2,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": {
+                        "dpe.transform.position": { "x": -2.0, "y": 0.0, "z": 0.0 },
+                        "dpe.transform.rotation": { "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0 },
+                        "dpe.transform.scale": { "x": 1.0, "y": 1.0, "z": 1.0 }
+                      }
+                    },
+                    {
+                      "typeId": "b527395a-93a5-44f3-8d6c-7ea83a8568d1",
+                      "qualifiedName": "DragonPixel.Native.SpriteComponent",
+                      "schemaVersion": 1,
+                      "owner": "native",
+                      "enabled": true,
+                      "properties": {
+                        "dpe.sprite.asset": "builtin://checker",
+                        "dpe.sprite.color": { "r": 1.0, "g": 0.3, "b": 0.7, "a": 1.0 },
+                        "dpe.sprite.layer": 0
+                      }
+                    }
+                    {{box2D}}
+                    {{circle2D}}
+                  ]
+                }
+                {{cube}}
+                {{colliderFixture}}
+              ]
+            }
+            """;
+    }
+
+    private static JsonObject OrthographicCamera() => new()
+    {
+        ["orthographic"] = true,
+        ["position"] = new JsonArray(0.0, 0.0, 10.0),
+        ["target"] = new JsonArray(0.0, 0.0, 0.0),
+        ["orthographicSize"] = 10.0,
+        ["fieldOfViewDegrees"] = 60.0,
+    };
+
+    private static async Task LoadSnapshotAsync(
+        WorkerProcess worker,
+        string path,
+        long revision,
+        bool reload)
+    {
+        var result = await worker.CallAsync(
+            reload ? "reloadSnapshot" : "loadSnapshot",
+            new JsonObject
+            {
+                ["snapshotPath"] = path,
+                ["snapshotRevision"] = revision,
+            });
+        Assert(result["snapshotRevision"]!.GetValue<long>() == revision, "Snapshot revision was not acknowledged.");
+    }
+
+    private static async Task AssertPickAsync(
+        WorkerProcess worker,
+        int x,
+        int y,
+        long minimumFrameRevision,
+        string? expectedEntityId)
+    {
+        var pick = await worker.CallAsync(
+            "pick",
+            new JsonObject
+            {
+                ["x"] = x,
+                ["y"] = y,
+                ["minimumFrameRevision"] = minimumFrameRevision,
+            });
+        var actual = pick["entityId"]?.GetValue<string>();
+        Assert(actual == expectedEntityId,
+            $"Picking ({x}, {y}) returned {actual ?? "nothing"}; expected {expectedEntityId ?? "nothing"}.");
+    }
+
+    private static async Task AssertStalePickIsRejectedAsync(
+        WorkerProcess worker,
+        long retainedFrameRevision)
+    {
+        try
+        {
+            await worker.CallAsync(
+                "pick",
+                new JsonObject
+                {
+                    ["x"] = 496,
+                    ["y"] = 360,
+                    ["minimumFrameRevision"] = retainedFrameRevision,
+                    ["snapshotRevision"] = 2,
+                    ["cameraRevision"] = 1,
+                    ["commandRevision"] = 1,
+                });
+            throw new InvalidOperationException("A pick against a stale retained snapshot was accepted.");
+        }
+        catch (InvalidOperationException exception) when (
+            exception.Message.Contains("-32020", StringComparison.Ordinal))
+        {
+            // The worker must reject a target that predates the requested snapshot revision.
+        }
+    }
+
+    private static async Task AssertPickTimeoutIsStructuredAsync(
+        WorkerProcess worker,
+        long unreachableFrameRevision)
+    {
+        try
+        {
+            await worker.CallAsync(
+                "pick",
+                new JsonObject
+                {
+                    ["x"] = 496,
+                    ["y"] = 360,
+                    ["minimumFrameRevision"] = unreachableFrameRevision,
+                });
+            throw new InvalidOperationException("An unreachable paused pick revision unexpectedly succeeded.");
+        }
+        catch (InvalidOperationException exception) when (
+            exception.Message.Contains("-32021", StringComparison.Ordinal))
+        {
+            // The timed-out queue entry must be skipped so the next valid paused pick can complete.
+        }
+    }
+
+    private static WorkerProcess StartWorker(
+        string workerDll,
+        string frameFile,
+        string nativeLibrary,
+        int frameVersion,
+        int width,
+        int height)
     {
         var startInfo = new ProcessStartInfo
         {
@@ -122,13 +795,19 @@ internal static class Program
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        startInfo.ArgumentList.Add(workerDll);
-        startInfo.ArgumentList.Add("--frame-file");
-        startInfo.ArgumentList.Add(frameFile);
-        startInfo.ArgumentList.Add("--width");
-        startInfo.ArgumentList.Add("1280");
-        startInfo.ArgumentList.Add("--height");
-        startInfo.ArgumentList.Add("720");
+        foreach (var argument in new[]
+                 {
+                     workerDll,
+                      "--frame-file", frameFile,
+                      "--native", nativeLibrary,
+                     "--frame-version", frameVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     "--width", width.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     "--height", height.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     "--session", "preview",
+                 })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
         return new WorkerProcess(Process.Start(startInfo)
             ?? throw new InvalidOperationException("Could not launch worker."));
     }
@@ -136,6 +815,53 @@ internal static class Program
     private static async Task<FrameSnapshot> ReadFrameAfterAsync(
         string path,
         long sequence,
+        long minimumSnapshotRevision,
+        TimeSpan timeout,
+        long minimumCameraRevision = 0)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        Exception? lastError = null;
+        SharedFrameReader? reader = null;
+        try
+        {
+            while (stopwatch.Elapsed < timeout)
+            {
+                try
+                {
+                    reader ??= new SharedFrameReader(path);
+                    var header = reader.ReadHeader();
+                    if (header.Sequence > sequence
+                        && header.SnapshotRevision >= minimumSnapshotRevision
+                        && header.CameraRevision >= minimumCameraRevision)
+                    {
+                        var frame = reader.ReadFrame();
+                        if (frame.Sequence > sequence
+                            && frame.SnapshotRevision >= minimumSnapshotRevision
+                            && frame.CameraRevision >= minimumCameraRevision)
+                        {
+                            return frame;
+                        }
+                    }
+                }
+                catch (IOException exception)
+                {
+                    lastError = exception;
+                }
+                await Task.Delay(1);
+            }
+        }
+        finally
+        {
+            reader?.Dispose();
+        }
+        throw new TimeoutException(
+            $"No new stable frame for snapshot revision {minimumSnapshotRevision} appeared in {timeout}.",
+            lastError);
+    }
+
+    private static async Task<FrameHeader> ReadFrameForInputRevisionAsync(
+        SharedFrameReader reader,
+        long inputRevision,
         TimeSpan timeout)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -144,75 +870,51 @@ internal static class Program
         {
             try
             {
-                var frame = ReadFrame(path);
-                if (frame.Sequence > sequence && (frame.Sequence & 1) == 0)
+                var header = reader.ReadHeader();
+                if (header.InputRevision >= inputRevision)
                 {
-                    return frame;
+                    return header;
                 }
             }
             catch (IOException exception)
             {
                 lastError = exception;
             }
-
             await Task.Delay(1);
         }
-
-        throw new TimeoutException($"No new stable frame appeared in {timeout}.", lastError);
+        throw new TimeoutException($"No stable frame correlated input revision {inputRevision} in {timeout}.", lastError);
     }
 
-    private static FrameSnapshot ReadFrame(string path)
+    private static async Task<FrameHeader> ReadFrameHeaderAfterAsync(
+        SharedFrameReader reader,
+        long sequence,
+        long minimumSnapshotRevision,
+        TimeSpan timeout,
+        long minimumCameraRevision = 0)
     {
-        using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
-        using var mapping = MemoryMappedFile.CreateFromFile(
-            stream,
-            mapName: null,
-            capacity: 0,
-            MemoryMappedFileAccess.Read,
-            HandleInheritability.None,
-            leaveOpen: false);
-        using var view = mapping.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-        var sequenceBefore = view.ReadInt64(24);
-        if ((sequenceBefore & 1) != 0)
+        var stopwatch = Stopwatch.StartNew();
+        Exception? lastError = null;
+        while (stopwatch.Elapsed < timeout)
         {
-            throw new IOException("Shared frame is currently being written.");
+            try
+            {
+                var header = reader.ReadHeader();
+                if (header.Sequence > sequence
+                    && header.SnapshotRevision >= minimumSnapshotRevision
+                    && header.CameraRevision >= minimumCameraRevision)
+                {
+                    return header;
+                }
+            }
+            catch (IOException exception)
+            {
+                lastError = exception;
+            }
+            await Task.Delay(1);
         }
-
-        Thread.MemoryBarrier();
-        var magic = view.ReadInt32(0);
-        var version = view.ReadInt32(4);
-        var width = view.ReadInt32(8);
-        var height = view.ReadInt32(12);
-        var stride = view.ReadInt32(16);
-        var format = view.ReadInt32(20);
-        var contentFlags = view.ReadInt32(40);
-        var pixels = new byte[checked(stride * height)];
-        var bytesRead = view.ReadArray(HeaderSize, pixels, 0, pixels.Length);
-        Thread.MemoryBarrier();
-        var sequenceAfter = view.ReadInt64(24);
-        if (bytesRead != pixels.Length)
-        {
-            throw new IOException("Shared frame pixel payload was incomplete.");
-        }
-
-        if (magic != FrameMagic || version != 1 || sequenceBefore != sequenceAfter || (sequenceAfter & 1) != 0)
-        {
-            throw new IOException("Shared frame was unavailable or changed while being read.");
-        }
-
-        var colors = new HashSet<int>();
-        var samplingStep = Math.Max(4, pixels.Length / 2048);
-        samplingStep -= samplingStep % 4;
-        for (var index = 0; index + 3 < pixels.Length; index += samplingStep)
-        {
-            colors.Add(BinaryPrimitives.ReadInt32LittleEndian(pixels.AsSpan(index, 4)));
-        }
-
-        return new FrameSnapshot(width, height, stride, format, sequenceAfter, contentFlags, colors.Count);
+        throw new TimeoutException(
+            $"No new stable frame header for snapshot revision {minimumSnapshotRevision} appeared in {timeout}.",
+            lastError);
     }
 
     private static void Assert(bool condition, string message)
@@ -223,14 +925,183 @@ internal static class Program
         }
     }
 
+    private sealed record SnapshotConfiguration(
+        int Revision,
+        bool IncludeCube,
+        bool CubeEnabled,
+        float CubeX,
+        string CubeColor,
+        bool IncludeColliderFixture = false,
+        bool IncludeBox2D = false,
+        bool IncludeCircle2D = false,
+        bool IncludeBox3D = false,
+        bool IncludeSphere3D = false);
+
     private sealed record FrameSnapshot(
+        int Version,
         int Width,
         int Height,
         int Stride,
         int PixelFormat,
         long Sequence,
         int ContentFlags,
-        int DistinctColorEstimate);
+        int DistinctColorEstimate,
+        string PixelSha256,
+        long InputRevision,
+        long FrameRevision,
+        long SnapshotRevision,
+        long CameraRevision,
+        long CommandRevision);
+
+    private sealed record AdapterRun(string Adapter, Exception? Exception);
+    private sealed record FrameHeader(
+        long Sequence,
+        long TimestampTicks,
+        long InputRevision,
+        long FrameRevision,
+        long SnapshotRevision,
+        long CameraRevision,
+        long CommandRevision);
+
+    private sealed unsafe class SharedFrameReader : IDisposable
+    {
+        private readonly FileStream _stream;
+        private readonly MemoryMappedFile _mapping;
+        private readonly MemoryMappedViewAccessor _view;
+        private readonly byte* _viewPointer;
+        private byte[] _pixels = Array.Empty<byte>();
+
+        public SharedFrameReader(string path)
+        {
+            _stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            _mapping = MemoryMappedFile.CreateFromFile(
+                _stream,
+                mapName: null,
+                capacity: 0,
+                MemoryMappedFileAccess.Read,
+                HandleInheritability.None,
+                leaveOpen: true);
+            _view = _mapping.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+            byte* viewPointer = null;
+            _view.SafeMemoryMappedViewHandle.AcquirePointer(ref viewPointer);
+            _viewPointer = viewPointer + _view.PointerOffset;
+        }
+
+        public FrameHeader ReadHeader()
+        {
+            var sequenceBefore = _view.ReadInt64(24);
+            if ((sequenceBefore & 1) != 0)
+            {
+                throw new IOException("Shared frame is currently being written.");
+            }
+            Thread.MemoryBarrier();
+            var magic = _view.ReadInt32(0);
+            var version = _view.ReadInt32(4);
+            var timestampTicks = _view.ReadInt64(32);
+            var inputRevision = _view.ReadInt64(48);
+            var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
+            var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
+            var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
+            var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
+            Thread.MemoryBarrier();
+            var sequenceAfter = _view.ReadInt64(24);
+            if (magic != FrameMagic
+                || version is not (1 or 2)
+                || sequenceBefore != sequenceAfter
+                || (sequenceAfter & 1) != 0)
+            {
+                throw new IOException("Shared frame header changed while being read.");
+            }
+            return new FrameHeader(
+                sequenceAfter,
+                timestampTicks,
+                inputRevision,
+                frameRevision,
+                snapshotRevision,
+                cameraRevision,
+                commandRevision);
+        }
+
+        public FrameSnapshot ReadFrame()
+        {
+            var sequenceBefore = _view.ReadInt64(24);
+            if ((sequenceBefore & 1) != 0)
+            {
+                throw new IOException("Shared frame is currently being written.");
+            }
+
+            Thread.MemoryBarrier();
+            var magic = _view.ReadInt32(0);
+            var version = _view.ReadInt32(4);
+            var width = _view.ReadInt32(8);
+            var height = _view.ReadInt32(12);
+            var stride = _view.ReadInt32(16);
+            var format = _view.ReadInt32(20);
+            var contentFlags = _view.ReadInt32(40);
+            var inputRevision = _view.ReadInt64(48);
+            var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
+            var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
+            var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
+            var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
+            var headerSize = version >= 2 ? Version2HeaderSize : Version1HeaderSize;
+            if (magic != FrameMagic
+                || version is not (1 or 2)
+                || width <= 0
+                || height <= 0
+                || stride != checked(width * 4))
+            {
+                throw new IOException("Shared frame header was invalid.");
+            }
+
+            var pixelLength = checked(stride * height);
+            if ((long)headerSize + pixelLength > _view.Capacity)
+            {
+                throw new IOException("Shared frame pixel payload exceeded the mapped capacity.");
+            }
+            if (_pixels.Length != pixelLength)
+            {
+                _pixels = new byte[pixelLength];
+            }
+            new ReadOnlySpan<byte>(_viewPointer + headerSize, pixelLength).CopyTo(_pixels);
+            Thread.MemoryBarrier();
+            var sequenceAfter = _view.ReadInt64(24);
+            if (sequenceBefore != sequenceAfter || (sequenceAfter & 1) != 0)
+            {
+                throw new IOException("Shared frame was unavailable or changed while being read.");
+            }
+
+            var colors = new HashSet<int>();
+            var samplingStep = Math.Max(4, pixelLength / 4096);
+            samplingStep -= samplingStep % 4;
+            for (var index = 0; index + 3 < pixelLength; index += samplingStep)
+            {
+                colors.Add(BinaryPrimitives.ReadInt32LittleEndian(_pixels.AsSpan(index, 4)));
+            }
+            return new FrameSnapshot(
+                version,
+                width,
+                height,
+                stride,
+                format,
+                sequenceAfter,
+                contentFlags,
+                colors.Count,
+                Convert.ToHexString(SHA256.HashData(_pixels.AsSpan(0, pixelLength))),
+                inputRevision,
+                frameRevision,
+                snapshotRevision,
+                cameraRevision,
+                commandRevision);
+        }
+
+        public void Dispose()
+        {
+            _view.SafeMemoryMappedViewHandle.ReleasePointer();
+            _view.Dispose();
+            _mapping.Dispose();
+            _stream.Dispose();
+        }
+    }
 
     private sealed class WorkerProcess : IDisposable
     {
@@ -245,7 +1116,7 @@ internal static class Program
         public int ProcessId => _process.Id;
         public int ExitCode => _process.ExitCode;
 
-        public async Task<JsonObject> CallAsync(string method)
+        public async Task<JsonObject> CallAsync(string method, JsonObject? parameters = null)
         {
             var request = new JsonObject
             {
@@ -253,6 +1124,10 @@ internal static class Program
                 ["id"] = Interlocked.Increment(ref _nextId),
                 ["method"] = method,
             };
+            if (parameters is not null)
+            {
+                request["params"] = parameters;
+            }
             var payload = JsonSerializer.SerializeToUtf8Bytes(request);
             var length = new byte[4];
             BinaryPrimitives.WriteInt32LittleEndian(length, payload.Length);
@@ -266,7 +1141,6 @@ internal static class Program
             {
                 throw new InvalidDataException($"Invalid response length: {responseLength}");
             }
-
             var responseBytes = new byte[responseLength];
             await ReadExactlyAsync(_process.StandardOutput.BaseStream, responseBytes);
             var response = JsonNode.Parse(responseBytes)?.AsObject()
@@ -275,7 +1149,6 @@ internal static class Program
             {
                 throw new InvalidOperationException(response["error"]!.ToJsonString());
             }
-
             return response["result"]?.AsObject()
                 ?? throw new InvalidDataException("Worker response had no object result.");
         }
@@ -301,7 +1174,6 @@ internal static class Program
                 _process.Kill(entireProcessTree: true);
                 _process.WaitForExit();
             }
-
             _process.Dispose();
         }
 
@@ -315,7 +1187,6 @@ internal static class Program
                 {
                     throw new EndOfStreamException("Worker closed its response stream.");
                 }
-
                 offset += read;
             }
         }

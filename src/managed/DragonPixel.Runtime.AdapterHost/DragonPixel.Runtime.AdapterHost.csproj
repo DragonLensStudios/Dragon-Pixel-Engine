@@ -5,4 +5,8 @@
     <AssemblyName>DragonPixel.Runtime.AdapterHost</AssemblyName>
     <RootNamespace>DragonPixel.Runtime</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DragonPixel.Contracts\DragonPixel.Contracts.csproj" />
+    <ProjectReference Include="..\DragonPixel.NativeInterop\DragonPixel.NativeInterop.csproj" />
+  </ItemGroup>
 </Project>

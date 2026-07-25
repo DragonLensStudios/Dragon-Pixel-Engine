@@ -19,5 +19,7 @@ struct component_record final
     nlohmann::ordered_json raw_record = nlohmann::ordered_json::object();
     bool enabled{true};
     std::string qualified_name;
+
+    friend bool operator==(const component_record&, const component_record&) = default;
 };
 }

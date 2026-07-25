@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v2/project.schema.json",
+  "title": "Dragon Pixel Engine project manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "projectId", "name", "startupScene", "sceneRoots", "assetRoots"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v2/project.schema.json" },
+    "format": { "const": "dpe.project" },
+    "formatVersion": { "const": 2 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "startupScene": { "type": "string", "minLength": 1 },
+    "sceneRoots": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "assetRoots": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

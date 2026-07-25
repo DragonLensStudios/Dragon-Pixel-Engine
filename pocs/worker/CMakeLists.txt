@@ -22,7 +22,7 @@ add_custom_target(dpe_poc_b_managed ALL
     USES_TERMINAL
     VERBATIM
 )
-add_dependencies(dpe_poc_b_managed DragonPixelAdapters)
+add_dependencies(dpe_poc_b_managed DragonPixelAdapters DragonPixelCAbi)
 
 add_executable(dpe_poc_b_viewer
     qt/main.cpp
@@ -55,8 +55,40 @@ add_test(
         ${DPE_POC_B_MONOGAME_DLL}
         ${DPE_POC_B_KNI_DLL}
         ${CMAKE_BINARY_DIR}/poc-b-tests
+        $<TARGET_FILE:DragonPixelCAbi>
 )
 set_tests_properties(poc_b.worker_viewport PROPERTIES TIMEOUT 120)
+
+# POC E records adapter-specific real-device rendering/readback/picking evidence. Keep
+# these tests separate so one framework failure cannot suppress the other's result.
+add_test(
+    NAME poc_e.monogame_scene_rendering
+    COMMAND
+        ${DPE_DOTNET_EXECUTABLE} ${DPE_POC_B_TEST_DLL}
+        ${DPE_POC_B_MONOGAME_DLL}
+        ${DPE_POC_B_KNI_DLL}
+        ${CMAKE_BINARY_DIR}/poc-e-monogame-tests
+        $<TARGET_FILE:DragonPixelCAbi>
+        --adapter monogame
+)
+add_test(
+    NAME poc_e.kni_scene_rendering
+    COMMAND
+        ${DPE_DOTNET_EXECUTABLE} ${DPE_POC_B_TEST_DLL}
+        ${DPE_POC_B_MONOGAME_DLL}
+        ${DPE_POC_B_KNI_DLL}
+        ${CMAKE_BINARY_DIR}/poc-e-kni-tests
+        $<TARGET_FILE:DragonPixelCAbi>
+        --adapter kni
+)
+set_tests_properties(
+    poc_e.monogame_scene_rendering
+    poc_e.kni_scene_rendering
+    PROPERTIES TIMEOUT 120
+)
+dpe_configure_managed_asan_test(poc_b.worker_viewport)
+dpe_configure_managed_asan_test(poc_e.monogame_scene_rendering)
+dpe_configure_managed_asan_test(poc_e.kni_scene_rendering)
 
 add_test(NAME poc_b.monogame_graphics
     COMMAND ${DPE_DOTNET_EXECUTABLE} ${DPE_POC_B_MONOGAME_DLL} --graphics-probe)
