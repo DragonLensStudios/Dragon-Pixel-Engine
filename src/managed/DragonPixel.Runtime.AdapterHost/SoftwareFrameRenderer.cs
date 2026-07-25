@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace DragonPixel.Runtime;
 
 internal static class SoftwareFrameRenderer
@@ -10,7 +12,7 @@ internal static class SoftwareFrameRenderer
         float phase,
         bool experimental)
     {
-        Clear(pixels, width, height, experimental ? (byte)44 : (byte)30, 24, 36);
+        Clear(pixels, experimental ? (byte)44 : (byte)30, 24, 36);
         DrawGrid(pixels, width, height);
         DrawSprite(pixels, width, height, phase, experimental);
         foreach (var triangle in triangles.OrderBy(static triangle =>
@@ -23,15 +25,10 @@ internal static class SoftwareFrameRenderer
         }
     }
 
-    private static void Clear(byte[] pixels, int width, int height, byte red, byte green, byte blue)
+    private static void Clear(byte[] pixels, byte red, byte green, byte blue)
     {
-        for (var y = 0; y < height; y++)
-        {
-            for (var x = 0; x < width; x++)
-            {
-                SetPixel(pixels, width, height, x, y, blue, green, red, 255);
-            }
-        }
+        var packedBgra = (uint)(blue | (green << 8) | (red << 16) | (255u << 24));
+        MemoryMarshal.Cast<byte, uint>(pixels.AsSpan()).Fill(packedBgra);
     }
 
     private static void DrawGrid(byte[] pixels, int width, int height)
@@ -95,7 +92,11 @@ internal static class SoftwareFrameRenderer
                 var edge2 = Edge(triangle.A.X, triangle.A.Y, triangle.B.X, triangle.B.Y, x, y);
                 if ((edge0 >= 0 && edge1 >= 0 && edge2 >= 0) || (edge0 <= 0 && edge1 <= 0 && edge2 <= 0))
                 {
-                    SetPixel(pixels, width, height, x, y, blue, green, red, 255);
+                    var offset = ((y * width) + x) * 4;
+                    pixels[offset] = blue;
+                    pixels[offset + 1] = green;
+                    pixels[offset + 2] = red;
+                    pixels[offset + 3] = 255;
                 }
             }
         }
