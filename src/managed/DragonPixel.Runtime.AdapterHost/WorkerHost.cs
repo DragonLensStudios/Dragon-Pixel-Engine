@@ -75,8 +75,10 @@ public static class WorkerHost
     {
         var pixels = new byte[checked(frameBuffer.Stride * frameBuffer.Height)];
         var stopwatch = Stopwatch.StartNew();
+        var frameInterval = TimeSpan.FromMilliseconds(16);
         while (!cancellationToken.IsCancellationRequested)
         {
+            var iterationStart = Stopwatch.GetTimestamp();
             if (state.Mode == RuntimeMode.Running)
             {
                 var phase = (float)stopwatch.Elapsed.TotalSeconds;
@@ -96,7 +98,15 @@ public static class WorkerHost
                 state.FramePublished();
             }
 
-            await Task.Delay(16, cancellationToken).ConfigureAwait(false);
+            var remaining = frameInterval - Stopwatch.GetElapsedTime(iterationStart);
+            if (remaining > TimeSpan.Zero)
+            {
+                await Task.Delay(remaining, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await Task.Yield();
+            }
         }
     }
 

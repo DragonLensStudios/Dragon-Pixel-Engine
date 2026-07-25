@@ -83,14 +83,24 @@ internal static class SoftwareFrameRenderer
         var red = (byte)((experimental ? 216 : 90) * light);
         var green = (byte)((experimental ? 118 : 168) * light);
         var blue = (byte)((experimental ? 52 : 236) * light);
+        var orientation = area > 0 ? 1 : -1;
+        var edge0Row = orientation * Edge(triangle.B.X, triangle.B.Y, triangle.C.X, triangle.C.Y, minX, minY);
+        var edge1Row = orientation * Edge(triangle.C.X, triangle.C.Y, triangle.A.X, triangle.A.Y, minX, minY);
+        var edge2Row = orientation * Edge(triangle.A.X, triangle.A.Y, triangle.B.X, triangle.B.Y, minX, minY);
+        var edge0StepX = orientation * (triangle.C.Y - triangle.B.Y);
+        var edge1StepX = orientation * (triangle.A.Y - triangle.C.Y);
+        var edge2StepX = orientation * (triangle.B.Y - triangle.A.Y);
+        var edge0StepY = orientation * (triangle.B.X - triangle.C.X);
+        var edge1StepY = orientation * (triangle.C.X - triangle.A.X);
+        var edge2StepY = orientation * (triangle.A.X - triangle.B.X);
         for (var y = minY; y <= maxY; y++)
         {
+            var edge0 = edge0Row;
+            var edge1 = edge1Row;
+            var edge2 = edge2Row;
             for (var x = minX; x <= maxX; x++)
             {
-                var edge0 = Edge(triangle.B.X, triangle.B.Y, triangle.C.X, triangle.C.Y, x, y);
-                var edge1 = Edge(triangle.C.X, triangle.C.Y, triangle.A.X, triangle.A.Y, x, y);
-                var edge2 = Edge(triangle.A.X, triangle.A.Y, triangle.B.X, triangle.B.Y, x, y);
-                if ((edge0 >= 0 && edge1 >= 0 && edge2 >= 0) || (edge0 <= 0 && edge1 <= 0 && edge2 <= 0))
+                if ((edge0 | edge1 | edge2) >= 0)
                 {
                     var offset = ((y * width) + x) * 4;
                     pixels[offset] = blue;
@@ -98,7 +108,13 @@ internal static class SoftwareFrameRenderer
                     pixels[offset + 2] = red;
                     pixels[offset + 3] = 255;
                 }
+                edge0 += edge0StepX;
+                edge1 += edge1StepX;
+                edge2 += edge2StepX;
             }
+            edge0Row += edge0StepY;
+            edge1Row += edge1StepY;
+            edge2Row += edge2StepY;
         }
     }
 
