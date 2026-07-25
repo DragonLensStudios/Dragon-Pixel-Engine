@@ -9,7 +9,7 @@ on:
 jobs:
   windows:
     name: Windows 11 x64 / ${{ matrix.configuration }}
-    runs-on: windows-2025
+    runs-on: windows-2022
     env:
       DOTNET_CLI_USE_MSBUILD_SERVER: 0
       MSBUILDDISABLENODEREUSE: 1
@@ -22,11 +22,26 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.203
-      - uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.11.1
-          arch: win64_msvc2022_64
-          cache: true
+      - name: Install Qt 6.11.1 for MSVC 2022
+        shell: pwsh
+        run: |
+          $qtRoot = Join-Path $env:RUNNER_TEMP 'Qt-6.11.1-msvc2022_64'
+          $repository = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6111/qt6_6111_msvc2022_64/qt.qt6.6111.win64_msvc2022_64'
+          $archiveName = '6.11.1-0-202605090529qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z'
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $checksum = (Invoke-RestMethod "$repository/$archiveName.sha1").Trim().Split()[0].ToLowerInvariant()
+          Invoke-WebRequest "$repository/$archiveName" -OutFile $archive
+          $actualChecksum = (Get-FileHash -Algorithm SHA1 $archive).Hash.ToLowerInvariant()
+          if ($actualChecksum -ne $checksum) {
+            throw "Qt archive checksum mismatch: expected $checksum, got $actualChecksum."
+          }
+          New-Item -ItemType Directory -Force -Path $qtRoot | Out-Null
+          & 7z x $archive "-o$qtRoot" -y
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE." }
+          $qtVersion = & (Join-Path $qtRoot 'bin\qtpaths.exe') --qt-query QT_VERSION
+          if ($qtVersion -ne '6.11.1') { throw "Expected Qt 6.11.1, got $qtVersion." }
+          "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $qtRoot 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Configure, build, and test
         shell: pwsh
         run: |
@@ -45,7 +60,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: slice1-windows-2025-${{ matrix.configuration }}-evidence
+          name: slice1-windows-2022-${{ matrix.configuration }}-evidence
           if-no-files-found: warn
           path: |
             slice1-Windows-${{ matrix.configuration }}.xml
@@ -106,8 +121,8 @@ jobs:
           cmake --build --preset "$build"
           if [[ '${{ runner.os }}' == 'macOS' ]]; then
             "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION
-            qt_core=$(find "$QT_ROOT_DIR" -path '*/QtCore.framework/Versions/*/QtCore' -type f -print -quit)
-            [[ -n "$qt_core" ]] || { echo 'QtCore framework binary was not found.' >&2; exit 1; }
+            qt_core="$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
+            [[ -f "$qt_core" ]] || { echo "QtCore framework binary was not found at $qt_core." >&2; exit 1; }
             lipo -verify_arch arm64 "$qt_core"
             native_library_manifest="$RUNNER_TEMP/dragon-pixel-native-libraries.txt"
             find src/managed -path '*/bin/Release/net10.0/*' -name '*.dylib' -type f | sort > "$native_library_manifest"
