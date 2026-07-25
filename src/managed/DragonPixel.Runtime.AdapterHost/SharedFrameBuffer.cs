@@ -12,11 +12,12 @@ public static class FrameLayout
     public const int ContentStaticMesh = 2;
 }
 
-internal sealed class SharedFrameBuffer : IDisposable
+internal sealed unsafe class SharedFrameBuffer : IDisposable
 {
     private readonly FileStream _file;
     private readonly MemoryMappedFile _mapping;
     private readonly MemoryMappedViewAccessor _view;
+    private readonly byte* _viewPointer;
     private long _sequence;
 
     public SharedFrameBuffer(string path, int width, int height)
@@ -37,6 +38,9 @@ internal sealed class SharedFrameBuffer : IDisposable
             leaveOpen: true);
         _view = _mapping.CreateViewAccessor(0, size, MemoryMappedFileAccess.ReadWrite);
         WriteStaticHeader();
+        byte* viewPointer = null;
+        _view.SafeMemoryMappedViewHandle.AcquirePointer(ref viewPointer);
+        _viewPointer = viewPointer + _view.PointerOffset;
     }
 
     public int Width { get; }
@@ -53,7 +57,7 @@ internal sealed class SharedFrameBuffer : IDisposable
         var writingSequence = Interlocked.Add(ref _sequence, 2) - 1;
         _view.Write(24, writingSequence);
         Thread.MemoryBarrier();
-        _view.WriteArray(FrameLayout.HeaderSize, pixels, 0, pixels.Length);
+        pixels.AsSpan().CopyTo(new Span<byte>(_viewPointer + FrameLayout.HeaderSize, pixels.Length));
         _view.Write(32, timestampTicks);
         _view.Write(40, contentFlags);
         _view.Write(44, adapterHash);
@@ -63,6 +67,7 @@ internal sealed class SharedFrameBuffer : IDisposable
 
     public void Dispose()
     {
+        _view.SafeMemoryMappedViewHandle.ReleasePointer();
         _view.Dispose();
         _mapping.Dispose();
         _file.Dispose();
