@@ -49,7 +49,8 @@ function(dpe_configure_managed_asan_test test_name)
         endif()
 
         set_tests_properties(${test_name} PROPERTIES
-            ENVIRONMENT "DYLD_INSERT_LIBRARIES=${_dpe_asan_runtime};ASAN_OPTIONS=detect_leaks=0"
+            ENVIRONMENT
+                "DYLD_INSERT_LIBRARIES=${_dpe_asan_runtime};ASAN_OPTIONS=detect_leaks=0;DPE_ASAN_RUNTIME=${_dpe_asan_runtime}"
         )
     endif()
 endfunction()

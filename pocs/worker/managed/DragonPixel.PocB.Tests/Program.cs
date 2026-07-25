@@ -53,9 +53,11 @@ internal static class Program
             "Frame did not declare BGRA8 sprite and static-mesh content.");
         Assert(firstFrame.DistinctColorEstimate > 5, "Frame did not contain rendered scene variation.");
 
-        var rateStart = firstFrame.Sequence;
+        await Task.Delay(1500);
+        var warmedFrame = await ReadFrameAfterAsync(frameFile, firstFrame.Sequence, TimeSpan.FromSeconds(3));
+        var rateStart = warmedFrame.Sequence;
         var rateTimer = Stopwatch.StartNew();
-        await Task.Delay(1000);
+        await Task.Delay(2000);
         var rateEnd = await ReadFrameAfterAsync(frameFile, rateStart, TimeSpan.FromSeconds(2));
         rateTimer.Stop();
         var framesPerSecond = ((rateEnd.Sequence - rateStart) / 2.0) / rateTimer.Elapsed.TotalSeconds;

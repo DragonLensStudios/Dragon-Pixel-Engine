@@ -104,6 +104,12 @@ internal static class Program
         {
             startInfo.ArgumentList.Add(argument);
         }
+        var asanRuntime = Environment.GetEnvironmentVariable("DPE_ASAN_RUNTIME");
+        if (OperatingSystem.IsMacOS() && !string.IsNullOrWhiteSpace(asanRuntime))
+        {
+            startInfo.Environment["DYLD_INSERT_LIBRARIES"] = asanRuntime;
+            startInfo.Environment["ASAN_OPTIONS"] = "detect_leaks=0";
+        }
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not launch worker.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
