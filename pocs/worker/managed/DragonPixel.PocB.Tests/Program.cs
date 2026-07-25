@@ -61,7 +61,14 @@ internal static class Program
         var rateEnd = await ReadFrameAfterAsync(frameFile, rateStart, TimeSpan.FromSeconds(2));
         rateTimer.Stop();
         var framesPerSecond = ((rateEnd.Sequence - rateStart) / 2.0) / rateTimer.Elapsed.TotalSeconds;
-        Assert(framesPerSecond >= 20.0, $"{expectedAdapter} frame rate was only {framesPerSecond:F1} FPS.");
+        var diagnostics = await worker.CallAsync("diagnostics");
+        var timings = diagnostics["lastFrameTimingsMs"]!.AsObject();
+        var timingSummary =
+            $"adapter {timings["adapter"]!.GetValue<double>():F1} ms, " +
+            $"render {timings["render"]!.GetValue<double>():F1} ms, " +
+            $"publish {timings["publish"]!.GetValue<double>():F1} ms";
+        Assert(framesPerSecond >= 20.0,
+            $"{expectedAdapter} frame rate was only {framesPerSecond:F1} FPS ({timingSummary}).");
 
         await worker.CallAsync("pause");
         await Task.Delay(100);
@@ -101,7 +108,7 @@ internal static class Program
 
         Console.WriteLine(
             $"{expectedAdapter}: {framesPerSecond:F1} FPS, control {latency.Elapsed.TotalMilliseconds:F1} ms, " +
-            $"crash recovery {recoveryTimer.Elapsed.TotalMilliseconds:F1} ms.");
+            $"crash recovery {recoveryTimer.Elapsed.TotalMilliseconds:F1} ms, {timingSummary}.");
     }
 
     private static WorkerProcess StartWorker(string workerDll, string frameFile)

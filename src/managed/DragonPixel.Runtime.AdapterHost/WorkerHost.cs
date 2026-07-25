@@ -82,7 +82,10 @@ public static class WorkerHost
             if (state.Mode == RuntimeMode.Running)
             {
                 var phase = (float)stopwatch.Elapsed.TotalSeconds;
+                var adapterStart = Stopwatch.GetTimestamp();
                 var triangles = adapter.CreateTriangles(phase * 0.8f, frameBuffer.Width, frameBuffer.Height);
+                var adapterTicks = Stopwatch.GetTimestamp() - adapterStart;
+                var renderStart = Stopwatch.GetTimestamp();
                 SoftwareFrameRenderer.Render(
                     pixels,
                     frameBuffer.Width,
@@ -90,12 +93,15 @@ public static class WorkerHost
                     triangles,
                     phase * 2.0f,
                     adapter.Experimental);
+                var renderTicks = Stopwatch.GetTimestamp() - renderStart;
+                var publishStart = Stopwatch.GetTimestamp();
                 frameBuffer.Publish(
                     pixels,
                     DateTime.UtcNow.Ticks,
                     FrameLayout.ContentSprite | FrameLayout.ContentStaticMesh,
                     StringComparer.Ordinal.GetHashCode(adapter.Name));
-                state.FramePublished();
+                var publishTicks = Stopwatch.GetTimestamp() - publishStart;
+                state.FramePublished(adapterTicks, renderTicks, publishTicks);
             }
 
             var remaining = frameInterval - Stopwatch.GetElapsedTime(iterationStart);
@@ -196,6 +202,12 @@ public static class WorkerHost
                         ["frames"] = state.FrameCount,
                         ["processId"] = Environment.ProcessId,
                         ["snapshotSha256"] = state.SnapshotHash,
+                        ["lastFrameTimingsMs"] = new JsonObject
+                        {
+                            ["adapter"] = ToMilliseconds(state.AdapterTicks),
+                            ["render"] = ToMilliseconds(state.RenderTicks),
+                            ["publish"] = ToMilliseconds(state.PublishTicks),
+                        },
                     };
                     break;
                 case "subscribeDiagnostics":
@@ -337,6 +349,9 @@ public static class WorkerHost
         await output.FlushAsync().ConfigureAwait(false);
     }
 
+    private static double ToMilliseconds(long stopwatchTicks) =>
+        stopwatchTicks * 1000.0 / Stopwatch.Frequency;
+
     private enum RuntimeMode
     {
         Stopped,
@@ -348,13 +363,25 @@ public static class WorkerHost
     {
         private int _mode;
         private long _frameCount;
+        private long _adapterTicks;
+        private long _renderTicks;
+        private long _publishTicks;
         private string _snapshotHash = string.Empty;
 
         public RuntimeMode Mode => (RuntimeMode)Volatile.Read(ref _mode);
         public long FrameCount => Interlocked.Read(ref _frameCount);
+        public long AdapterTicks => Interlocked.Read(ref _adapterTicks);
+        public long RenderTicks => Interlocked.Read(ref _renderTicks);
+        public long PublishTicks => Interlocked.Read(ref _publishTicks);
         public string SnapshotHash => Volatile.Read(ref _snapshotHash);
         public void SetMode(RuntimeMode mode) => Volatile.Write(ref _mode, (int)mode);
-        public void FramePublished() => Interlocked.Increment(ref _frameCount);
+        public void FramePublished(long adapterTicks, long renderTicks, long publishTicks)
+        {
+            Interlocked.Exchange(ref _adapterTicks, adapterTicks);
+            Interlocked.Exchange(ref _renderTicks, renderTicks);
+            Interlocked.Exchange(ref _publishTicks, publishTicks);
+            Interlocked.Increment(ref _frameCount);
+        }
         public void SetSnapshotHash(string value) => Volatile.Write(ref _snapshotHash, value);
     }
 
