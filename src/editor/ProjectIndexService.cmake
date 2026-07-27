@@ -14,8 +14,15 @@ target_sources(DragonPixelEditorLibrary PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/TileImportService.h"
 )
 target_compile_definitions(DragonPixelEditorLibrary PRIVATE
-    DPE_TILED_IMPORTER_WORKER="$<TARGET_FILE:DragonPixelTiledImporterWorker>")
+    DPE_TILED_IMPORTER_WORKER="$<TARGET_FILE_NAME:DragonPixelTiledImporterWorker>")
 add_dependencies(DragonPixelEditorLibrary DragonPixelTiledImporterWorker)
+foreach(DPE_TILED_IMPORTER_HOST DragonPixelEditor DragonPixelEditorInteractionTests)
+    add_custom_command(TARGET ${DPE_TILED_IMPORTER_HOST} POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE:DragonPixelTiledImporterWorker>"
+            "$<TARGET_FILE_DIR:${DPE_TILED_IMPORTER_HOST}>"
+        COMMENT "Deploying the isolated Tiled importer worker")
+endforeach()
 target_compile_definitions(DragonPixelEditorLibrary PRIVATE
     DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates")
 

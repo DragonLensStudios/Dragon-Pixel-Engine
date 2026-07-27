@@ -179,6 +179,14 @@ void append_worker_diagnostics(const QJsonArray& values, TileImportResult& resul
         }
     }
 }
+
+QString worker_program()
+{
+    const auto configured = QString::fromUtf8(DPE_TILED_IMPORTER_WORKER);
+    return QDir::isAbsolutePath(configured)
+        ? configured
+        : QDir{QCoreApplication::applicationDirPath()}.filePath(configured);
+}
 } // namespace
 
 TileImportService::TileImportService(
@@ -282,7 +290,7 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
         return result;
     }
 
-    const auto worker = worker_runner_(QString::fromUtf8(DPE_TILED_IMPORTER_WORKER),
+    const auto worker = worker_runner_(worker_program(),
         {QStringLiteral("--request"), request_path}, request.timeout_milliseconds,
         request.cancellation_requested);
     switch (worker.status)
