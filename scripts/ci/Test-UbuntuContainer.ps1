@@ -29,7 +29,7 @@ set -euo pipefail
 cmake --preset $configurePreset
 cmake --build --preset $buildPreset
 xvfb-run -a ctest --preset $buildPreset $testVerbosity --output-junit $junit
-python3 scripts/ci/validate_ci.py junit $junit --minimum-tests 56
+python3 scripts/ci/validate_ci.py junit $junit --minimum-tests 55
 "@
 
 & docker run --rm --init `

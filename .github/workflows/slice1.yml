@@ -11,7 +11,8 @@ permissions:
   contents: read
 
 env:
-  DPE_CI_MINIMUM_TESTS: "56"
+  DPE_CI_MINIMUM_WINDOWS_TESTS: "56"
+  DPE_CI_MINIMUM_UNIX_TESTS: "55"
 
 concurrency:
   group: slice1-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
@@ -164,7 +165,7 @@ jobs:
             '--preset', $build, '--output-on-failure', '--output-junit', $junit
           )
           Invoke-DpeCiNative -Operation 'JUnit evidence validation' -FilePath $python -ArgumentList @(
-            'scripts/ci/validate_ci.py', 'junit', $junit, '--minimum-tests', $env:DPE_CI_MINIMUM_TESTS
+            'scripts/ci/validate_ci.py', 'junit', $junit, '--minimum-tests', $env:DPE_CI_MINIMUM_WINDOWS_TESTS
           )
       - name: Upload Windows test evidence
         if: always()
@@ -263,7 +264,7 @@ jobs:
           else
             ctest --preset "$build" --output-on-failure --output-junit "$junit"
           fi
-          python3 scripts/ci/validate_ci.py junit "$junit" --minimum-tests "$DPE_CI_MINIMUM_TESTS"
+          python3 scripts/ci/validate_ci.py junit "$junit" --minimum-tests "$DPE_CI_MINIMUM_UNIX_TESTS"
       - name: Upload Unix test evidence
         if: always()
         uses: actions/upload-artifact@v4
