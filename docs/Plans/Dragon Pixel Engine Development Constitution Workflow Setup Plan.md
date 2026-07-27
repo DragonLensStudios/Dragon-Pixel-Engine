@@ -1,13 +1,13 @@
 # Dragon Pixel Engine Development Constitution Workflow Setup Plan
 
-> **Status:** In progress  
-> **Branch:** `feature/development-constitution-workflow`  
-> **Target:** `develop`  
-> **Owner:** Dragon Pixel Engine maintainers  
-> **Started:** 2026-07-27  
-> **Updated:** 2026-07-27  
-> **Design baseline:** `DPE-ARCH-0014` (unchanged)  
-> **Repository mirror:** `docs/Plans/Dragon Pixel Engine Development Constitution Workflow Setup Plan.md`  
+> **Status:** Ready for review; push and draft PR pending
+> **Branch:** `feature/development-constitution-workflow`
+> **Target:** `develop`
+> **Owner:** Dragon Pixel Engine maintainers
+> **Started:** 2026-07-27
+> **Updated:** 2026-07-27
+> **Design baseline:** `DPE-ARCH-0014` (unchanged)
+> **Repository mirror:** `docs/Plans/Dragon Pixel Engine Development Constitution Workflow Setup Plan.md`
 > **External mirror:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Plans\Dragon Pixel Engine Development Constitution Workflow Setup Plan.md`
 
 ## Goal
@@ -121,16 +121,11 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 
 ## Risks and Mitigations
 
-- **Risk:** Replacing root `AGENTS.md` drops stricter project rules.  
-  **Mitigation:** Merge additively and audit required sections/phrases against both sources.
-- **Risk:** The kit's repository-public documentation wording conflicts with mandatory private mirror access.  
-  **Mitigation:** Preserve required maintainer mirror verification while clarifying that external contributors cannot claim unavailable mirror checks and must not silently bypass them.
-- **Risk:** Root prompts become untracked duplicates of durable documentation.  
-  **Mitigation:** Treat them explicitly as repository workflow controls and keep the durable policy in mirrored development documents and plans.
-- **Risk:** The workflow appears enforced when only documented.  
-  **Mitigation:** State whether branch protection or CI enforcement exists and leave a bounded follow-up rather than claiming it.
-- **Risk:** Setup accidentally starts the next feature.  
-  **Mitigation:** Install the atomic-publication prompt but do not execute it.
+- **Risk:** Replacing root `AGENTS.md` drops stricter project rules. **Mitigation:** Merge additively and audit required sections/phrases against both sources.
+- **Risk:** The kit's repository-public documentation wording conflicts with mandatory private mirror access. **Mitigation:** Preserve required maintainer mirror verification while clarifying that external contributors cannot claim unavailable mirror checks and must not silently bypass them.
+- **Risk:** Root prompts become untracked duplicates of durable documentation. **Mitigation:** Treat them explicitly as repository workflow controls and keep the durable policy in mirrored development documents and plans.
+- **Risk:** The workflow appears enforced when only documented. **Mitigation:** State whether branch protection or CI enforcement exists and leave a bounded follow-up rather than claiming it.
+- **Risk:** Setup accidentally starts the next feature. **Mitigation:** Install the atomic-publication prompt but do not execute it.
 
 ## Definition of Done
 
@@ -139,12 +134,12 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 - [x] Current `develop` fetched, confirmed current, and clean.
 - [x] Focused setup branch created from current `develop`.
 - [x] Mirrored setup plan created before other file edits.
-- [ ] Root governance merges kit workflow rules without losing project-specific requirements.
-- [ ] Development handbooks, prompts, and GitHub templates are installed.
-- [ ] New mirrored documents are UTF-8/LF and byte-identical.
-- [ ] Workflow and YAML/Markdown verification passes.
-- [ ] Aggregate branch diff and commit sequence reviewed.
-- [ ] Exact evidence and remaining gaps recorded.
+- [x] Root governance merges kit workflow rules without losing project-specific requirements.
+- [x] Development handbooks, prompts, and GitHub templates are installed.
+- [x] New mirrored documents are UTF-8/LF and byte-identical.
+- [x] Workflow and YAML/Markdown verification passes.
+- [x] Aggregate branch diff and commit sequence reviewed.
+- [x] Exact evidence and remaining gaps recorded.
 - [ ] Branch pushed.
 - [ ] Draft pull request opened into `develop`.
 - [ ] Pull request left unmerged for review.
@@ -158,7 +153,10 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 | 2026-07-27 | Plan created | Created this byte-identical mirrored plan before any other repository file modification. The workflow setup explicitly excludes starting atomic-publication recovery. |
 | 2026-07-27 | Governing workflow installed | Merged the kit's mission, GitFlow, preparation, planning, commit, verification, PR, release/hotfix, coding, review-disposition, and Codex rules into root `AGENTS.md` while retaining all DPE-ARCH-0014 mirror, precedence, architecture, current-evidence, and acceptance guardrails. Installed the seven packaged handbooks, package README provenance, two operational prompts, and feature PR/issue templates. |
 | 2026-07-27 | Initial byte and syntax checks passed | All 12 archive-derived files outside merged `AGENTS.md` match their source-entry SHA-256 exactly. The recursive mirror validator passes **57 UTF-8/LF Markdown pairs** at `DPE-ARCH-0014`; the issue form parses as YAML with six body entries; all repository workflow controls checked so far are UTF-8 without BOM and LF-only; `git diff --check` passes. |
+| 2026-07-27 | Independent governance review resolved | Read-only review found no lost architecture guardrail and confirmed that no product feature or source change began. It identified three ambiguities, all corrected before handoff: repository-only external proposals now have an explicit unverified/non-mergeable mirror exception; an early draft PR no longer triggers Codex's final stop; and the master prompt's hard-coded First Feature is explicitly a one-time kickoff that current plans/user direction supersede. |
+| 2026-07-27 | Aggregate verification passed | The final bounded verification passes: **57/57** mirrored Markdown pairs; **12/12** archive-derived files outside merged `AGENTS.md` exactly match package hashes; **6/6** repository controls checked are UTF-8/no-BOM/LF; **5/5** README workflow targets exist; **7/7** critical merged-governance phrases are present; feature issue YAML parses with six body entries; and `git diff --check develop` passes after removing Markdown hard-break whitespace found by the first aggregate check. The branch merge-base is the fetched `develop` commit `0adbe49a73405dc72bc3d072bed4409c0e30fca3`. Aggregate scope review finds 16 workflow/governance paths and zero engine source, schema, or test paths. Engine matrices were not rerun because runtime/editor behavior is unchanged. |
+| 2026-07-27 | Enforcement gaps recorded | The package installs policy, prompts, and contribution templates, not automated enforcement. GitHub still uses `main` as the default branch, `develop` has no protection/ruleset, merged branches are not automatically deleted, and the existing Slice 1 workflow does not run on pushes to `develop`/`feature/*`. Its latest audited run `30247623903` failed overall and includes untrustworthy Windows success reporting after failed commands/no tests plus Ubuntu provisioning and macOS warning-as-error failures. CI repair and branch protection remain bounded follow-up work; no failing check should become required until it is trustworthy. |
 
 ## Handoff Notes
 
-Installation is complete and independent governance review plus aggregate branch verification are in progress. The next action is to resolve any review findings, commit the installed workflow, complete final evidence, push, and open the draft PR without starting atomic-publication recovery.
+The documented feature workflow is installed and verified, and the branch is ready to push and present as a draft PR into `develop`. This work intentionally does not claim CI or branch-protection enforcement. After this governance PR is reviewed and merged, begin `feature/atomic-publication-recovery` from the then-current `develop`; do not start it from this branch. The subsequent `feature/ci-gitflow-integration` work must repair CI trust and only then establish appropriate protected-branch required checks.
