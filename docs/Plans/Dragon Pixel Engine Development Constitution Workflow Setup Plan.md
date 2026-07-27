@@ -20,7 +20,7 @@ Every future feature will begin from current `develop`, use one focused `feature
 
 ## Background
 
-The user supplied `C:\Users\monyd\Downloads\Dragon-Pixel-Engine-Development-Constitution-Kit.zip` and explicitly requested that its workflow become the governing development source before the next feature begins. The archive contains a proposed root `AGENTS.md`, Codex prompts, development handbooks, a feature-plan template, GitHub issue and pull-request templates, and the recommended atomic-publication recovery start prompt.
+The user supplied `C:\Users\monyd\Downloads\Dragon-Pixel-Engine-Development-Constitution-Kit.zip` (SHA-256 `8407A171827F2FD91CBFB0FD3D6381F0CADDBF2A5F6A73D75809664D9B4CE10D`) and explicitly requested that its workflow become the governing development source before the next feature begins. The archive contains a proposed root `AGENTS.md`, Codex prompts, development handbooks, a feature-plan template, GitHub issue and pull-request templates, and the recommended atomic-publication recovery start prompt.
 
 Pre-change checks on 2026-07-27 established:
 
@@ -156,7 +156,9 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 | 2026-07-27 | Preconditions passed | Four required documentation pairs match by SHA-256; Design and Prompt/Result are complete and agree with root governance on `DPE-ARCH-0014`. |
 | 2026-07-27 | Branch prepared | Fetched `origin`; local and remote `develop` both resolve to `0adbe49a73405dc72bc3d072bed4409c0e30fca3`; created `feature/development-constitution-workflow` from the clean integration branch. |
 | 2026-07-27 | Plan created | Created this byte-identical mirrored plan before any other repository file modification. The workflow setup explicitly excludes starting atomic-publication recovery. |
+| 2026-07-27 | Governing workflow installed | Merged the kit's mission, GitFlow, preparation, planning, commit, verification, PR, release/hotfix, coding, review-disposition, and Codex rules into root `AGENTS.md` while retaining all DPE-ARCH-0014 mirror, precedence, architecture, current-evidence, and acceptance guardrails. Installed the seven packaged handbooks, package README provenance, two operational prompts, and feature PR/issue templates. |
+| 2026-07-27 | Initial byte and syntax checks passed | All 12 archive-derived files outside merged `AGENTS.md` match their source-entry SHA-256 exactly. The recursive mirror validator passes **57 UTF-8/LF Markdown pairs** at `DPE-ARCH-0014`; the issue form parses as YAML with six body entries; all repository workflow controls checked so far are UTF-8 without BOM and LF-only; `git diff --check` passes. |
 
 ## Handoff Notes
 
-Implementation and verification are in progress. The next action is to merge the kit governance into root `AGENTS.md`, install the bounded workflow files, and record exact verification before creating the draft PR.
+Installation is complete and independent governance review plus aggregate branch verification are in progress. The next action is to resolve any review findings, commit the installed workflow, complete final evidence, push, and open the draft PR without starting atomic-publication recovery.
