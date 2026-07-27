@@ -161,6 +161,16 @@ private slots:
             QStringLiteral("Imported Map.tilemap.dpeasset"))));
         QVERIFY(ProjectIndexService{}.build_candidate(manifest).succeeded());
 
+        auto mismatched = tile_publication(manifest);
+        mismatched.tileset_asset_id =
+            QStringLiteral("10000000-0000-4000-8000-000000000099");
+        const auto mismatched_result = service.publish_tile_import(mismatched);
+        QVERIFY(!mismatched_result.succeeded);
+        QCOMPARE(mismatched_result.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILE-CONTRACT"));
+        QVERIFY(!QFileInfo::exists(QDir{assets}.filePath(
+            QStringLiteral("Imported Map.tilemap.dpeasset"))));
+
         const auto valid = tile_publication(manifest);
         const auto published = service.publish_tile_import(valid);
         QVERIFY(published.succeeded);

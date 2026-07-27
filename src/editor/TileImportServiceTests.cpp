@@ -145,53 +145,60 @@ private slots:
 
     void contains_and_rejects_a_tampered_result_envelope()
     {
-        QTemporaryDir temp;
-        QVERIFY(temp.isValid());
-        const auto manifest = create_project(temp);
-        const auto source = create_tiled_source(temp);
-        QVERIFY(!manifest.isEmpty());
-        QVERIFY(!source.isEmpty());
-        AssetService assets;
-        const TileImportService::WorkerRunner tampered = [](
-            const QString&, const QStringList& arguments, int,
-            const std::function<bool()>&) {
-            const auto request = read_object(arguments.at(1));
-            const auto staging = request.value(QStringLiteral("stagingDirectory")).toString();
-            const auto ids = request.value(QStringLiteral("assetIds")).toObject();
-            const QJsonObject result{
-                {QStringLiteral("format"), QStringLiteral("dpe.tile-import.result")},
-                {QStringLiteral("formatVersion"), 1},
-                {QStringLiteral("importer"), QStringLiteral("dragonpixel.tiled-json")},
-                {QStringLiteral("succeeded"), true},
-                {QStringLiteral("outputs"), QJsonArray{
-                    QJsonObject{{QStringLiteral("role"), QStringLiteral("tilemap")},
-                        {QStringLiteral("path"), QStringLiteral("../escape.dpetilemap")},
-                        {QStringLiteral("assetId"), ids.value(QStringLiteral("tilemap"))}},
-                    QJsonObject{{QStringLiteral("role"), QStringLiteral("tileset")},
-                        {QStringLiteral("path"), QStringLiteral("tileset.dpetileset")},
-                        {QStringLiteral("assetId"), ids.value(QStringLiteral("tileset"))}},
-                    QJsonObject{{QStringLiteral("role"), QStringLiteral("texture")},
-                        {QStringLiteral("path"), QStringLiteral("texture.png")},
-                        {QStringLiteral("assetId"), ids.value(QStringLiteral("texture"))}}}},
-                {QStringLiteral("diagnostics"), QJsonArray{}},
-                {QStringLiteral("statistics"), QJsonObject{
-                    {QStringLiteral("tiles"), 1},
-                    {QStringLiteral("layers"), 1},
-                    {QStringLiteral("cells"), 1}}},
+        for (const auto tamper_identity : {false, true})
+        {
+            QTemporaryDir temp;
+            QVERIFY(temp.isValid());
+            const auto manifest = create_project(temp);
+            const auto source = create_tiled_source(temp);
+            QVERIFY(!manifest.isEmpty());
+            QVERIFY(!source.isEmpty());
+            AssetService assets;
+            const TileImportService::WorkerRunner tampered = [tamper_identity](
+                const QString&, const QStringList& arguments, int,
+                const std::function<bool()>&) {
+                const auto request = read_object(arguments.at(1));
+                const auto staging = request.value(QStringLiteral("stagingDirectory")).toString();
+                const auto ids = request.value(QStringLiteral("assetIds")).toObject();
+                const QJsonObject result{
+                    {QStringLiteral("format"), QStringLiteral("dpe.tile-import.result")},
+                    {QStringLiteral("formatVersion"), 1},
+                    {QStringLiteral("importer"), QStringLiteral("dragonpixel.tiled-json")},
+                    {QStringLiteral("succeeded"), true},
+                    {QStringLiteral("outputs"), QJsonArray{
+                        QJsonObject{{QStringLiteral("role"), QStringLiteral("tilemap")},
+                            {QStringLiteral("path"), tamper_identity
+                                ? QStringLiteral("tilemap.dpetilemap")
+                                : QStringLiteral("../escape.dpetilemap")},
+                            {QStringLiteral("assetId"), tamper_identity
+                                ? QJsonValue{QStringLiteral("30000000-0000-4000-8000-000000000099")}
+                                : ids.value(QStringLiteral("tilemap"))}},
+                        QJsonObject{{QStringLiteral("role"), QStringLiteral("tileset")},
+                            {QStringLiteral("path"), QStringLiteral("tileset.dpetileset")},
+                            {QStringLiteral("assetId"), ids.value(QStringLiteral("tileset"))}},
+                        QJsonObject{{QStringLiteral("role"), QStringLiteral("texture")},
+                            {QStringLiteral("path"), QStringLiteral("texture.png")},
+                            {QStringLiteral("assetId"), ids.value(QStringLiteral("texture"))}}}},
+                    {QStringLiteral("diagnostics"), QJsonArray{}},
+                    {QStringLiteral("statistics"), QJsonObject{
+                        {QStringLiteral("tiles"), 1},
+                        {QStringLiteral("layers"), 1},
+                        {QStringLiteral("cells"), 1}}},
+                };
+                write_bytes(QDir{staging}.filePath(QStringLiteral("result.json")),
+                    QJsonDocument{result}.toJson(QJsonDocument::Indented));
+                return TileImportWorkerOutcome{TileImportWorkerStatus::completed, 0, {}};
             };
-            write_bytes(QDir{staging}.filePath(QStringLiteral("result.json")),
-                QJsonDocument{result}.toJson(QJsonDocument::Indented));
-            return TileImportWorkerOutcome{TileImportWorkerStatus::completed, 0, {}};
-        };
-        TileImportService importer{assets, fixed_ids(), tampered};
-        const auto result = importer.import_tiled_json({
-            manifest, source, QStringLiteral("Tampered"), 2.0, 30'000, {}});
-        QVERIFY(!result.succeeded);
-        QCOMPARE(result.diagnostics.constFirst().code,
-            QStringLiteral("DPE-TILE-IMPORT-OUTPUT-CONTRACT"));
-        const auto indexed = ProjectIndexService{}.build_candidate(manifest);
-        QVERIFY(indexed.succeeded());
-        QVERIFY(indexed.candidate->find_by_id(result.tilemap_asset_id) == nullptr);
+            TileImportService importer{assets, fixed_ids(), tampered};
+            const auto result = importer.import_tiled_json({
+                manifest, source, QStringLiteral("Tampered"), 2.0, 30'000, {}});
+            QVERIFY(!result.succeeded);
+            QCOMPARE(result.diagnostics.constFirst().code,
+                QStringLiteral("DPE-TILE-IMPORT-OUTPUT-CONTRACT"));
+            const auto indexed = ProjectIndexService{}.build_candidate(manifest);
+            QVERIFY(indexed.succeeded());
+            QVERIFY(indexed.candidate->find_by_id(result.tilemap_asset_id) == nullptr);
+        }
     }
 
     void maps_worker_containment_failures_data()
