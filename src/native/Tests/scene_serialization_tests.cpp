@@ -987,6 +987,231 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "The recovery-root lease was not released for a subsequent transaction: "
             + post_lease_result.error);
 
+    const auto recovery_artifact_count = [](const std::filesystem::path& recovery_root) {
+        const auto base = recovery_root / ".dragonpixel" / "Recovery" / "Transactions";
+        return std::filesystem::exists(base)
+            ? static_cast<std::size_t>(std::distance(
+                std::filesystem::directory_iterator{base},
+                std::filesystem::directory_iterator{}))
+            : std::size_t{};
+    };
+
+    const auto existing_conflict_root = root / "cx";
+    std::filesystem::remove_all(existing_conflict_root, error);
+    std::filesystem::create_directories(existing_conflict_root);
+    const auto existing_conflict_first = existing_conflict_root / "first.dpescene";
+    const auto existing_conflict_second = existing_conflict_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                existing_conflict_first, "existing-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                existing_conflict_second, "existing-second-before\n").succeeded,
+        "Could not arrange the existing-target conflict fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> existing_conflict_writes{
+        {existing_conflict_first, "existing-first-after\n"},
+        {existing_conflict_second, "existing-second-after\n"},
+    };
+    const auto existing_conflict_result = dragonpixel::serialization::save_utf8_transaction(
+        existing_conflict_writes,
+        existing_conflict_root,
+        dragonpixel::serialization::transaction_save_fault::
+            first_target_changed_after_prepared_journal);
+    require(!existing_conflict_result.succeeded
+            && existing_conflict_result.error.find("before any target replacement") != std::string::npos
+            && existing_conflict_result.error.find("pre-image") != std::string::npos
+            && read_file(existing_conflict_first) == "injected-external-change\n"
+            && read_file(existing_conflict_second) == "existing-second-before\n"
+            && recovery_artifact_count(existing_conflict_root) == 0,
+        "Prepublication validation overwrote an externally changed existing target: "
+            + existing_conflict_result.error);
+
+    const auto missing_conflict_root = root / "cm";
+    std::filesystem::remove_all(missing_conflict_root, error);
+    std::filesystem::create_directories(missing_conflict_root);
+    const auto missing_conflict_first = missing_conflict_root / "first.dpescene";
+    const auto missing_conflict_second = missing_conflict_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                missing_conflict_second, "missing-second-before\n").succeeded,
+        "Could not arrange the missing-target conflict fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> missing_conflict_writes{
+        {missing_conflict_first, "missing-first-after\n"},
+        {missing_conflict_second, "missing-second-after\n"},
+    };
+    const auto missing_conflict_result = dragonpixel::serialization::save_utf8_transaction(
+        missing_conflict_writes,
+        missing_conflict_root,
+        dragonpixel::serialization::transaction_save_fault::
+            first_target_changed_after_prepared_journal);
+    require(!missing_conflict_result.succeeded
+            && missing_conflict_result.error.find("before any target replacement") != std::string::npos
+            && read_file(missing_conflict_first) == "injected-external-change\n"
+            && read_file(missing_conflict_second) == "missing-second-before\n"
+            && recovery_artifact_count(missing_conflict_root) == 0,
+        "Prepublication validation removed an externally created target: "
+            + missing_conflict_result.error);
+
+    const auto prefix_conflict_root = root / "cp";
+    std::filesystem::remove_all(prefix_conflict_root, error);
+    std::filesystem::create_directories(prefix_conflict_root);
+    const auto prefix_conflict_first = prefix_conflict_root / "first.dpescene";
+    const auto prefix_conflict_second = prefix_conflict_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                prefix_conflict_first, "prefix-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                prefix_conflict_second, "prefix-second-before\n").succeeded,
+        "Could not arrange the attempted-prefix conflict fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> prefix_conflict_writes{
+        {prefix_conflict_first, "prefix-first-after\n"},
+        {prefix_conflict_second, "prefix-second-after\n"},
+    };
+    const auto prefix_conflict_result = dragonpixel::serialization::save_utf8_transaction(
+        prefix_conflict_writes,
+        prefix_conflict_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_changed_after_first_replace);
+    auto prefix_conflict_first_backup = prefix_conflict_first;
+    prefix_conflict_first_backup += ".bak";
+    require(!prefix_conflict_result.succeeded
+            && prefix_conflict_result.error.find("prior replacements restored") != std::string::npos
+            && read_file(prefix_conflict_first) == "prefix-first-before\n"
+            && read_file(prefix_conflict_second) == "injected-external-change\n"
+            && read_file(prefix_conflict_first_backup) == "prefix-first-before\n"
+            && recovery_artifact_count(prefix_conflict_root) == 0,
+        "Prefix rollback did not restore prior replacements while preserving the conflicting target: "
+            + prefix_conflict_result.error);
+    const auto post_conflict_result = dragonpixel::serialization::save_utf8_transaction(
+        prefix_conflict_writes, prefix_conflict_root);
+    require(post_conflict_result.succeeded
+            && read_file(prefix_conflict_first) == "prefix-first-after\n"
+            && read_file(prefix_conflict_second) == "prefix-second-after\n"
+            && recovery_artifact_count(prefix_conflict_root) == 0,
+        "A clean transaction did not succeed after conflict-preserving rollback: "
+            + post_conflict_result.error);
+
+    const auto publication_window_root = root / "cw";
+    std::filesystem::remove_all(publication_window_root, error);
+    std::filesystem::create_directories(publication_window_root);
+    const auto publication_window_first = publication_window_root / "first.dpescene";
+    const auto publication_window_second = publication_window_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                publication_window_first, "window-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                publication_window_second, "window-second-before\n").succeeded,
+        "Could not arrange the in-publication conflict fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> publication_window_writes{
+        {publication_window_first, "window-first-after\n"},
+        {publication_window_second, "window-second-after\n"},
+    };
+    const auto publication_window_result = dragonpixel::serialization::save_utf8_transaction(
+        publication_window_writes,
+        publication_window_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_changed_during_publication);
+    require(!publication_window_result.succeeded
+            && publication_window_result.error.find("attempted replacements restored")
+                != std::string::npos
+            && read_file(publication_window_first) == "window-first-before\n"
+            && read_file(publication_window_second) == "injected-external-change\n"
+            && recovery_artifact_count(publication_window_root) == 0,
+        "A conflict detected inside the publication helper did not restore only the owned prefix: "
+            + publication_window_result.error);
+
+    const auto reported_api_root = root / "cr";
+    std::filesystem::remove_all(reported_api_root, error);
+    std::filesystem::create_directories(reported_api_root);
+    const auto reported_api_first = reported_api_root / "first.dpescene";
+    const auto reported_api_second = reported_api_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                reported_api_first, "reported-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                reported_api_second, "reported-second-before\n").succeeded,
+        "Could not arrange the reported-publication failure fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> reported_api_writes{
+        {reported_api_first, "reported-first-after\n"},
+        {reported_api_second, "reported-second-after\n"},
+    };
+    const auto reported_api_result = dragonpixel::serialization::save_utf8_transaction(
+        reported_api_writes,
+        reported_api_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_reported_failure_after_publication);
+    require(!reported_api_result.succeeded
+            && read_file(reported_api_first) == "reported-first-before\n"
+            && read_file(reported_api_second) == "reported-second-before\n"
+            && recovery_artifact_count(reported_api_root) == 0,
+        "An ambiguously reported completed publication did not restore the attempted prefix: "
+            + reported_api_result.error);
+
+    const auto ambiguous_change_root = root / "ca";
+    std::filesystem::remove_all(ambiguous_change_root, error);
+    std::filesystem::create_directories(ambiguous_change_root);
+    const auto ambiguous_change_first = ambiguous_change_root / "first.dpescene";
+    const auto ambiguous_change_second = ambiguous_change_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                ambiguous_change_first, "ambiguous-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                ambiguous_change_second, "ambiguous-second-before\n").succeeded,
+        "Could not arrange the ambiguous external-change fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> ambiguous_change_writes{
+        {ambiguous_change_first, "ambiguous-first-after\n"},
+        {ambiguous_change_second, "ambiguous-second-after\n"},
+    };
+    const auto ambiguous_change_result = dragonpixel::serialization::save_utf8_transaction(
+        ambiguous_change_writes,
+        ambiguous_change_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_changed_after_ambiguous_api_failure);
+    require(!ambiguous_change_result.succeeded
+            && read_file(ambiguous_change_first) == "ambiguous-first-before\n"
+            && read_file(ambiguous_change_second) == "injected-external-change\n"
+            && recovery_artifact_count(ambiguous_change_root) == 0,
+        "An external owner after an ambiguous API attempt was not preserved: "
+            + ambiguous_change_result.error);
+
+    const auto unavailable_inspection_root = root / "cu";
+    std::filesystem::remove_all(unavailable_inspection_root, error);
+    std::filesystem::create_directories(unavailable_inspection_root);
+    const auto unavailable_inspection_first = unavailable_inspection_root / "first.dpescene";
+    const auto unavailable_inspection_second = unavailable_inspection_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                unavailable_inspection_first, "unavailable-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                unavailable_inspection_second, "unavailable-second-before\n").succeeded,
+        "Could not arrange the unavailable-inspection fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> unavailable_inspection_writes{
+        {unavailable_inspection_first, "unavailable-first-after\n"},
+        {unavailable_inspection_second, "unavailable-second-after\n"},
+    };
+    const auto unavailable_inspection_result = dragonpixel::serialization::save_utf8_transaction(
+        unavailable_inspection_writes,
+        unavailable_inspection_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_inspection_unavailable_after_ambiguous_api_failure);
+    require(!unavailable_inspection_result.succeeded
+            && unavailable_inspection_result.error.find("no rollback changes were made")
+                != std::string::npos
+            && read_file(unavailable_inspection_first) == "unavailable-first-after\n"
+            && read_file(unavailable_inspection_second) == "unavailable-second-after\n"
+            && recovery_artifact_count(unavailable_inspection_root) == 1,
+        "Unavailable post-attempt inspection did not retain the recoverable transaction unchanged: "
+            + unavailable_inspection_result.error);
+    const auto unavailable_recovery =
+        dragonpixel::serialization::recover_utf8_transactions(unavailable_inspection_root);
+    require(unavailable_recovery.succeeded
+            && read_file(unavailable_inspection_first) == "unavailable-first-before\n"
+            && read_file(unavailable_inspection_second) == "unavailable-second-before\n"
+            && recovery_artifact_count(unavailable_inspection_root) == 0,
+        "Startup recovery did not resolve the retained ambiguous transaction: "
+            + unavailable_recovery.error);
+
+    const auto same_content_result = dragonpixel::serialization::save_utf8_transaction(
+        prefix_conflict_writes, prefix_conflict_root);
+    require(same_content_result.succeeded
+            && read_file(prefix_conflict_first) == "prefix-first-after\n"
+            && read_file(prefix_conflict_second) == "prefix-second-after\n"
+            && recovery_artifact_count(prefix_conflict_root) == 0,
+        "A same-content transaction was not accepted as a committed post-image: "
+            + same_content_result.error);
+
     const auto interrupted_new_target = transaction_root / "interrupted-new.json";
     const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted_creation{
         {interrupted_new_target, "created-before-interruption\n"},

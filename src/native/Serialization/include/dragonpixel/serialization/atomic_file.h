@@ -37,6 +37,12 @@ enum class transaction_save_fault
     committed_journal_reported_failure_after_publication,
     committed_journal_persistent_sharing_violation_then_transient_recovery_read,
     leave_interrupted_after_committed_journal,
+    first_target_changed_after_prepared_journal,
+    second_target_changed_after_first_replace,
+    second_target_changed_during_publication,
+    second_target_reported_failure_after_publication,
+    second_target_changed_after_ambiguous_api_failure,
+    second_target_inspection_unavailable_after_ambiguous_api_failure,
 };
 
 [[nodiscard]] save_result save_utf8_atomic(

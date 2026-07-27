@@ -57,6 +57,7 @@ enum class publication_fault
     transient_sharing_violation_then_topology_unavailable,
     reported_failure_after_publication,
     persistent_sharing_violation,
+    target_changed_after_validation,
 };
 
 enum class publication_target_state
@@ -554,6 +555,30 @@ struct publication_topology_result final
     std::string detail;
 };
 
+publication_topology_result inspect_expected_hash_for_retry(
+    const std::filesystem::path& path,
+    const std::optional<std::string_view>& expected_hash,
+    std::string_view role)
+{
+    if (!expected_hash)
+    {
+        return {publication_topology::safe, {}};
+    }
+    std::string contents;
+    const auto read = read_file(path, contents);
+    if (!read.succeeded)
+    {
+        return {publication_topology::unavailable, read.error};
+    }
+    if (sha256_hex(contents) != *expected_hash)
+    {
+        return {
+            publication_topology::unsafe,
+            "The expected " + std::string{role} + " hash changed during publication."};
+    }
+    return {publication_topology::safe, {}};
+}
+
 save_result windows_publication_failure(
     std::string_view api,
     DWORD error,
@@ -613,7 +638,9 @@ static_assert(replace_file_retryable(ERROR_ACCESS_DENIED));
 publication_topology_result inspect_replace_file_retry_topology(
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
-    const std::filesystem::path& backup)
+    const std::filesystem::path& backup,
+    const std::optional<std::string_view>& expected_target_hash,
+    const std::optional<std::string_view>& expected_staged_hash)
 {
     bool target_exists = false;
     bool target_regular = false;
@@ -639,7 +666,7 @@ publication_topology_result inspect_replace_file_retry_topology(
     {
         return {publication_topology::unavailable, inspected.error};
     }
-    const auto safe = target_exists
+    const auto safe_shape = target_exists
         && target_regular
         && !target_symlink
         && staged_exists
@@ -647,17 +674,26 @@ publication_topology_result inspect_replace_file_retry_topology(
         && !staged_symlink
         && !backup_exists
         && !backup_symlink;
-    return safe
-        ? publication_topology_result{publication_topology::safe, {}}
-        : publication_topology_result{
+    if (!safe_shape)
+    {
+        return {
             publication_topology::unsafe,
             "The target, staged file, or backup changed during publication."};
+    }
+    auto hash = inspect_expected_hash_for_retry(target, expected_target_hash, "target");
+    if (hash.state != publication_topology::safe)
+    {
+        return hash;
+    }
+    return inspect_expected_hash_for_retry(staged, expected_staged_hash, "staged file");
 }
 
 publication_topology_result inspect_move_file_retry_topology(
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
     publication_target_state expected_target_state,
+    const std::optional<std::string_view>& expected_target_hash,
+    const std::optional<std::string_view>& expected_staged_hash,
     inspection_fault injected_fault = inspection_fault::none)
 {
     bool target_exists = false;
@@ -677,56 +713,118 @@ publication_topology_result inspect_move_file_retry_topology(
     {
         return {publication_topology::unavailable, inspected.error};
     }
-    const auto safe = staged_exists && staged_regular && !staged_symlink
+    const auto safe_shape = staged_exists && staged_regular && !staged_symlink
         && (expected_target_state == publication_target_state::existing
         ? target_exists && target_regular && !target_symlink
         : !target_exists && !target_symlink);
-    return safe
-        ? publication_topology_result{publication_topology::safe, {}}
-        : publication_topology_result{
+    if (!safe_shape)
+    {
+        return {
             publication_topology::unsafe,
             "The target or staged file changed during publication."};
+    }
+    auto hash = inspect_expected_hash_for_retry(target, expected_target_hash, "target");
+    if (hash.state != publication_topology::safe)
+    {
+        return hash;
+    }
+    return inspect_expected_hash_for_retry(staged, expected_staged_hash, "staged file");
 }
 #endif
+
+save_result validate_expected_publication_hash(
+    const std::filesystem::path& path,
+    const std::optional<std::string_view>& expected_hash,
+    std::string_view role)
+{
+    if (!expected_hash)
+    {
+        return {true, {}};
+    }
+    std::string contents;
+    const auto read = read_file(path, contents);
+    if (!read.succeeded)
+    {
+        return read;
+    }
+    return sha256_hex(contents) == *expected_hash
+        ? save_result{true, {}}
+        : save_result{
+            false,
+            "The expected " + std::string{role} + " hash changed before publication."};
+}
 
 save_result replace_staged_file(
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
     const std::optional<std::filesystem::path>& backup,
     publication_target_state expected_target_state,
-    publication_fault injected_fault = publication_fault::none)
+    publication_fault injected_fault = publication_fault::none,
+    std::optional<std::string_view> expected_target_hash = std::nullopt,
+    std::optional<std::string_view> expected_staged_hash = std::nullopt,
+    bool* api_was_invoked = nullptr)
 {
-    bool target_exists = false;
-    bool target_regular = false;
-    bool target_symlink = false;
-    auto inspected = inspect_path(target, target_exists, target_regular, target_symlink);
-    if (!inspected.succeeded)
+    if (api_was_invoked)
     {
-        return inspected;
+        *api_was_invoked = false;
     }
-    bool staged_exists = false;
-    bool staged_regular = false;
-    bool staged_symlink = false;
-    inspected = inspect_path(staged, staged_exists, staged_regular, staged_symlink);
-    if (!inspected.succeeded)
+    const auto validate_current_state = [&]() -> save_result {
+        bool target_exists = false;
+        bool target_regular = false;
+        bool target_symlink = false;
+        auto inspected = inspect_path(target, target_exists, target_regular, target_symlink);
+        if (!inspected.succeeded)
+        {
+            return inspected;
+        }
+        bool staged_exists = false;
+        bool staged_regular = false;
+        bool staged_symlink = false;
+        inspected = inspect_path(staged, staged_exists, staged_regular, staged_symlink);
+        if (!inspected.succeeded)
+        {
+            return inspected;
+        }
+        if (!staged_exists || !staged_regular || staged_symlink)
+        {
+            return {false, "The staged publication file was missing or unsafe: staged=\""
+                + path_to_utf8(staged) + "\"."};
+        }
+        const auto target_matches = expected_target_state == publication_target_state::existing
+            ? target_exists && target_regular && !target_symlink
+            : !target_exists && !target_symlink;
+        if (!target_matches)
+        {
+            return {false, "The publication target did not match its expected "
+                + std::string{expected_target_state == publication_target_state::existing ? "existing" : "missing"}
+                + " state: target=\"" + path_to_utf8(target) + "\"; staged=\""
+                + path_to_utf8(staged) + "\"; backup="
+                + (backup ? "\"" + path_to_utf8(*backup) + "\"" : "<none>") + "."};
+        }
+        auto hash = validate_expected_publication_hash(target, expected_target_hash, "target");
+        if (!hash.succeeded)
+        {
+            return hash;
+        }
+        return validate_expected_publication_hash(staged, expected_staged_hash, "staged file");
+    };
+    auto validated = validate_current_state();
+    if (!validated.succeeded)
     {
-        return inspected;
+        return validated;
     }
-    if (!staged_exists || !staged_regular || staged_symlink)
+    if (injected_fault == publication_fault::target_changed_after_validation)
     {
-        return {false, "The staged publication file was missing or unsafe: staged=\""
-            + path_to_utf8(staged) + "\"."};
-    }
-    const auto target_matches = expected_target_state == publication_target_state::existing
-        ? target_exists && target_regular && !target_symlink
-        : !target_exists && !target_symlink;
-    if (!target_matches)
-    {
-        return {false, "The publication target did not match its expected "
-            + std::string{expected_target_state == publication_target_state::existing ? "existing" : "missing"}
-            + " state: target=\"" + path_to_utf8(target) + "\"; staged=\""
-            + path_to_utf8(staged) + "\"; backup="
-            + (backup ? "\"" + path_to_utf8(*backup) + "\"" : "<none>") + "."};
+        const auto changed = write_and_flush(target, "injected-external-change\n");
+        if (!changed.succeeded)
+        {
+            return changed;
+        }
+        validated = validate_current_state();
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
     }
     if (expected_target_state == publication_target_state::missing && backup)
     {
@@ -745,7 +843,8 @@ save_result replace_staged_file(
         std::size_t delay_index = 0;
         std::size_t topology_probes = 1;
         std::size_t api_attempts = 0;
-        auto topology = inspect_replace_file_retry_topology(target, staged, *backup);
+        auto topology = inspect_replace_file_retry_topology(
+            target, staged, *backup, expected_target_hash, expected_staged_hash);
         for (;;)
         {
             if (topology.state != publication_topology::safe)
@@ -759,9 +858,14 @@ save_result replace_staged_file(
                 }
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
-                topology = inspect_replace_file_retry_topology(target, staged, *backup);
+                topology = inspect_replace_file_retry_topology(
+                    target, staged, *backup, expected_target_hash, expected_staged_hash);
                 ++topology_probes;
                 continue;
+            }
+            if (api_was_invoked)
+            {
+                *api_was_invoked = true;
             }
             ++api_attempts;
             if (ReplaceFileW(target.c_str(), staged.c_str(), backup->c_str(), 0, nullptr, nullptr))
@@ -774,7 +878,8 @@ save_result replace_staged_file(
                 return windows_publication_failure(
                     "ReplaceFileW", last_error, api_attempts, target, staged, backup);
             }
-            topology = inspect_replace_file_retry_topology(target, staged, *backup);
+            topology = inspect_replace_file_retry_topology(
+                target, staged, *backup, expected_target_hash, expected_staged_hash);
             ++topology_probes;
             if (topology.state == publication_topology::unsafe)
             {
@@ -793,7 +898,8 @@ save_result replace_staged_file(
             }
             std::this_thread::sleep_for(
                 std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
-            topology = inspect_replace_file_retry_topology(target, staged, *backup);
+            topology = inspect_replace_file_retry_topology(
+                target, staged, *backup, expected_target_hash, expected_staged_hash);
             ++topology_probes;
         }
     }
@@ -811,7 +917,8 @@ save_result replace_staged_file(
     std::size_t delay_index = 0;
     std::size_t topology_probes = 1;
     std::size_t api_attempts = 0;
-    auto topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+    auto topology = inspect_move_file_retry_topology(
+        target, staged, expected_target_state, expected_target_hash, expected_staged_hash);
     for (;;)
     {
         if (topology.state != publication_topology::safe)
@@ -825,9 +932,14 @@ save_result replace_staged_file(
             }
             std::this_thread::sleep_for(
                 std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
-            topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+            topology = inspect_move_file_retry_topology(
+                target, staged, expected_target_state, expected_target_hash, expected_staged_hash);
             ++topology_probes;
             continue;
+        }
+        if (api_was_invoked)
+        {
+            *api_was_invoked = true;
         }
         ++api_attempts;
         const auto simulate_failure = persistent_api_fault
@@ -854,6 +966,8 @@ save_result replace_staged_file(
             target,
             staged,
             expected_target_state,
+            expected_target_hash,
+            expected_staged_hash,
             inject_topology_unavailable
                 ? inspection_fault::transient_unavailable
                 : inspection_fault::none);
@@ -876,7 +990,8 @@ save_result replace_staged_file(
         }
         std::this_thread::sleep_for(
             std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
-        topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+        topology = inspect_move_file_retry_topology(
+            target, staged, expected_target_state, expected_target_hash, expected_staged_hash);
         ++topology_probes;
     }
 #else
@@ -888,12 +1003,60 @@ save_result replace_staged_file(
         {
             return removed;
         }
+        validated = validate_current_state();
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
+        if (api_was_invoked)
+        {
+            *api_was_invoked = true;
+        }
         if (::link(target.c_str(), backup->c_str()) != 0)
         {
             return {false, std::strerror(errno)};
         }
+        std::error_code identity_error;
+        const auto same_identity = std::filesystem::equivalent(target, *backup, identity_error);
+        if (identity_error || !same_identity)
+        {
+            return {false, "The publication backup did not retain the validated target identity."};
+        }
+        validated = validate_expected_publication_hash(*backup, expected_target_hash, "backup");
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
+        validated = validate_current_state();
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
     }
-    if (::rename(staged.c_str(), target.c_str()) != 0)
+    else
+    {
+        validated = validate_current_state();
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
+    }
+    if (api_was_invoked)
+    {
+        *api_was_invoked = true;
+    }
+    if (expected_target_state == publication_target_state::missing)
+    {
+        if (::link(staged.c_str(), target.c_str()) != 0)
+        {
+            return {false, std::strerror(errno)};
+        }
+        if (::unlink(staged.c_str()) != 0)
+        {
+            return {false, std::strerror(errno)};
+        }
+    }
+    else if (::rename(staged.c_str(), target.c_str()) != 0)
     {
         return {false, std::strerror(errno)};
     }
@@ -1456,10 +1619,70 @@ save_result inspect_target_state(const transaction_entry& entry, target_state& s
     return {true, {}};
 }
 
-save_result restore_preimage(const transaction_entry& entry)
+save_result validate_entry_publication_precondition(const transaction_entry& entry)
 {
+    target_state state{};
+    auto inspected = inspect_target_state(entry, state);
+    if (!inspected.succeeded)
+    {
+        return inspected;
+    }
+    const auto target_matches = entry.target_existed
+        ? state == target_state::preimage
+        : state == target_state::missing;
+    if (!target_matches)
+    {
+        return {
+            false,
+            "A transaction target changed after its pre-image was captured."};
+    }
+    std::string staged_contents;
+    inspected = read_file(entry.staged, staged_contents);
+    if (!inspected.succeeded)
+    {
+        return inspected;
+    }
+    return sha256_hex(staged_contents) == entry.postimage_hash
+        ? save_result{true, {}}
+        : save_result{false, "A transaction staged post-image changed before publication."};
+}
+
+save_result validate_transaction_publication_preconditions(const transaction_record& record)
+{
+    for (const auto& entry : record.entries)
+    {
+        const auto validated = validate_entry_publication_precondition(entry);
+        if (!validated.succeeded)
+        {
+            return validated;
+        }
+    }
+    return {true, {}};
+}
+
+save_result restore_preimage(
+    const transaction_entry& entry,
+    bool allow_missing_target = false)
+{
+    target_state state{};
+    auto result = inspect_target_state(entry, state);
+    if (!result.succeeded)
+    {
+        return result;
+    }
+    if (state == target_state::preimage)
+    {
+        return {true, {}};
+    }
+    if (state != target_state::postimage
+        && !(allow_missing_target && state == target_state::missing))
+    {
+        return {
+            false,
+            "The transaction target changed before pre-image restoration; no overwrite was attempted."};
+    }
     std::string contents;
-    auto result = read_file(entry.preimage, contents);
+    result = read_file(entry.preimage, contents);
     if (!result.succeeded)
     {
         return result;
@@ -1471,13 +1694,176 @@ save_result restore_preimage(const transaction_entry& entry)
         static_cast<void>(remove_file(temporary));
         return {false, "Could not stage a transaction pre-image: " + result.error};
     }
+    const auto expected_target_state = state == target_state::missing
+        ? publication_target_state::missing
+        : publication_target_state::existing;
+    const auto expected_target_hash = state == target_state::missing
+        ? std::optional<std::string_view>{}
+        : std::optional<std::string_view>{entry.postimage_hash};
     result = replace_staged_file(
-        entry.target, temporary, std::nullopt, publication_target_state::existing);
+        entry.target,
+        temporary,
+        std::nullopt,
+        expected_target_state,
+        publication_fault::none,
+        expected_target_hash,
+        entry.preimage_hash);
     if (!result.succeeded)
     {
         static_cast<void>(remove_file(temporary));
     }
     return result;
+}
+
+save_result remove_created_postimage(const transaction_entry& entry)
+{
+    target_state state{};
+    const auto inspected = inspect_target_state(entry, state);
+    if (!inspected.succeeded)
+    {
+        return inspected;
+    }
+    if (state == target_state::missing)
+    {
+        return {true, {}};
+    }
+    return state == target_state::postimage
+        ? remove_file(entry.target)
+        : save_result{
+            false,
+            "A transaction-created target changed before rollback; no removal was attempted."};
+}
+
+save_result rollback_transaction_prefix(
+    transaction_record& record,
+    std::size_t attempted_count,
+    std::optional<std::size_t> allow_missing_existing_index = std::nullopt)
+{
+    std::vector<target_state> states;
+    states.reserve(attempted_count);
+    for (std::size_t index = 0; index < attempted_count; ++index)
+    {
+        const auto& entry = record.entries[index];
+        const auto preimage = validate_preimage_file(entry);
+        if (!preimage.succeeded)
+        {
+            return preimage;
+        }
+        target_state state{};
+        const auto inspected = inspect_target_state(entry, state);
+        if (!inspected.succeeded)
+        {
+            return inspected;
+        }
+        const auto allowed = entry.target_existed
+            ? state == target_state::preimage || state == target_state::postimage
+                || (allow_missing_existing_index == index && state == target_state::missing)
+            : state == target_state::missing || state == target_state::postimage;
+        if (!allowed)
+        {
+            return {
+                false,
+                "Transaction prefix rollback found unexpected target contents and made no changes."};
+        }
+        states.push_back(state);
+    }
+
+    for (std::size_t index = 0; index < attempted_count; ++index)
+    {
+        const auto& entry = record.entries[index];
+        if ((entry.target_existed && states[index] == target_state::preimage)
+            || (!entry.target_existed && states[index] == target_state::missing))
+        {
+            continue;
+        }
+        const auto restored = entry.target_existed
+            ? restore_preimage(
+                entry,
+                allow_missing_existing_index == index && states[index] == target_state::missing)
+            : remove_created_postimage(entry);
+        if (!restored.succeeded)
+        {
+            return restored;
+        }
+    }
+    const auto cleaned = cleanup_staged_files(record);
+    return cleaned.succeeded ? remove_transaction_directory(record) : cleaned;
+}
+
+save_result rollback_after_failed_replacement(
+    transaction_record& record,
+    std::size_t current_index,
+    bool api_was_invoked,
+    bool inject_inspection_unavailable = false)
+{
+    if (!api_was_invoked)
+    {
+        return rollback_transaction_prefix(record, current_index);
+    }
+
+    if (inject_inspection_unavailable)
+    {
+        return {
+            false,
+            "The failed publication target could not be inspected; no rollback changes were made: "
+            "injected transient inspection failure."};
+    }
+
+    const auto& current = record.entries[current_index];
+    target_state state{};
+    const auto inspected = inspect_target_state(current, state);
+    if (!inspected.succeeded)
+    {
+        return {
+            false,
+            "The failed publication target could not be inspected; no rollback changes were made: "
+                + inspected.error};
+    }
+    if (state == target_state::unexpected)
+    {
+        return rollback_transaction_prefix(record, current_index);
+    }
+
+    const auto allow_missing_existing = current.target_existed && state == target_state::missing
+        ? std::optional<std::size_t>{current_index}
+        : std::nullopt;
+    return rollback_transaction_prefix(record, current_index + 1, allow_missing_existing);
+}
+
+save_result validate_committed_transaction(const transaction_record& record)
+{
+    for (const auto& entry : record.entries)
+    {
+        target_state state{};
+        auto inspected = inspect_target_state(entry, state);
+        if (!inspected.succeeded)
+        {
+            return inspected;
+        }
+        const auto target_matches_postimage = state == target_state::postimage
+            || (entry.target_existed
+                && entry.preimage_hash == entry.postimage_hash
+                && state == target_state::preimage);
+        if (!target_matches_postimage)
+        {
+            return {false, "A transaction target changed before commit publication."};
+        }
+        if (!entry.target_existed)
+        {
+            continue;
+        }
+        std::string backup_contents;
+        inspected = read_file(entry.backup, backup_contents);
+        if (!inspected.succeeded)
+        {
+            return inspected;
+        }
+        if (sha256_hex(backup_contents) != entry.preimage_hash)
+        {
+            return {false, "A transaction recovery backup changed before commit publication."};
+        }
+    }
+    return {true, {}};
 }
 
 std::string preimage_filename(std::size_t index)
@@ -1708,7 +2094,7 @@ save_result recover_transaction(
         }
         else if (!entry.target_existed && states[index] == target_state::postimage)
         {
-            const auto removed = remove_file(entry.target);
+            const auto removed = remove_created_postimage(entry);
             if (!removed.succeeded)
             {
                 return removed;
@@ -2014,9 +2400,33 @@ save_result save_utf8_transaction(
             return recovered.succeeded ? result
                 : save_result{false, result.error + " Recovery failed: " + recovered.error};
         }
+        if (injected_fault == transaction_save_fault::first_target_changed_after_prepared_journal)
+        {
+            result = write_and_flush(record.entries.front().target, "injected-external-change\n");
+            if (!result.succeeded)
+            {
+                const auto discarded = rollback_transaction_prefix(record, 0);
+                return discarded.succeeded ? result
+                    : save_result{false, result.error + " Cleanup failed: " + discarded.error};
+            }
+        }
+        result = validate_transaction_publication_preconditions(record);
+        if (!result.succeeded)
+        {
+            const auto discarded = rollback_transaction_prefix(record, 0);
+            return discarded.succeeded
+                ? save_result{
+                    false,
+                    "Transaction publication was rejected before any target replacement: "
+                        + result.error}
+                : save_result{
+                    false,
+                    "Transaction publication was rejected before any target replacement, and cleanup failed: "
+                        + result.error + " " + discarded.error};
+        }
         if (injected_fault == transaction_save_fault::after_staging)
         {
-            const auto recovered = recover_transaction(record);
+            const auto recovered = rollback_transaction_prefix(record, 0);
             return recovered.succeeded
                 ? save_result{false, "Injected transaction failure after staging; pre-images restored."}
                 : save_result{false, "Injected transaction failure after staging; recovery failed: " + recovered.error};
@@ -2025,19 +2435,84 @@ save_result save_utf8_transaction(
         for (std::size_t index = 0; index < record.entries.size(); ++index)
         {
             auto& entry = record.entries[index];
+            result = validate_entry_publication_precondition(entry);
+            if (!result.succeeded)
+            {
+                const auto recovered = rollback_transaction_prefix(record, index);
+                return recovered.succeeded
+                    ? save_result{
+                        false,
+                        "Transaction publication stopped at a changed target; prior replacements restored: "
+                            + result.error}
+                    : save_result{
+                        false,
+                        "Transaction publication stopped at a changed target, and prefix rollback failed: "
+                            + result.error + " " + recovered.error};
+            }
+            const auto expected_target_hash = entry.target_existed
+                ? std::optional<std::string_view>{entry.preimage_hash}
+                : std::nullopt;
+            bool api_was_invoked = false;
+            const auto replacement_fault = index == 1
+                    && injected_fault == transaction_save_fault::second_target_changed_during_publication
+                ? publication_fault::target_changed_after_validation
+                : publication_fault::none;
             result = replace_staged_file(
                 entry.target,
                 entry.staged,
                 entry.target_existed ? std::optional{entry.backup} : std::nullopt,
                 entry.target_existed
                     ? publication_target_state::existing
-                    : publication_target_state::missing);
+                    : publication_target_state::missing,
+                replacement_fault,
+                expected_target_hash,
+                entry.postimage_hash,
+                &api_was_invoked);
+            const auto force_reported_failure = index == 1
+                && (injected_fault
+                        == transaction_save_fault::second_target_reported_failure_after_publication
+                    || injected_fault
+                        == transaction_save_fault::second_target_changed_after_ambiguous_api_failure
+                    || injected_fault
+                        == transaction_save_fault::
+                            second_target_inspection_unavailable_after_ambiguous_api_failure);
+            if (result.succeeded
+                && index == 1
+                && injected_fault
+                    == transaction_save_fault::second_target_changed_after_ambiguous_api_failure)
+            {
+                result = write_and_flush(entry.target, "injected-external-change\n");
+            }
+            if (result.succeeded && force_reported_failure)
+            {
+                result = {
+                    false,
+                    "Injected ambiguous failure after the target publication API completed."};
+            }
             if (!result.succeeded)
             {
-                const auto recovered = recover_transaction(record);
+                const auto recovered = rollback_after_failed_replacement(
+                    record,
+                    index,
+                    api_was_invoked,
+                    injected_fault
+                        == transaction_save_fault::
+                            second_target_inspection_unavailable_after_ambiguous_api_failure);
                 return recovered.succeeded
-                    ? save_result{false, "Transaction commit failed; pre-images restored: " + result.error}
-                    : save_result{false, "Transaction commit and recovery failed: " + result.error + " " + recovered.error};
+                    ? save_result{false, "Transaction commit failed; attempted replacements restored: " + result.error}
+                    : save_result{false, "Transaction commit and prefix rollback failed: " + result.error + " " + recovered.error};
+            }
+            if (index == 0
+                && injected_fault == transaction_save_fault::second_target_changed_after_first_replace
+                && record.entries.size() > 1)
+            {
+                result = write_and_flush(record.entries[1].target, "injected-external-change\n");
+                if (!result.succeeded)
+                {
+                    const auto recovered = rollback_transaction_prefix(record, index + 1);
+                    return recovered.succeeded ? result
+                        : save_result{false, result.error + " Prefix rollback failed: " + recovered.error};
+                }
             }
             if (index == 0 && injected_fault == transaction_save_fault::leave_interrupted_after_first_replace)
             {
@@ -2051,6 +2526,20 @@ save_result save_utf8_transaction(
                     : save_result{false, "Injected transaction failure after the first replacement; recovery failed: "
                         + recovered.error};
             }
+        }
+
+        result = validate_committed_transaction(record);
+        if (!result.succeeded)
+        {
+            const auto recovered = recover_transaction(record);
+            return recovered.succeeded
+                ? save_result{
+                    false,
+                    "Transaction commit validation failed; pre-images restored: " + result.error}
+                : save_result{
+                    false,
+                    "Transaction commit validation and recovery failed: "
+                        + result.error + " " + recovered.error};
         }
 
         record.phase = "committed";
