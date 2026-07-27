@@ -66,11 +66,17 @@ Relaunch the current bundle without building:
 & '.\scripts\dev\Launch-Editor.ps1' -Production -SkipBuild
 ```
 
-The directly runnable executable is `out\product\windows-x64\DragonPixelEditor\DragonPixelEditor.exe`. Its adjacent bundle includes Qt plugins, native runtime libraries, MonoGame/KNI workers, contracts, Python tools, schemas, a sample, and a SHA-256 file manifest. This is a production-style developer bundle for rapid local testing; it is not yet the signed, clean-machine-validated POC R release package.
+The directly runnable executable is `out\product\windows-x64\DragonPixelEditor\DragonPixelEditor.exe`. Its adjacent bundle includes Qt plugins, native runtime libraries, MonoGame/KNI workers, the isolated Tiled importer worker, contracts, Python tools, schemas, a sample, and a SHA-256 file manifest. This is a production-style developer bundle for rapid local testing; it is not yet the signed, clean-machine-validated POC R release package.
 
 The editor opens the 2D/3D sample in authoring mode. The Hierarchy, typed Inspector, Project Explorer, Scene View, and structured Console are model-backed full-grid docks: there is no reserved center obstruction, and panels can split, tab, float, move to any dock area, reset deterministically, and restore versioned per-user layouts. GameObject presets, multi-selection, component editing, direct New C# Script/New C++ Component attachment, asset drag/drop, Undo/Redo, workspaces, picking, camera controls, and Move/Rotate/Scale gizmos route authoritative edits through validated scene transactions. Contained C#/C++ component sources appear in Project Explorer; double-clicking one or choosing the Inspector component-card Rider edit action regenerates a disposable `.dragonpixel/Ide/Rider` solution and opens the selected source in JetBrains Rider without loading project code into the editor process.
 
 A dedicated preview worker consumes the editor-owned mirror and reloads revisions in place. Play launches a separate MonoGame or experimental KNI worker from an immutable snapshot. Simulate Preview runs an isolated native Box2D/Jolt world; Play always owns a disposable runtime world. Stop destroys runtime state without writing simulated transforms into the authoring scene. Both framework adapters use real graphics-device render targets, revisioned local IPC, ID-buffer picking, and BGRA8 shared frames.
+
+## Tiled tilemap import
+
+With a project open, choose **Assets > Import Tiled Tilemap...** (`Ctrl+Alt+T`), select a `.tmj` or JSON-format Tiled map, and enter its pixels-per-unit scale. A successful import creates a contained atlas texture, reusable TileSet, and tilemap with version-3 asset sidecars, refreshes Project Explorer, and opens the map in the existing Tile Palette.
+
+The current deliberately small compatibility slice accepts orthogonal maps with finite numeric arrays or infinite numeric chunks, exactly one inline or external JSON atlas TileSet, and one relative PNG atlas. It preserves layer order, names, visibility, negative coordinates, and all eight orthogonal Tiled GID flip/rotation combinations. TMX/TSX XML, multiple TileSets, object/image/group layers, encoded or compressed layer data, isometric/hex/staggered maps, image collections, animation/rule/terrain data, collision-object conversion, and reimport are not yet supported. Unsupported input is rejected before any project file is published. See the [Tiled import feature plan](docs/Plans/Dragon%20Pixel%20Engine%20Tiled%20Tilemap%20Import%20Plan.md) for the exact contract and evidence.
 
 ## Ubuntu verification from Windows
 
