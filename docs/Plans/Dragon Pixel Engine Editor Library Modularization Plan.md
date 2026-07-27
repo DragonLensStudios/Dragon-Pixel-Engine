@@ -1,6 +1,6 @@
 # Feature Plan: Dragon Pixel Engine Editor Library Modularization
 
-> **Status:** Implementation, verification, and aggregate review complete; publication pending
+> **Status:** Ready for review — draft PR #3 open and unmerged
 > **Branch:** `feature/editor-library-modularization`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers
@@ -167,9 +167,9 @@ The implementation and first verification run on Windows 11 x64 because the curr
 - [x] Exact evidence and remaining platform/POC/ADR limitations are recorded.
 - [x] Mirrored documentation and Git whitespace checks pass.
 - [x] Aggregate diff and commit sequence reviewed.
-- [ ] Branch pushed.
-- [ ] Draft PR opened into `develop`.
-- [ ] PR left unmerged for human review.
+- [x] Branch pushed.
+- [x] Draft PR opened into `develop`.
+- [x] PR left unmerged for human review.
 
 ## Work Log
 
@@ -187,7 +187,8 @@ The implementation and first verification run on Windows 11 x64 because the curr
 | 2026-07-27 | AddressSanitizer verification passed | The supported MSVC ASan build completed in **44.48 seconds** with zero managed warnings/errors. Focused CTest passed **5/5 in 403.70 seconds**: MonoGame 10.10 s, KNI 12.06 s, crash recovery 11.60 s, `s2.editor_interactions` 191.13 s, and `poc_h.qt_interactions` 178.80 s. Generated Ninja metadata confirms `/fsanitize=address` applies to the shared `EditorWindow.cpp` object. |
 | 2026-07-27 | Production bundle verified | The normal `Build-Production-Editor.ps1` path completed in **19.68 seconds**, including the packaged executable-relative MonoGame self-test. The developer bundle contains **188** manifest records with zero missing, hash-mismatched, or unlisted files. Editor SHA-256 is `2DB9161750239427FDC43A9D2E79EF64C137454465C42E0A2E6480BE7DD4C4C5`; manifest SHA-256 is `3E81D5C233D18DC2D1065BAD8E4FB718CF3026159B88B6481B70AC027CBBB53C`; `releaseGateSatisfied` remains correctly `false`. An earlier `-Fast` refresh passed layout/manifest generation but was not used as self-test evidence because that mode intentionally skips the smoke test. |
 | 2026-07-27 | Aggregate branch review passed | Reviewed the complete `origin/develop...HEAD` commit sequence and aggregate nine-file scope, including the pending evidence updates. The branch contains the mirrored feature plan, the reusable editor object-library extraction, the object-library-safe warning/sanitizer helper, and current workflow/status documentation only. No C++ behavior, executable/test identity, test registration, timeout, platform threshold, public contract, architecture revision, support claim, or unrelated file changes. `git diff --check` passes. |
+| 2026-07-27 | Branch published for human review | Pushed `feature/editor-library-modularization` through reviewed commit `918aadc` and opened draft PR [#3](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/3) into `develop`. The GitHub connector returned HTTP 403 for PR creation, so the authenticated GitHub CLI fallback created the draft. The PR remains unmerged; this final mirrored handoff record is the only post-review content change. |
 
 ## Handoff Notes
 
-Implementation, scoped verification, and aggregate review are complete. The internal build boundary changes no engine/runtime contract and promotes no POC, ADR, slice, release, platform, or KNI claim. Current Ubuntu/macOS matrices, complete POC H accessibility evidence, and the full `EditorWindow` service split remain open. The remaining handoff work is final mirror/whitespace verification, push, and a draft PR into `develop`; do not begin CI, public-repository, packaging-breadth, platform-matrix, or POC J work on this branch.
+Implementation, scoped verification, aggregate review, and publication are complete. The internal build boundary changes no engine/runtime contract and promotes no POC, ADR, slice, release, platform, or KNI claim. Current Ubuntu/macOS matrices, complete POC H accessibility evidence, and the full `EditorWindow` service split remain open. Draft PR [#3](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/3) is open into `develop` and remains unmerged for human review. Do not begin CI, public-repository, packaging-breadth, platform-matrix, or POC J work on this branch.
