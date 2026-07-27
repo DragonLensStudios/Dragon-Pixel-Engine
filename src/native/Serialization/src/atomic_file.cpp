@@ -52,6 +52,8 @@ enum class publication_fault
 {
     none,
     transient_sharing_violation,
+    transient_sharing_violation_then_topology_unavailable,
+    reported_failure_after_publication,
     persistent_sharing_violation,
 };
 
@@ -60,6 +62,28 @@ enum class publication_target_state
     missing,
     existing,
 };
+
+enum class read_fault
+{
+    none,
+    transient_open_failure,
+};
+
+enum class inspection_fault
+{
+    none,
+    transient_unavailable,
+};
+
+enum class recovery_fault
+{
+    none,
+    transient_preimage_open_failure,
+};
+
+#if defined(_WIN32)
+constexpr std::array<DWORD, 6> windows_retry_delays_ms{1, 2, 4, 8, 16, 32};
+#endif
 
 std::filesystem::path ascii_path(std::string_view value)
 {
@@ -165,8 +189,13 @@ save_result inspect_path(
     const std::filesystem::path& value,
     bool& exists,
     bool& is_regular,
-    bool& is_symlink)
+    bool& is_symlink,
+    inspection_fault injected_fault = inspection_fault::none)
 {
+    if (injected_fault == inspection_fault::transient_unavailable)
+    {
+        return {false, "Injected transient path-inspection failure."};
+    }
     std::error_code error;
     const auto status = std::filesystem::symlink_status(value, error);
     if (error == std::errc::no_such_file_or_directory)
@@ -186,8 +215,55 @@ save_result inspect_path(
     return {true, {}};
 }
 
-save_result read_file(const std::filesystem::path& value, std::string& contents)
+save_result read_file(
+    const std::filesystem::path& value,
+    std::string& contents,
+    read_fault injected_fault = read_fault::none)
 {
+#if defined(_WIN32)
+    std::string last_error = "The file could not be opened.";
+    for (std::size_t attempt = 0;; ++attempt)
+    {
+        bool exists = false;
+        bool regular = false;
+        bool symlink = false;
+        const auto inspected = inspect_path(value, exists, regular, symlink);
+        if (inspected.succeeded && (!exists || !regular || symlink))
+        {
+            return {false, "Could not safely open " + path_to_utf8(value) + " for reading."};
+        }
+        const auto simulate_failure = injected_fault == read_fault::transient_open_failure
+            && attempt == 0;
+        if (inspected.succeeded && !simulate_failure)
+        {
+            std::ifstream input{value, std::ios::binary};
+            if (input)
+            {
+                contents.assign(std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{});
+                return input.bad() ? save_result{false, "Could not read " + path_to_utf8(value) + "."}
+                                   : save_result{true, {}};
+            }
+            last_error = "The file could not be opened.";
+        }
+        else if (!inspected.succeeded)
+        {
+            last_error = inspected.error;
+        }
+        else
+        {
+            last_error = "Injected transient file-open failure.";
+        }
+
+        if (attempt >= windows_retry_delays_ms.size())
+        {
+            return {false, "Could not open " + path_to_utf8(value) + " for reading after "
+                + std::to_string(attempt + 1) + " attempt(s): " + last_error};
+        }
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds{windows_retry_delays_ms[attempt]});
+    }
+#else
+    static_cast<void>(injected_fault);
     std::ifstream input{value, std::ios::binary};
     if (!input)
     {
@@ -196,6 +272,7 @@ save_result read_file(const std::filesystem::path& value, std::string& contents)
     contents.assign(std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{});
     return input.bad() ? save_result{false, "Could not read " + path_to_utf8(value) + "."}
                        : save_result{true, {}};
+#endif
 }
 
 class sha256 final
@@ -423,8 +500,6 @@ save_result remove_file(const std::filesystem::path& value)
 }
 
 #if defined(_WIN32)
-constexpr std::array<DWORD, 6> publication_retry_delays_ms{1, 2, 4, 8, 16, 32};
-
 std::string windows_system_message(DWORD error)
 {
     std::array<wchar_t, 512> buffer{};
@@ -463,6 +538,19 @@ std::string windows_system_message(DWORD error)
     return message;
 }
 
+enum class publication_topology
+{
+    safe,
+    unavailable,
+    unsafe,
+};
+
+struct publication_topology_result final
+{
+    publication_topology state{};
+    std::string detail;
+};
+
 save_result windows_publication_failure(
     std::string_view api,
     DWORD error,
@@ -477,6 +565,24 @@ save_result windows_publication_failure(
             + windows_system_message(error) + ") after " + std::to_string(attempts)
             + " attempt(s); target=\"" + path_to_utf8(target) + "\"; staged=\""
             + path_to_utf8(staged) + "\"; backup="
+            + (backup ? "\"" + path_to_utf8(*backup) + "\"" : "<none>") + "."};
+}
+
+save_result windows_topology_failure(
+    std::string_view api,
+    std::size_t probes,
+    std::size_t api_attempts,
+    const publication_topology_result& topology,
+    const std::filesystem::path& target,
+    const std::filesystem::path& staged,
+    const std::optional<std::filesystem::path>& backup)
+{
+    return {
+        false,
+        "Could not verify a safe " + std::string{api} + " publication topology after "
+            + std::to_string(probes) + " probe(s) and " + std::to_string(api_attempts)
+            + " API attempt(s): " + topology.detail + " target=\"" + path_to_utf8(target)
+            + "\"; staged=\"" + path_to_utf8(staged) + "\"; backup="
             + (backup ? "\"" + path_to_utf8(*backup) + "\"" : "<none>") + "."};
 }
 
@@ -501,7 +607,7 @@ static_assert(!replace_file_retryable(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2));
 static_assert(move_file_retryable(ERROR_ACCESS_DENIED));
 static_assert(replace_file_retryable(ERROR_ACCESS_DENIED));
 
-bool replace_file_retry_topology_is_safe(
+publication_topology_result inspect_replace_file_retry_topology(
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
     const std::filesystem::path& backup)
@@ -515,10 +621,22 @@ bool replace_file_retry_topology_is_safe(
     bool backup_exists = false;
     bool backup_regular = false;
     bool backup_symlink = false;
-    return inspect_path(target, target_exists, target_regular, target_symlink).succeeded
-        && inspect_path(staged, staged_exists, staged_regular, staged_symlink).succeeded
-        && inspect_path(backup, backup_exists, backup_regular, backup_symlink).succeeded
-        && target_exists
+    auto inspected = inspect_path(target, target_exists, target_regular, target_symlink);
+    if (!inspected.succeeded)
+    {
+        return {publication_topology::unavailable, inspected.error};
+    }
+    inspected = inspect_path(staged, staged_exists, staged_regular, staged_symlink);
+    if (!inspected.succeeded)
+    {
+        return {publication_topology::unavailable, inspected.error};
+    }
+    inspected = inspect_path(backup, backup_exists, backup_regular, backup_symlink);
+    if (!inspected.succeeded)
+    {
+        return {publication_topology::unavailable, inspected.error};
+    }
+    const auto safe = target_exists
         && target_regular
         && !target_symlink
         && staged_exists
@@ -526,12 +644,18 @@ bool replace_file_retry_topology_is_safe(
         && !staged_symlink
         && !backup_exists
         && !backup_symlink;
+    return safe
+        ? publication_topology_result{publication_topology::safe, {}}
+        : publication_topology_result{
+            publication_topology::unsafe,
+            "The target, staged file, or backup changed during publication."};
 }
 
-bool move_file_retry_topology_is_safe(
+publication_topology_result inspect_move_file_retry_topology(
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
-    publication_target_state expected_target_state)
+    publication_target_state expected_target_state,
+    inspection_fault injected_fault = inspection_fault::none)
 {
     bool target_exists = false;
     bool target_regular = false;
@@ -539,17 +663,26 @@ bool move_file_retry_topology_is_safe(
     bool staged_exists = false;
     bool staged_regular = false;
     bool staged_symlink = false;
-    if (!inspect_path(target, target_exists, target_regular, target_symlink).succeeded
-        || !inspect_path(staged, staged_exists, staged_regular, staged_symlink).succeeded
-        || !staged_exists
-        || !staged_regular
-        || staged_symlink)
+    auto inspected = inspect_path(
+        target, target_exists, target_regular, target_symlink, injected_fault);
+    if (!inspected.succeeded)
     {
-        return false;
+        return {publication_topology::unavailable, inspected.error};
     }
-    return expected_target_state == publication_target_state::existing
+    inspected = inspect_path(staged, staged_exists, staged_regular, staged_symlink);
+    if (!inspected.succeeded)
+    {
+        return {publication_topology::unavailable, inspected.error};
+    }
+    const auto safe = staged_exists && staged_regular && !staged_symlink
+        && (expected_target_state == publication_target_state::existing
         ? target_exists && target_regular && !target_symlink
-        : !target_exists && !target_symlink;
+        : !target_exists && !target_symlink);
+    return safe
+        ? publication_topology_result{publication_topology::safe, {}}
+        : publication_topology_result{
+            publication_topology::unsafe,
+            "The target or staged file changed during publication."};
 }
 #endif
 
@@ -606,25 +739,59 @@ save_result replace_staged_file(
         {
             return removed;
         }
-        for (std::size_t attempt = 1;; ++attempt)
+        std::size_t delay_index = 0;
+        std::size_t topology_probes = 1;
+        std::size_t api_attempts = 0;
+        auto topology = inspect_replace_file_retry_topology(target, staged, *backup);
+        for (;;)
         {
+            if (topology.state != publication_topology::safe)
+            {
+                if (topology.state == publication_topology::unsafe
+                    || delay_index >= windows_retry_delays_ms.size())
+                {
+                    return windows_topology_failure(
+                        "ReplaceFileW", topology_probes, api_attempts,
+                        topology, target, staged, backup);
+                }
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+                topology = inspect_replace_file_retry_topology(target, staged, *backup);
+                ++topology_probes;
+                continue;
+            }
+            ++api_attempts;
             if (ReplaceFileW(target.c_str(), staged.c_str(), backup->c_str(), 0, nullptr, nullptr))
             {
                 return {true, {}};
             }
-            const auto error = GetLastError();
-            const auto can_retry = attempt <= publication_retry_delays_ms.size()
-                && replace_file_retryable(error)
-                && replace_file_retry_topology_is_safe(target, staged, *backup);
-            if (!can_retry)
+            const auto last_error = GetLastError();
+            if (!replace_file_retryable(last_error))
             {
-                return windows_publication_failure("ReplaceFileW", error, attempt, target, staged, backup);
+                return windows_publication_failure(
+                    "ReplaceFileW", last_error, api_attempts, target, staged, backup);
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds{publication_retry_delays_ms[attempt - 1]});
-            if (!replace_file_retry_topology_is_safe(target, staged, *backup))
+            topology = inspect_replace_file_retry_topology(target, staged, *backup);
+            ++topology_probes;
+            if (topology.state == publication_topology::unsafe)
             {
-                return windows_publication_failure("ReplaceFileW", error, attempt, target, staged, backup);
+                return windows_topology_failure(
+                    "ReplaceFileW", topology_probes, api_attempts,
+                    topology, target, staged, backup);
             }
+            if (delay_index >= windows_retry_delays_ms.size())
+            {
+                return topology.state == publication_topology::unavailable
+                    ? windows_topology_failure(
+                        "ReplaceFileW", topology_probes, api_attempts,
+                        topology, target, staged, backup)
+                    : windows_publication_failure(
+                        "ReplaceFileW", last_error, api_attempts, target, staged, backup);
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+            topology = inspect_replace_file_retry_topology(target, staged, *backup);
+            ++topology_probes;
         }
     }
 
@@ -633,34 +800,81 @@ save_result replace_staged_file(
     {
         flags |= MOVEFILE_REPLACE_EXISTING;
     }
-    for (std::size_t attempt = 1;; ++attempt)
+    const auto transient_api_fault = injected_fault == publication_fault::transient_sharing_violation
+        || injected_fault == publication_fault::transient_sharing_violation_then_topology_unavailable;
+    const auto persistent_api_fault = injected_fault == publication_fault::persistent_sharing_violation;
+    auto inject_topology_unavailable =
+        injected_fault == publication_fault::transient_sharing_violation_then_topology_unavailable;
+    std::size_t delay_index = 0;
+    std::size_t topology_probes = 1;
+    std::size_t api_attempts = 0;
+    auto topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+    for (;;)
     {
-        const auto simulate_failure = injected_fault == publication_fault::persistent_sharing_violation
-            || (injected_fault == publication_fault::transient_sharing_violation && attempt == 1);
-        DWORD error = ERROR_SUCCESS;
+        if (topology.state != publication_topology::safe)
+        {
+            if (topology.state == publication_topology::unsafe
+                || delay_index >= windows_retry_delays_ms.size())
+            {
+                return windows_topology_failure(
+                    "MoveFileExW", topology_probes, api_attempts,
+                    topology, target, staged, backup);
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+            topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+            ++topology_probes;
+            continue;
+        }
+        ++api_attempts;
+        const auto simulate_failure = persistent_api_fault
+            || (transient_api_fault && api_attempts == 1);
+        DWORD last_error = ERROR_SUCCESS;
         if (!simulate_failure)
         {
             if (MoveFileExW(staged.c_str(), target.c_str(), flags))
             {
                 return {true, {}};
             }
-            error = GetLastError();
+            last_error = GetLastError();
         }
         else
         {
-            error = ERROR_SHARING_VIOLATION;
+            last_error = ERROR_SHARING_VIOLATION;
         }
-        const auto can_retry = attempt <= publication_retry_delays_ms.size()
-            && move_file_retryable(error);
-        if (!can_retry)
+        if (!move_file_retryable(last_error))
         {
-            return windows_publication_failure("MoveFileExW", error, attempt, target, staged, backup);
+            return windows_publication_failure(
+                "MoveFileExW", last_error, api_attempts, target, staged, backup);
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds{publication_retry_delays_ms[attempt - 1]});
-        if (!move_file_retry_topology_is_safe(target, staged, expected_target_state))
+        topology = inspect_move_file_retry_topology(
+            target,
+            staged,
+            expected_target_state,
+            inject_topology_unavailable
+                ? inspection_fault::transient_unavailable
+                : inspection_fault::none);
+        inject_topology_unavailable = false;
+        ++topology_probes;
+        if (topology.state == publication_topology::unsafe)
         {
-            return windows_publication_failure("MoveFileExW", error, attempt, target, staged, backup);
+            return windows_topology_failure(
+                "MoveFileExW", topology_probes, api_attempts,
+                topology, target, staged, backup);
         }
+        if (delay_index >= windows_retry_delays_ms.size())
+        {
+            return topology.state == publication_topology::unavailable
+                ? windows_topology_failure(
+                    "MoveFileExW", topology_probes, api_attempts,
+                    topology, target, staged, backup)
+                : windows_publication_failure(
+                    "MoveFileExW", last_error, api_attempts, target, staged, backup);
+        }
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+        topology = inspect_move_file_retry_topology(target, staged, expected_target_state);
+        ++topology_probes;
     }
 #else
     static_cast<void>(injected_fault);
@@ -968,14 +1182,21 @@ save_result write_journal(
     const auto expected_target_state = record.phase == "staging"
         ? publication_target_state::missing
         : publication_target_state::existing;
+    const auto replacement_fault = injected_fault == publication_fault::reported_failure_after_publication
+        ? publication_fault::none
+        : injected_fault;
     result = replace_staged_file(
-        record.journal, temporary, std::nullopt, expected_target_state, injected_fault);
+        record.journal, temporary, std::nullopt, expected_target_state, replacement_fault);
     if (!result.succeeded)
     {
         static_cast<void>(remove_file(temporary));
         return {false, "Could not publish the transaction journal: " + result.error};
     }
     flush_parent_directory(record.journal);
+    if (injected_fault == publication_fault::reported_failure_after_publication)
+    {
+        return {false, "Injected failure after the transaction journal became durable."};
+    }
     return {true, {}};
 }
 
@@ -1015,7 +1236,9 @@ save_result cleanup_staged_files(const transaction_record& record)
     return {true, {}};
 }
 
-save_result validate_preimage_file(const transaction_entry& entry)
+save_result validate_preimage_file(
+    const transaction_entry& entry,
+    read_fault injected_fault = read_fault::none)
 {
     if (!entry.target_existed)
     {
@@ -1024,7 +1247,7 @@ save_result validate_preimage_file(const transaction_entry& entry)
             : save_result{false, "A new target journal entry had a pre-image."};
     }
     std::string contents;
-    const auto read = read_file(entry.preimage, contents);
+    const auto read = read_file(entry.preimage, contents, injected_fault);
     if (!read.succeeded)
     {
         return read;
@@ -1281,7 +1504,9 @@ save_result load_journal(
     return validate_loaded_entry_paths(record);
 }
 
-save_result recover_transaction(transaction_record& record)
+save_result recover_transaction(
+    transaction_record& record,
+    recovery_fault injected_fault = recovery_fault::none)
 {
     if (record.phase == "committed")
     {
@@ -1291,9 +1516,14 @@ save_result recover_transaction(transaction_record& record)
 
     std::vector<target_state> states;
     states.reserve(record.entries.size());
-    for (const auto& entry : record.entries)
+    for (std::size_t index = 0; index < record.entries.size(); ++index)
     {
-        const auto preimage = validate_preimage_file(entry);
+        const auto& entry = record.entries[index];
+        const auto preimage = validate_preimage_file(
+            entry,
+            injected_fault == recovery_fault::transient_preimage_open_failure && index == 0
+                ? read_fault::transient_open_failure
+                : read_fault::none);
         if (!preimage.succeeded)
         {
             return preimage;
@@ -1641,20 +1871,66 @@ save_result save_utf8_transaction(
         {
             committed_journal_fault = publication_fault::transient_sharing_violation;
         }
-        else if (injected_fault == transaction_save_fault::committed_journal_persistent_sharing_violation)
+        else if (injected_fault
+            == transaction_save_fault::committed_journal_transient_sharing_violation_then_topology_unavailable)
+        {
+            committed_journal_fault =
+                publication_fault::transient_sharing_violation_then_topology_unavailable;
+        }
+        else if (injected_fault
+            == transaction_save_fault::committed_journal_reported_failure_after_publication)
+        {
+            committed_journal_fault = publication_fault::reported_failure_after_publication;
+        }
+        else if (injected_fault == transaction_save_fault::committed_journal_persistent_sharing_violation
+            || injected_fault
+                == transaction_save_fault::committed_journal_persistent_sharing_violation_then_transient_recovery_read)
         {
             committed_journal_fault = publication_fault::persistent_sharing_violation;
         }
         result = write_journal(record, committed_journal_fault);
         if (!result.succeeded)
         {
-            record.phase = "prepared";
-            const auto recovered = recover_transaction(record);
+            transaction_record durable_record;
+            const auto loaded = load_journal(record.paths, record.directory, durable_record);
+            if (!loaded.succeeded)
+            {
+                return {
+                    false,
+                    "The committed marker could not be flushed and its durable state could not be inspected; "
+                    "no recovery changes were made: "
+                        + result.error + " " + loaded.error};
+            }
+            if (durable_record.phase == "committed")
+            {
+                static_cast<void>(recover_transaction(durable_record));
+                return {true, {}};
+            }
+            if (durable_record.phase != "prepared")
+            {
+                return {
+                    false,
+                    "The committed marker could not be flushed and the durable journal was not prepared; "
+                    "no recovery changes were made: "
+                        + result.error};
+            }
+            const auto recovered = recover_transaction(
+                durable_record,
+                injected_fault
+                        == transaction_save_fault::committed_journal_persistent_sharing_violation_then_transient_recovery_read
+                    ? recovery_fault::transient_preimage_open_failure
+                    : recovery_fault::none);
             return recovered.succeeded
                 ? save_result{false, "The committed marker could not be flushed; pre-images restored: "
                     + result.error}
                 : save_result{false, "The committed marker and recovery both failed: " + result.error + " "
                     + recovered.error};
+        }
+        if (injected_fault == transaction_save_fault::leave_interrupted_after_committed_journal)
+        {
+            return {
+                false,
+                "Injected interruption after the committed journal became durable; cleanup artifacts retained."};
         }
         static_cast<void>(cleanup_staged_files(record));
         // The committed marker makes orphan cleanup deterministic. Failure to

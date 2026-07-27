@@ -741,7 +741,7 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
     require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
         "Transaction recovery was not idempotent after cleanup.");
 
-    const auto successor_root = root / "successor-transaction";
+    const auto successor_root = root / "successor";
     std::filesystem::remove_all(successor_root, error);
     std::filesystem::create_directories(successor_root);
     const auto successor_scene_target = successor_root / "successor.dpescene";
@@ -798,6 +798,58 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
             && successor_artifact_count() == 0,
         "A successor save did not recover the prior prepared transaction before publication: successor="
             + successor_result.error + "; recovery=" + successor_recovery.error);
+
+    const auto committed_cleanup_root = root / "committed";
+    std::filesystem::remove_all(committed_cleanup_root, error);
+    std::filesystem::create_directories(committed_cleanup_root);
+    const auto committed_scene_target = committed_cleanup_root / "committed.dpescene";
+    const auto committed_tile_target = committed_cleanup_root / "committed.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                committed_scene_target, "committed-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                committed_tile_target, "committed-tile-before\n").succeeded,
+        "Could not arrange the committed cleanup fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> committed_interruption{
+        {committed_scene_target, "committed-scene-after\n"},
+        {committed_tile_target, "committed-tile-after\n"},
+    };
+    const auto committed_interruption_result = dragonpixel::serialization::save_utf8_transaction(
+        committed_interruption,
+        committed_cleanup_root,
+        dragonpixel::serialization::transaction_save_fault::leave_interrupted_after_committed_journal);
+    require(!committed_interruption_result.succeeded
+            && read_file(committed_scene_target) == "committed-scene-after\n"
+            && read_file(committed_tile_target) == "committed-tile-after\n",
+        "The committed cleanup fixture did not stop after durable commit: "
+            + committed_interruption_result.error);
+    const auto committed_artifacts =
+        committed_cleanup_root / ".dragonpixel" / "Recovery" / "Transactions";
+    require(std::filesystem::exists(committed_artifacts)
+            && std::distance(
+                   std::filesystem::directory_iterator{committed_artifacts},
+                   std::filesystem::directory_iterator{}) == 1,
+        "The committed cleanup fixture did not retain one transaction directory.");
+    const auto committed_directory = *std::filesystem::directory_iterator{committed_artifacts};
+    const auto committed_journal_path = committed_directory.path() / "journal.json";
+    const auto committed_journal = nlohmann::ordered_json::parse(read_file(committed_journal_path));
+    auto committed_scene_backup = committed_scene_target;
+    committed_scene_backup += ".bak";
+    auto committed_tile_backup = committed_tile_target;
+    committed_tile_backup += ".bak";
+    require(committed_journal.at("phase") == "committed"
+            && read_file(committed_scene_backup) == "committed-scene-before\n"
+            && read_file(committed_tile_backup) == "committed-tile-before\n",
+        "The committed cleanup seam did not retain its durable marker and exact pre-images.");
+    require(std::filesystem::remove(committed_directory.path() / "preimage-000000.bin"),
+        "Could not arrange partially cleaned committed recovery evidence.");
+    require(dragonpixel::serialization::recover_utf8_transactions(committed_cleanup_root).succeeded
+            && read_file(committed_scene_target) == "committed-scene-after\n"
+            && read_file(committed_tile_target) == "committed-tile-after\n"
+            && read_file(committed_scene_backup) == "committed-scene-before\n"
+            && read_file(committed_tile_backup) == "committed-tile-before\n"
+            && !std::filesystem::exists(committed_directory.path())
+            && dragonpixel::serialization::recover_utf8_transactions(committed_cleanup_root).succeeded,
+        "Committed startup recovery rolled back valid targets or did not finish interrupted cleanup.");
 
     const auto interrupted_new_target = transaction_root / "interrupted-new.json";
     const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted_creation{
@@ -873,6 +925,48 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "Case-folded transaction aliases were accepted on a baseline case-folding platform.");
 #endif
 
+    const auto ambiguous_root = root / "ambiguous";
+    std::filesystem::remove_all(ambiguous_root, error);
+    std::filesystem::create_directories(ambiguous_root);
+    const auto ambiguous_scene_target = ambiguous_root / "scene.dpescene";
+    const auto ambiguous_tile_target = ambiguous_root / "tile.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                ambiguous_scene_target, "ambiguous-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                ambiguous_tile_target, "ambiguous-tile-before\n").succeeded,
+        "Could not arrange the ambiguous committed-marker fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> ambiguous_committed_marker{
+        {ambiguous_scene_target, "ambiguous-scene-after\n"},
+        {ambiguous_tile_target, "ambiguous-tile-after\n"},
+    };
+    const auto ambiguous_committed_marker_result = dragonpixel::serialization::save_utf8_transaction(
+        ambiguous_committed_marker,
+        ambiguous_root,
+        dragonpixel::serialization::transaction_save_fault::
+            committed_journal_reported_failure_after_publication);
+    auto ambiguous_scene_backup = ambiguous_scene_target;
+    ambiguous_scene_backup += ".bak";
+    auto ambiguous_tile_backup = ambiguous_tile_target;
+    ambiguous_tile_backup += ".bak";
+    const auto ambiguous_artifacts =
+        ambiguous_root / ".dragonpixel" / "Recovery" / "Transactions";
+    const auto ambiguous_artifact_count = [&] {
+        return std::filesystem::exists(ambiguous_artifacts)
+            ? std::distance(
+                std::filesystem::directory_iterator{ambiguous_artifacts},
+                std::filesystem::directory_iterator{})
+            : std::ptrdiff_t{};
+    };
+    require(ambiguous_committed_marker_result.succeeded
+            && read_file(ambiguous_scene_target) == "ambiguous-scene-after\n"
+            && read_file(ambiguous_tile_target) == "ambiguous-tile-after\n"
+            && read_file(ambiguous_scene_backup) == "ambiguous-scene-before\n"
+            && read_file(ambiguous_tile_backup) == "ambiguous-tile-before\n"
+            && ambiguous_artifact_count() == 0
+            && dragonpixel::serialization::recover_utf8_transactions(ambiguous_root).succeeded,
+        "An ambiguously reported committed-marker publication rolled back a durable commit: "
+            + ambiguous_committed_marker_result.error);
+
 #if defined(_WIN32)
     const auto temporary_artifact_count = [&] {
         std::size_t count = 0;
@@ -903,6 +997,25 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "A transient committed-journal sharing violation did not retry to a clean commit: "
             + transient_journal_result.error);
 
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_topology_retry{
+        {scene_target, "scene-after-transient-topology-retry\n"},
+        {tile_target, "tile-after-transient-topology-retry\n"},
+    };
+    const auto transient_topology_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_topology_retry,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::
+            committed_journal_transient_sharing_violation_then_topology_unavailable);
+    require(transient_topology_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-topology-retry\n"
+            && read_file(tile_target) == "tile-after-transient-topology-retry\n"
+            && read_file(scene_backup) == "scene-after-transient-journal-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-journal-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Transient committed-journal topology inspection did not recover to a clean commit: "
+            + transient_topology_result.error);
+
     const std::vector<dragonpixel::serialization::utf8_transaction_write> persistent_journal_retry{
         {scene_target, "scene-must-not-survive-journal-exhaustion\n"},
         {tile_target, "tile-must-not-survive-journal-exhaustion\n"},
@@ -920,14 +1033,30 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
             && persistent_journal_result.error.find("; staged=\"") != std::string::npos
             && persistent_journal_result.error.ends_with("; backup=<none>.")
             && persistent_journal_result.error.find("system message unavailable") == std::string::npos
-            && read_file(scene_target) == "scene-after-transient-journal-retry\n"
-            && read_file(tile_target) == "tile-after-transient-journal-retry\n"
-            && read_file(scene_backup) == "scene-after-transient-journal-retry\n"
-            && read_file(tile_backup) == "tile-after-transient-journal-retry\n"
+            && read_file(scene_target) == "scene-after-transient-topology-retry\n"
+            && read_file(tile_target) == "tile-after-transient-topology-retry\n"
+            && read_file(scene_backup) == "scene-after-transient-topology-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-topology-retry\n"
             && artifact_count() == 0
             && temporary_artifact_count() == 0,
         "Persistent committed-journal retry exhaustion did not preserve the exact error and rollback state: "
             + persistent_journal_result.error);
+
+    const auto transient_recovery_read_result = dragonpixel::serialization::save_utf8_transaction(
+        persistent_journal_retry,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::
+            committed_journal_persistent_sharing_violation_then_transient_recovery_read);
+    require(!transient_recovery_read_result.succeeded
+            && transient_recovery_read_result.error.starts_with(persistent_error_prefix)
+            && read_file(scene_target) == "scene-after-transient-topology-retry\n"
+            && read_file(tile_target) == "tile-after-transient-topology-retry\n"
+            && read_file(scene_backup) == "scene-after-transient-topology-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-topology-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "A transient recovery read did not retry to the exact rolled-back state: "
+            + transient_recovery_read_result.error);
 #endif
 
     const std::u8string unicode_name = u8"unicode-\u573a\u666f-\u00f1.dpescene";
@@ -953,7 +1082,9 @@ int main(int argc, char* argv[])
     try
     {
         require(argc == 2, "Expected a generated test directory argument.");
-        const auto generated_root = std::filesystem::absolute(argv[1]);
+        const auto generated_base = std::filesystem::absolute(argv[1]);
+        const auto run_id = uuid::random_v4().to_string();
+        const auto generated_root = generated_base / ("r-" + run_id.substr(0, 16));
         verify_scene_round_trip();
         verify_component_migration();
         verify_scene_v2_migration_and_v3_preservation();
@@ -963,6 +1094,8 @@ int main(int argc, char* argv[])
         verify_prefab_instance_command_history();
         verify_atomic_save(generated_root);
         verify_atomic_multi_document_save(generated_root);
+        std::error_code cleanup_error;
+        std::filesystem::remove_all(generated_root, cleanup_error);
         std::cout << "Native authoring core passed: validated command history, presets, hierarchy, duplication, "
                      "subtree deletion, deterministic scene v3, opaque preservation, migration, atomic single/multi-document save, and recovery.\n";
         return 0;
