@@ -24,6 +24,10 @@ int main()
         const auto encoded_set = tiles::write_tile_set(set);
         const auto decoded_set = tiles::read_tile_set(encoded_set);
         require(decoded_set.succeeded() && *decoded_set.document == set, "TileSet did not round-trip.");
+        set.tiles.front().collision.reset();
+        const auto collision_free_set = tiles::read_tile_set(tiles::write_tile_set(set));
+        require(collision_free_set.succeeded() && *collision_free_set.document == set,
+            "A TileSet tile without collision did not round-trip as JSON null.");
 
         tiles::tilemap_document map{
             *core::uuid::parse("fd2f3574-8e6f-43d1-bc96-c6650ab49a54"), "Map", {set.asset_id},

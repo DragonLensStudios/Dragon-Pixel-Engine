@@ -198,7 +198,7 @@ std::string write_tile_set(const tile_set_document& document)
         value["collision"] = tile.collision
             ? json{{"offsetX", tile.collision->offset_x}, {"offsetY", tile.collision->offset_y},
                 {"width", tile.collision->width}, {"height", tile.collision->height}}
-            : json{nullptr};
+            : json(nullptr);
         values.push_back(std::move(value));
     }
     return json{{"$schema", "https://dragonpixel.dev/schemas/v1/tileset.schema.json"}, {"format", "dpe.tileset"},
