@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Development Constitution Workflow Setup Plan
 
-> **Status:** Ready for review; push and draft PR pending
+> **Status:** Ready for review; draft PR #1 open
 > **Branch:** `feature/development-constitution-workflow`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers
@@ -140,9 +140,9 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 - [x] Workflow and YAML/Markdown verification passes.
 - [x] Aggregate branch diff and commit sequence reviewed.
 - [x] Exact evidence and remaining gaps recorded.
-- [ ] Branch pushed.
-- [ ] Draft pull request opened into `develop`.
-- [ ] Pull request left unmerged for review.
+- [x] Branch pushed.
+- [x] Draft pull request opened into `develop`.
+- [x] Pull request left unmerged for review.
 
 ## Work Log
 
@@ -156,7 +156,8 @@ This documentation-only setup is platform-neutral. Verification runs on the curr
 | 2026-07-27 | Independent governance review resolved | Read-only review found no lost architecture guardrail and confirmed that no product feature or source change began. It identified three ambiguities, all corrected before handoff: repository-only external proposals now have an explicit unverified/non-mergeable mirror exception; an early draft PR no longer triggers Codex's final stop; and the master prompt's hard-coded First Feature is explicitly a one-time kickoff that current plans/user direction supersede. |
 | 2026-07-27 | Aggregate verification passed | The final bounded verification passes: **57/57** mirrored Markdown pairs; **12/12** archive-derived files outside merged `AGENTS.md` exactly match package hashes; **6/6** repository controls checked are UTF-8/no-BOM/LF; **5/5** README workflow targets exist; **7/7** critical merged-governance phrases are present; feature issue YAML parses with six body entries; and `git diff --check develop` passes after removing Markdown hard-break whitespace found by the first aggregate check. The branch merge-base is the fetched `develop` commit `0adbe49a73405dc72bc3d072bed4409c0e30fca3`. Aggregate scope review finds 16 workflow/governance paths and zero engine source, schema, or test paths. Engine matrices were not rerun because runtime/editor behavior is unchanged. |
 | 2026-07-27 | Enforcement gaps recorded | The package installs policy, prompts, and contribution templates, not automated enforcement. GitHub still uses `main` as the default branch, `develop` has no protection/ruleset, merged branches are not automatically deleted, and the existing Slice 1 workflow does not run on pushes to `develop`/`feature/*`. Its latest audited run `30247623903` failed overall and includes untrustworthy Windows success reporting after failed commands/no tests plus Ubuntu provisioning and macOS warning-as-error failures. CI repair and branch protection remain bounded follow-up work; no failing check should become required until it is trustworthy. |
+| 2026-07-27 | Review handoff opened | Pushed `feature/development-constitution-workflow` and opened [draft PR #1](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/1) with base `develop` and the exact verification, limitations, and follow-up. GitHub confirms it is open and draft; the existing six Slice 1 workflow jobs started automatically and remain outside this documentation-only verification claim. The PR is intentionally unmerged. |
 
 ## Handoff Notes
 
-The documented feature workflow is installed and verified, and the branch is ready to push and present as a draft PR into `develop`. This work intentionally does not claim CI or branch-protection enforcement. After this governance PR is reviewed and merged, begin `feature/atomic-publication-recovery` from the then-current `develop`; do not start it from this branch. The subsequent `feature/ci-gitflow-integration` work must repair CI trust and only then establish appropriate protected-branch required checks.
+The documented feature workflow is installed, verified, pushed, and available for human review in [draft PR #1](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/1). The PR remains unmerged. This work intentionally does not claim CI or branch-protection enforcement. After this governance PR is reviewed and merged, begin `feature/atomic-publication-recovery` from the then-current `develop`; do not start it from this branch. The subsequent `feature/ci-gitflow-integration` work must repair CI trust and only then establish appropriate protected-branch required checks.
