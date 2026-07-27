@@ -1,0 +1,35 @@
+name: Feature
+description: Plan a focused Dragon Pixel Engine feature
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: User value
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+  - type: textarea
+    id: architecture
+    attributes:
+      label: Architecture and contract impact
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification required
