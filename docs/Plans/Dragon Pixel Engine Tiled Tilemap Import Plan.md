@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Tiled Tilemap Import Plan
 
-> **Status:** Verification complete; draft PR handoff pending
-> **Disposition:** Implementation ready for aggregate review and publication
+> **Status:** Implementation complete; draft PR #5 ready for human review
+> **Disposition:** Ready for review; not merged
 > **Branch:** `feature/tiled-tilemap-import`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
@@ -184,8 +184,8 @@ Primary references:
 - [x] Developer bundle contains and verifies the importer worker.
 - [x] Documentation and mirrored plan are current and byte-identical.
 - [x] Aggregate diff and commit sequence reviewed.
-- [ ] Branch pushed.
-- [ ] Draft PR opened into `develop`.
+- [x] Branch pushed.
+- [x] Draft PR opened into `develop`.
 - [ ] Human review occurs before merge.
 
 ## Work Log
@@ -202,8 +202,9 @@ Primary references:
 | 2026-07-27 | Focused Release verified | The final nine-alias Release matrix (`s2.tile_documents`, both POC K document/import aliases, ProjectIndex, both AssetService/POC O aliases, and both TileImportService/POC O aliases) passed **9/9 in 6.48 seconds**. The two affected existing Qt functions passed **4/4 assertions in 3.127 seconds** and the actual-worker UI import passed **3/3 assertions in 3.149 seconds**. An earlier attempt to run both complete interaction aliases in one 120-second orchestration call was killed at 124 seconds before completion and is inconclusive; it is not reported as passing evidence. |
 | 2026-07-27 | Focused sanitizer verified | The corresponding MSVC AddressSanitizer build succeeded. The final nine-alias sanitizer matrix passed **9/9 in 21.05 seconds**. The two affected existing Qt functions passed **4/4 assertions in 4.685 seconds**, and the actual-worker UI import passed **3/3 assertions in 3.443 seconds**, with no sanitizer report. |
 | 2026-07-27 | Developer bundle verified | The final `Build-Production-Editor.ps1 -Fast` run generated the production-style Windows bundle with the importer adjacent to the editor. The manifest contains **189** file records, zero missing/hash-mismatched/unlisted files. Importer SHA-256 is `D8AC528B99A4D2A4CEF331FDF63691A9B4F61D99B91F2DAF23B901F8575F3A66`; editor SHA-256 is `605AEC7FC8D261919B54B1432AA5BEA3EDB48A524749AECED19A29DA00D23688`; manifest SHA-256 is `49152DACA9AD810818457EBF477ABA9800D3854498F32BDA1241AABE1BD488EC`. An earlier composite follow-up check used a relative path after the build script entered a Visual Studio shell and therefore reported a false missing-manifest error; the final absolute-path build/inventory command completed green. Commit: `3fb419f`. |
-| 2026-07-27 | Aggregate review complete | Reviewed the 24-file, 2,709-insertion/5-deletion aggregate diff and the ten focused commits from `54d9474` through `e0b70e3`. Changes remain limited to the Tiled importer, editor supervision/publication/UI, tile writer regression, focused tests, bundle deployment, README, mirrored plan/master tracker, and affected Proposed ADR evidence. `git diff --check develop` is clean; no generated build output, unrelated source, public format/ABI, support threshold, or platform claim changed. |
+| 2026-07-27 | Aggregate review complete | Reviewed the final 24-file, 2,711-insertion/5-deletion aggregate diff, including the focused implementation/test sequence from `54d9474` through `e0b70e3` and its evidence-only follow-ups. Changes remain limited to the Tiled importer, editor supervision/publication/UI, tile writer regression, focused tests, bundle deployment, README, mirrored plan/master tracker, and affected Proposed ADR evidence. `git diff --check develop` is clean; no generated build output, unrelated source, public format/ABI, support threshold, or platform claim changed. |
+| 2026-07-27 | Draft PR handoff | Pushed `feature/tiled-tilemap-import` and opened draft PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) into `develop`. The PR carries the full template summary, exact Windows Release/sanitizer evidence, bundle hashes, unsupported scope, and pending hosted-platform gates. It remains unmerged for human review. |
 
 ## Handoff Notes
 
-The scoped Windows implementation and focused Release/AddressSanitizer verification are complete. The accepted Tiled subset is working end to end through the public action and existing Tile Palette, while unsupported semantics fail before project publication. Ubuntu/macOS and hosted PR evidence remain unrun for this branch; TMX/TSX XML, multiple TileSets, encoded/compressed data, non-orthogonal maps, object layers/collision conversion, animation/rules/terrain, and reimport remain explicit follow-up features. Next: review the aggregate diff and history, commit synchronized evidence, push, open a draft PR into `develop`, and stop for human review without merging.
+The scoped Windows implementation and focused Release/AddressSanitizer verification are complete. The accepted Tiled subset works end to end through the public action and existing Tile Palette, while unsupported semantics fail before project publication. Draft PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) targets `develop` and is intentionally unmerged. Ubuntu/macOS/hosted PR results remain pending; TMX/TSX XML, multiple TileSets, encoded/compressed data, non-orthogonal maps, object layers/collision conversion, animation/rules/terrain, and reimport remain explicit follow-up features. Human review, any requested corrections, approval, merge, and post-merge validation are the remaining lifecycle steps.
