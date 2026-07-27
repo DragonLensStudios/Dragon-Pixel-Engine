@@ -45,6 +45,7 @@ RUN apt-get update \
         libxi6 \
         libxkbcommon0 \
         libxkbcommon-x11-0 \
+        libltdl-dev \
         libxrender1 \
         libtool \
         ninja-build \

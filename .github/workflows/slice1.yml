@@ -62,6 +62,24 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.203
+      - name: Bootstrap pinned vcpkg registry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          Import-Module (Join-Path $env:GITHUB_WORKSPACE 'scripts\ci\WindowsCI.psm1') -Force
+          $git = (Get-Command git -ErrorAction Stop).Source
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          Invoke-DpeCiNative -Operation 'vcpkg clone' -FilePath $git -ArgumentList @(
+            'clone', '--filter=blob:none', 'https://github.com/microsoft/vcpkg.git', $vcpkgRoot
+          )
+          Invoke-DpeCiNative -Operation 'vcpkg baseline checkout' -FilePath $git -ArgumentList @(
+            '-C', $vcpkgRoot, 'checkout', '40f3c709db80acf154ac4b17a1f83c564ebd022e'
+          )
+          Invoke-DpeCiNative -Operation 'vcpkg bootstrap' -FilePath (Join-Path $vcpkgRoot 'bootstrap-vcpkg.bat') -ArgumentList @(
+            '-disableMetrics'
+          )
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Qt 6.11.1 for MSVC 2022
         shell: pwsh
         run: |
@@ -117,10 +135,8 @@ jobs:
             $env:Path = "$ninjaDirectory;$env:Path"
           }
 
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
-            $vcpkgRoot = Join-Path $vs 'VC\vcpkg'
-          }
+          $vcpkgRoot = $env:VCPKG_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) { throw 'Pinned VCPKG_ROOT was not exported.' }
           $vcpkgToolchain = Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
           if (-not (Test-Path -LiteralPath $vcpkgToolchain)) { throw "vcpkg toolchain was not found at $vcpkgToolchain." }
           $env:VCPKG_ROOT = $vcpkgRoot
@@ -202,7 +218,7 @@ jobs:
           cache: true
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake clang libclang-rt-18-dev libtool ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake clang libclang-rt-18-dev libltdl-dev libtool ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install ninja
