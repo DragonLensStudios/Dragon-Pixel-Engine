@@ -19,9 +19,8 @@ set(DPE_EDITOR_MONOGAME_DLL
 set(DPE_EDITOR_KNI_DLL
     "${CMAKE_SOURCE_DIR}/src/managed/DragonPixel.Adapter.Kni.Worker/bin/Release/net10.0/DragonPixel.Adapter.Kni.Worker.dll")
 
-add_executable(DragonPixelEditor
+add_library(DragonPixelEditorLibrary OBJECT
     EditorResources.qrc
-    main.cpp
     AutomationBroker.cpp
     AutomationBroker.h
     ComponentModuleService.cpp
@@ -58,7 +57,9 @@ add_executable(DragonPixelEditor
     WorkerClient.cpp
     WorkerClient.h
 )
-target_link_libraries(DragonPixelEditor PRIVATE
+add_library(DragonPixel::Editor ALIAS DragonPixelEditorLibrary)
+
+target_link_libraries(DragonPixelEditorLibrary PUBLIC
     DragonPixel::Core
     DragonPixel::Metadata
     DragonPixel::Prefab
@@ -69,7 +70,7 @@ target_link_libraries(DragonPixelEditor PRIVATE
     Qt6::Network
     SDL3::SDL3
 )
-target_compile_definitions(DragonPixelEditor PRIVATE
+target_compile_definitions(DragonPixelEditorLibrary PRIVATE
     DPE_DOTNET_EXECUTABLE="${DPE_DOTNET_EXECUTABLE}"
     DPE_CMAKE_EXECUTABLE="${DPE_CMAKE_EXECUTABLE}"
     DPE_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
@@ -87,86 +88,37 @@ target_compile_definitions(DragonPixelEditor PRIVATE
     DPE_DEFAULT_SAMPLE_SCENE="${CMAKE_SOURCE_DIR}/samples/Slice1Sample/Scenes/Main.dpescene"
 )
 if(TARGET DragonPixelAdapters)
-    add_dependencies(DragonPixelEditor DragonPixelAdapters)
+    add_dependencies(DragonPixelEditorLibrary DragonPixelAdapters)
 endif()
 if(TARGET DragonPixelCAbi)
-    add_dependencies(DragonPixelEditor DragonPixelCAbi)
+    add_dependencies(DragonPixelEditorLibrary DragonPixelCAbi)
 endif()
 
+dpe_configure_native_target(DragonPixelEditorLibrary)
+
+add_executable(DragonPixelEditor
+    main.cpp
+)
+target_link_libraries(DragonPixelEditor PRIVATE
+    DragonPixel::Editor
+)
+target_compile_definitions(DragonPixelEditor PRIVATE
+    DPE_DEFAULT_SAMPLE_PROJECT="${CMAKE_SOURCE_DIR}/samples/Slice1Sample/DragonPixelProject.json"
+)
 dpe_configure_native_target(DragonPixelEditor)
 
 add_executable(DragonPixelEditorInteractionTests
-    EditorResources.qrc
     EditorInteractionTests.cpp
-    AutomationBroker.cpp
-    AutomationBroker.h
-    ComponentModuleService.cpp
-    ComponentModuleService.h
-    EditorRuntimePaths.cpp
-    EditorRuntimePaths.h
-    AuthoringViewport.cpp
-    AuthoringViewport.h
-    EditorModels.cpp
-    EditorModels.h
-    GameViewport.cpp
-    GameViewport.h
-    GamepadInputSource.cpp
-    GamepadInputSource.h
-    InputMapEditorDialog.cpp
-    InputMapEditorDialog.h
-    InputMapService.cpp
-    InputMapService.h
-    MetadataManifestService.cpp
-    MetadataManifestService.h
-    TileDocumentService.cpp
-    TileDocumentService.h
-    TilePaletteWidget.cpp
-    TilePaletteWidget.h
-    TileSetWizard.cpp
-    TileSetWizard.h
-    PrefabService.cpp
-    PrefabService.h
-    ScriptEditorService.cpp
-    ScriptEditorService.h
-    EditorWindow.cpp
-    EditorWindow.h
-    LocalEndpoint.h
-    WorkerClient.cpp
-    WorkerClient.h
 )
 target_link_libraries(DragonPixelEditorInteractionTests PRIVATE
-    DragonPixel::Core
-    DragonPixel::Metadata
-    DragonPixel::Prefab
-    DragonPixel::Scene
-    DragonPixel::Serialization
-    DragonPixel::Tiles
-    Qt6::Widgets
-    Qt6::Network
+    DragonPixel::Editor
     Qt6::Test
-    SDL3::SDL3
 )
 target_compile_definitions(DragonPixelEditorInteractionTests PRIVATE
-    DPE_DOTNET_EXECUTABLE="${DPE_DOTNET_EXECUTABLE}"
-    DPE_CMAKE_EXECUTABLE="${DPE_CMAKE_EXECUTABLE}"
-    DPE_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
-    DPE_CXX_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
-    DPE_CXX_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
-    DPE_COMPONENT_CMAKE_GENERATOR="${DPE_COMPONENT_CMAKE_GENERATOR}"
-    DPE_COMPONENT_MAKE_PROGRAM="${DPE_COMPONENT_MAKE_PROGRAM}"
-    DPE_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
-    DPE_PYTHON_TOOLS_ROOT="${CMAKE_SOURCE_DIR}/tools/python"
-    DPE_EDITOR_MONOGAME_DLL="${DPE_EDITOR_MONOGAME_DLL}"
-    DPE_EDITOR_KNI_DLL="${DPE_EDITOR_KNI_DLL}"
-    DPE_EDITOR_NATIVE_LIBRARY="$<TARGET_FILE:DragonPixelCAbi>"
     DPE_CONTRACTS_ASSEMBLY="${CMAKE_SOURCE_DIR}/src/managed/DragonPixel.Contracts/bin/Release/netstandard2.1/DragonPixel.Contracts.dll"
     DPE_DEFAULT_SAMPLE_PROJECT="${CMAKE_SOURCE_DIR}/samples/Slice1Sample/DragonPixelProject.json"
-    DPE_DEFAULT_SAMPLE_SCENE="${CMAKE_SOURCE_DIR}/samples/Slice1Sample/Scenes/Main.dpescene"
 )
 dpe_configure_native_target(DragonPixelEditorInteractionTests)
-if(TARGET DragonPixelAdapters)
-    add_dependencies(DragonPixelEditorInteractionTests DragonPixelAdapters)
-endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/AssetPreviewService.cmake")

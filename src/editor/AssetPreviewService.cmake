@@ -1,11 +1,7 @@
-# Include after the editor targets are declared. This keeps the asynchronous
-# preview service registration isolated from concurrent editor integration.
+# Include after DragonPixelEditorLibrary is declared. This keeps the
+# asynchronous preview service registration and focused tests together.
 
-target_sources(DragonPixelEditor PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/AssetPreviewService.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/AssetPreviewService.h"
-)
-target_sources(DragonPixelEditorInteractionTests PRIVATE
+target_sources(DragonPixelEditorLibrary PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/AssetPreviewService.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/AssetPreviewService.h"
 )

@@ -1,4 +1,10 @@
 function(dpe_configure_native_target target)
+    get_target_property(_dpe_native_target_type ${target} TYPE)
+    set(_dpe_native_target_has_link_step TRUE)
+    if(_dpe_native_target_type STREQUAL "OBJECT_LIBRARY")
+        set(_dpe_native_target_has_link_step FALSE)
+    endif()
+
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /WX /permissive- /EHsc)
         if(DPE_ENABLE_ASAN)
@@ -24,18 +30,22 @@ function(dpe_configure_native_target target)
             # Windows resolves an instrumented executable/DLL's ASan dependency
             # beside that binary. Copying the runtime per target also lets managed
             # workers load an instrumented dragonpixel.dll without a developer shell.
-            add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_dpe_msvc_asan_runtime}"
-                    "$<TARGET_FILE_DIR:${target}>"
-                VERBATIM
-            )
+            if(_dpe_native_target_has_link_step)
+                add_custom_command(TARGET ${target} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_dpe_msvc_asan_runtime}"
+                        "$<TARGET_FILE_DIR:${target}>"
+                    VERBATIM
+                )
+            endif()
         endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
         if(DPE_ENABLE_ASAN)
             target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-            target_link_options(${target} PRIVATE -fsanitize=address)
+            if(_dpe_native_target_has_link_step)
+                target_link_options(${target} PRIVATE -fsanitize=address)
+            endif()
         endif()
     endif()
 endfunction()
