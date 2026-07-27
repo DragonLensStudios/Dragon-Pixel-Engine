@@ -28,6 +28,20 @@ struct AssetImportRequest final
     AssetImportOwnership ownership{AssetImportOwnership::copy_into_project};
 };
 
+struct TileAssetPublicationRequest final
+{
+    QString project_manifest_path;
+    QString base_name;
+    QString tilemap_asset_id;
+    QString tileset_asset_id;
+    QString texture_asset_id;
+    QByteArray tilemap_bytes;
+    QByteArray tileset_bytes;
+    QByteArray texture_bytes;
+    QString source_map_hash;
+    double pixels_per_unit{32.0};
+};
+
 struct AssetOperationResult final
 {
     bool succeeded{};
@@ -62,6 +76,8 @@ public:
 
     [[nodiscard]] virtual AssetOperationResult import_files(
         const AssetImportRequest& request) const = 0;
+    [[nodiscard]] virtual AssetOperationResult publish_tile_import(
+        const TileAssetPublicationRequest& request) const = 0;
     [[nodiscard]] virtual AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const = 0;
@@ -104,6 +120,8 @@ public:
 
     [[nodiscard]] AssetOperationResult import_files(
         const AssetImportRequest& request) const override;
+    [[nodiscard]] AssetOperationResult publish_tile_import(
+        const TileAssetPublicationRequest& request) const override;
     [[nodiscard]] AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const override;

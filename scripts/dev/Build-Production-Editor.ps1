@@ -99,6 +99,7 @@ try {
 }
 
 $editorSource = Join-Path $buildRoot 'src\editor\Release\DragonPixelEditor.exe'
+$tiledImporterSource = Join-Path $buildRoot 'src\importers\Tiled\Release\DragonPixelTiledImporterWorker.exe'
 $nativeSource = Join-Path $buildRoot 'src\native\CAbi\Release'
 $monoGameSource = Join-Path $repositoryRoot 'src\managed\DragonPixel.Adapter.MonoGame.Worker\bin\Release\net10.0'
 $kniSource = Join-Path $repositoryRoot 'src\managed\DragonPixel.Adapter.Kni.Worker\bin\Release\net10.0'
@@ -107,6 +108,7 @@ $sdlSource = Join-Path $buildRoot 'vcpkg_installed\x64-windows\bin\SDL3.dll'
 $sdlLicenseSource = Join-Path $buildRoot 'vcpkg_installed\x64-windows\share\sdl3\copyright'
 foreach ($requiredFile in @(
         $editorSource,
+        $tiledImporterSource,
         (Join-Path $nativeSource 'dragonpixel.dll'),
         (Join-Path $nativeSource 'box2d.dll'),
         (Join-Path $monoGameSource 'DragonPixel.Adapter.MonoGame.Worker.dll'),
@@ -127,6 +129,8 @@ Assert-ContainedOutput $outputRoot
 try {
     New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
     Copy-Item -LiteralPath $editorSource -Destination (Join-Path $stagingRoot 'DragonPixelEditor.exe')
+    Copy-Item -LiteralPath $tiledImporterSource `
+        -Destination (Join-Path $stagingRoot 'DragonPixelTiledImporterWorker.exe')
 
     & $qtDeploy --release --no-translations --no-opengl-sw --dir $stagingRoot `
         (Join-Path $stagingRoot 'DragonPixelEditor.exe')
@@ -190,6 +194,7 @@ try {
 
     $requiredBundlePaths = @(
         'DragonPixelEditor.exe',
+        'DragonPixelTiledImporterWorker.exe',
         'Qt6Core.dll',
         'Qt6Gui.dll',
         'Qt6Widgets.dll',

@@ -52,6 +52,7 @@
 #include <QPushButton>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QProgressDialog>
 #include <QQuaternion>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -1605,6 +1606,13 @@ void EditorWindow::build_interface()
     auto* create_tile_set = assets_menu->addAction(QStringLiteral("Create TileSet from PNG..."));
     create_tile_set->setObjectName(QStringLiteral("CreateTileSetFromPngAction"));
     connect(create_tile_set, &QAction::triggered, this, &EditorWindow::create_tile_set_from_png);
+    import_tiled_tilemap_action_ = assets_menu->addAction(QStringLiteral("Import Tiled Tilemap..."));
+    import_tiled_tilemap_action_->setObjectName(QStringLiteral("ImportTiledTilemapAction"));
+    import_tiled_tilemap_action_->setShortcut(QKeySequence{QStringLiteral("Ctrl+Alt+T")});
+    import_tiled_tilemap_action_->setStatusTip(
+        QStringLiteral("Import an orthogonal Tiled JSON map and atlas into the Tile Palette"));
+    connect(import_tiled_tilemap_action_, &QAction::triggered,
+        this, &EditorWindow::import_tiled_tilemap);
     input_map_action_ = assets_menu->addAction(QStringLiteral("Input Map..."));
     input_map_action_->setObjectName(QStringLiteral("InputMapAction"));
     connect(input_map_action_, &QAction::triggered, this, &EditorWindow::edit_input_map);
@@ -1768,6 +1776,111 @@ void EditorWindow::create_tile_set_from_png()
         QStringLiteral("Info"), QStringLiteral("Tile Authoring"), created.tile_set_path,
         {}, {}, {}, {}, created.tile_set_asset_id, created.tile_set_path);
     rebuild_assets();
+}
+
+void EditorWindow::import_tiled_tilemap()
+{
+    if (project_manifest_path_.isEmpty())
+    {
+        append_console(QStringLiteral("Open a project before importing a Tiled tilemap."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Import"));
+        return;
+    }
+    if (tile_document_service_->is_dirty())
+    {
+        const auto decision = unsaved_prompt_
+            ? unsaved_prompt_(QFileInfo{tile_document_service_->tilemap_path()}.fileName())
+            : UnsavedDecision::cancel;
+        if (decision == UnsavedDecision::cancel
+            || (decision == UnsavedDecision::save && !tile_document_service_->save()))
+        {
+            return;
+        }
+    }
+    const auto source = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Import Tiled Tilemap"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QStringLiteral("Tiled JSON Maps (*.tmj *.json)"));
+    if (source.isEmpty())
+    {
+        return;
+    }
+    bool accepted = false;
+    const auto pixels_per_unit = QInputDialog::getDouble(
+        this,
+        QStringLiteral("Tile Scale"),
+        QStringLiteral("Pixels per world unit"),
+        32.0,
+        0.01,
+        1'000'000.0,
+        2,
+        &accepted);
+    if (!accepted)
+    {
+        return;
+    }
+
+    (void)perform_tiled_tilemap_import(source, pixels_per_unit);
+}
+
+bool EditorWindow::perform_tiled_tilemap_import(
+    const QString& source,
+    double pixels_per_unit)
+{
+    QProgressDialog progress{
+        QStringLiteral("Importing and validating Tiled tilemap..."),
+        QStringLiteral("Cancel"), 0, 0, this};
+    progress.setObjectName(QStringLiteral("TiledTilemapImportProgress"));
+    progress.setWindowTitle(QStringLiteral("Import Tiled Tilemap"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setAutoClose(false);
+    progress.show();
+    const auto result = tile_import_service_.import_tiled_json({
+        project_manifest_path_,
+        source,
+        QFileInfo{source}.completeBaseName(),
+        pixels_per_unit,
+        30'000,
+        [&progress] { return progress.wasCanceled(); },
+    });
+    progress.close();
+    if (!result.succeeded)
+    {
+        const auto message = result.diagnostics.isEmpty()
+            ? QStringLiteral("Tiled tilemap import failed.")
+            : QStringLiteral("%1: %2")
+                  .arg(result.diagnostics.constFirst().code,
+                      result.diagnostics.constFirst().message);
+        append_console(message, QStringLiteral("Error"), QStringLiteral("Tile Import"),
+            source, {}, {}, result.operation_id);
+        QMessageBox::warning(this, QStringLiteral("Tiled tilemap import failed"), message);
+        return false;
+    }
+
+    rebuild_assets();
+    if (!tile_palette_->load_documents(result.tilemap_path, result.tileset_path))
+    {
+        append_console(QStringLiteral("The imported assets were published, but the Tile Palette could not open them."),
+            QStringLiteral("Error"), QStringLiteral("Tile Import"), result.tilemap_path,
+            {}, {}, result.operation_id, {}, result.tilemap_asset_id, result.tilemap_path);
+        QMessageBox::warning(this, QStringLiteral("Tile Palette"),
+            QStringLiteral("The imported assets are in the Project Explorer, but the Tile Palette could not open them."));
+        return false;
+    }
+    tile_palette_dock_->show();
+    tile_palette_dock_->raise();
+    append_console(
+        QStringLiteral("Imported %1 tiles, %2 layers, and %3 occupied cells from %4")
+            .arg(result.tile_count)
+            .arg(result.layer_count)
+            .arg(result.cell_count)
+            .arg(QFileInfo{source}.fileName()),
+        QStringLiteral("Info"), QStringLiteral("Tile Import"), result.tilemap_path,
+        {}, {}, result.operation_id, {}, result.tilemap_asset_id, result.tilemap_path);
+    statusBar()->showMessage(QStringLiteral("Tiled tilemap imported into the Tile Palette"), 5000);
+    return true;
 }
 
 void EditorWindow::create_project_component(ProjectComponentLanguage language)
@@ -5913,6 +6026,10 @@ void EditorWindow::update_action_states()
     if (input_map_action_ != nullptr)
     {
         input_map_action_->setEnabled(project_input_map_.has_value());
+    }
+    if (import_tiled_tilemap_action_ != nullptr)
+    {
+        import_tiled_tilemap_action_->setEnabled(!project_manifest_path_.isEmpty());
     }
     if (input_settings_action_ != nullptr)
     {

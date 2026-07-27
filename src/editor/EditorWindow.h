@@ -14,6 +14,7 @@
 #include "ScriptEditorService.h"
 #include "SelectionService.h"
 #include "TileDocumentService.h"
+#include "TileImportService.h"
 #include "TilePaletteWidget.h"
 #include "TileSetWizard.h"
 #include "WorkerClient.h"
@@ -181,6 +182,10 @@ private:
     void repair_prefab();
     void unpack_prefab(bool completely);
     void create_tile_set_from_png();
+    void import_tiled_tilemap();
+    [[nodiscard]] bool perform_tiled_tilemap_import(
+        const QString& source,
+        double pixels_per_unit);
     void create_project_component(ProjectComponentLanguage language);
     void build_project_components();
     void edit_project_source(const QString& source_path);
@@ -343,6 +348,7 @@ private:
     QAction* unpack_completely_prefab_action_{};
     QAction* input_map_action_{};
     QAction* input_settings_action_{};
+    QAction* import_tiled_tilemap_action_{};
 
     UnsavedPrompt unsaved_prompt_;
     DeletePrompt delete_prompt_;
@@ -352,6 +358,7 @@ private:
     SelectionService selection_service_;
     ProjectLifecycleService project_lifecycle_service_;
     AssetService asset_service_;
+    TileImportService tile_import_service_{asset_service_};
     PrefabService prefab_service_;
     ScriptEditorService script_editor_service_;
     struct GizmoTransformSnapshot final
