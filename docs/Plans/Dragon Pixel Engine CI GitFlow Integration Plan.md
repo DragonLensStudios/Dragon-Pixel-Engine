@@ -173,6 +173,11 @@ The feature is fully done only after human review, merge into `develop`, post-me
 - Audited the final PR #3 workflow logs and repository settings. Confirmed false-green Windows execution, missing Ubuntu autotools, strict AppleClang descriptor warnings, historical branch filters, and absent `develop` protection.
 - Created `feature/ci-gitflow-integration` from current `develop`.
 - Identified the affected tests and documentation and created this plan before source/workflow changes.
+- Completed CI-contract increment in `afa0e02`: added GitFlow and JUnit validators with 10 passing Python unit tests, updated accepted workflow triggers, added least-privilege permissions/concurrency, and made the policy job a prerequisite for each platform matrix.
+- Completed fail-closed platform increment in `326a1db`: added a tested PowerShell native-command wrapper, explicit Windows tool/Ninja/vcpkg checks, minimum-56 JUnit validation on every matrix, missing-evidence failures, Ubuntu autotools prerequisites, and matching container validation.
+- Verified actionlint 1.7.12 against the workflow using its SHA-256-verified Windows release archive (`6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9`). The PowerShell success/failure propagation test passed, all 10 Python tests passed, and a real focused `poc_c.metadata_serialization` CTest JUnit result passed validation. Docker container execution is currently unavailable because the local Docker Desktop Linux daemon is not running; this is inconclusive, not a pass.
+- Completed metadata portability increment in `0573a25`: built-in component descriptors now use explicit named assignments, and `s1.native_core` asserts the 16-record registry plus preserved Transform and default descriptor values.
+- An initial focused Release build without a Visual Studio developer environment failed because MSVC standard-library include paths were absent. After importing the Visual Studio 2022 developer shell, focused `s1.native_core` passed 1 of 1 in Release (1.60 seconds) and MSVC AddressSanitizer (2.06 seconds); both generated JUnit files passed the validator. The initial environmental failure is not product evidence.
 
 ## Handoff notes
 
