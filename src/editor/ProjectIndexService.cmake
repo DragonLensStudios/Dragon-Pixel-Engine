@@ -1,8 +1,7 @@
-# Include this file after DragonPixelEditor and DragonPixelEditorInteractionTests
-# are declared. Keeping the service/test registration here allows the bounded
-# implementation to land without rewriting the editor's main CMake file.
+# Include this file after DragonPixelEditorLibrary is declared. Keeping the
+# service/test registration here preserves the bounded service test targets.
 
-target_sources(DragonPixelEditor PRIVATE
+target_sources(DragonPixelEditorLibrary PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.h"
     "${CMAKE_CURRENT_LIST_DIR}/ProjectLifecycleService.cpp"
@@ -12,19 +11,7 @@ target_sources(DragonPixelEditor PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/SelectionService.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/SelectionService.h"
 )
-target_sources(DragonPixelEditorInteractionTests PRIVATE
-    "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.h"
-    "${CMAKE_CURRENT_LIST_DIR}/ProjectLifecycleService.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/ProjectLifecycleService.h"
-    "${CMAKE_CURRENT_LIST_DIR}/AssetService.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/AssetService.h"
-    "${CMAKE_CURRENT_LIST_DIR}/SelectionService.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/SelectionService.h"
-)
-target_compile_definitions(DragonPixelEditor PRIVATE
-    DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates")
-target_compile_definitions(DragonPixelEditorInteractionTests PRIVATE
+target_compile_definitions(DragonPixelEditorLibrary PRIVATE
     DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates")
 
 add_executable(DragonPixelProjectIndexServiceTests
