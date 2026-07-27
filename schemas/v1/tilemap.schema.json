@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v1/tilemap.schema.json",
+  "title": "Dragon Pixel Engine sparse orthogonal Tilemap",
+  "type": "object", "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "assetId", "name", "chunkSize", "tileSetDependencies", "layers"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v1/tilemap.schema.json" },
+    "format": { "const": "dpe.tilemap" }, "formatVersion": { "const": 1 },
+    "engineVersion": { "type": "string", "minLength": 1 }, "assetId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 }, "chunkSize": { "const": 32 },
+    "tileSetDependencies": { "type": "array", "items": { "type": "string", "format": "uuid" }, "uniqueItems": true },
+    "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } }
+  },
+  "$defs": {
+    "cell": { "type": "object", "additionalProperties": false, "required": ["index", "tileId"], "properties": { "index": { "type": "integer", "minimum": 0, "maximum": 1023 }, "tileId": { "type": "string", "format": "uuid" }, "flipX": { "type": "boolean" }, "flipY": { "type": "boolean" }, "rotationQuarterTurns": { "type": "integer", "minimum": 0, "maximum": 3 } } },
+    "chunk": { "type": "object", "additionalProperties": false, "required": ["x", "y", "cells"], "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "cells": { "type": "array", "items": { "$ref": "#/$defs/cell" } } } },
+    "layer": { "type": "object", "additionalProperties": false, "required": ["layerId", "name", "visible", "order", "chunks"], "properties": { "layerId": { "type": "string", "format": "uuid" }, "name": { "type": "string", "minLength": 1 }, "visible": { "type": "boolean" }, "order": { "type": "integer", "minimum": 0 }, "chunks": { "type": "array", "items": { "$ref": "#/$defs/chunk" } } } }
+  }
+}

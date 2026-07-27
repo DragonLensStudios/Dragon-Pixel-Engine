@@ -1,0 +1,9 @@
+#----------------------------- Global Properties ----------------------------#
+/outputDir:bin/$(Platform)
+/intermediateDir:obj/$(Platform)
+/platform:DesktopGL
+
+#begin cube.fbx
+/importer:FbxImporter
+/processor:ModelProcessor
+/build:cube.fbx

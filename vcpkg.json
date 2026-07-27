@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "dragon-pixel-engine",
+  "version-string": "0.0.0",
+  "dependencies": [
+    "box2d",
+    "joltphysics",
+    "nlohmann-json",
+    "sdl3"
+  ],
+  "overrides": [
+    {
+      "name": "box2d",
+      "version": "3.1.1"
+    },
+    {
+      "name": "joltphysics",
+      "version": "5.6.0"
+    }
+  ],
+  "builtin-baseline": "40f3c709db80acf154ac4b17a1f83c564ebd022e"
+}

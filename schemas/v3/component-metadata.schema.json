@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v3/component-metadata.schema.json",
+  "title": "Dragon Pixel Engine component metadata manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "generatorVersion", "components"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v3/component-metadata.schema.json" },
+    "format": { "const": "dpe.component-metadata" },
+    "formatVersion": { "const": 3 },
+    "generatorVersion": { "type": "string", "minLength": 1 },
+    "components": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/component" }
+    }
+  },
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["typeId", "qualifiedName", "displayName", "schemaVersion", "owner", "properties"],
+      "properties": {
+        "typeId": { "type": "string", "format": "uuid" },
+        "qualifiedName": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "owner": { "enum": ["native", "managed", "data-only"] },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/property" } }
+      }
+    },
+    "property": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["propertyId", "displayName", "valueType", "order", "readOnly"],
+      "properties": {
+        "propertyId": { "$ref": "#/$defs/stableId" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "valueType": {
+          "enum": ["boolean", "integer", "number", "string", "vector2", "vector3", "quaternion", "color", "entity-reference", "asset-reference"]
+        },
+        "order": { "type": "integer", "minimum": 0 },
+        "readOnly": { "type": "boolean" },
+        "default": {},
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 },
+        "units": { "type": "string" },
+        "enumChoices": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "nullable": { "type": "boolean" },
+        "referenceFilter": { "type": "string" },
+        "category": { "type": "string" },
+        "tooltip": { "type": "string" },
+        "drawerKey": { "type": "string" }
+      }
+    }
+  }
+}

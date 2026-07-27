@@ -1,0 +1,9 @@
+#----------------------------- Global Properties ----------------------------#
+/outputDir:bin/$(Platform)
+/intermediateDir:obj/$(Platform)
+/platform:DesktopGL
+
+#begin dragon.png
+/importer:TextureImporter
+/processor:TextureProcessor
+/build:dragon.png

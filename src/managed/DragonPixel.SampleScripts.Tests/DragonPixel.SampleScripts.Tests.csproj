@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../DragonPixel.Contracts/DragonPixel.Contracts.csproj" />
+    <Compile Include="../../../samples/Slice1Sample/Components/CSharp/MyMover.cs" Link="MyMover.cs" />
+  </ItemGroup>
+</Project>

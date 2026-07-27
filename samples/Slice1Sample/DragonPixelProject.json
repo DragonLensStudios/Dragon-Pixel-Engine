@@ -1,0 +1,19 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v3/project.schema.json",
+  "format": "dpe.project",
+  "formatVersion": 3,
+  "engineVersion": "0.3.0-slice2",
+  "projectId": "197b44ff-06d2-43b1-b209-820b0619c846",
+  "name": "Dragon Pixel Slice 1 Sample",
+  "startupScene": "Scenes/Main.dpescene",
+  "sceneRoots": [
+    "Scenes"
+  ],
+  "assetRoots": [
+    "Assets",
+    "Prefabs"
+  ],
+  "componentRoots": [
+    "Components"
+  ]
+}

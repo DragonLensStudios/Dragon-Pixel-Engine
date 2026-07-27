@@ -1,0 +1,61 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v4/component-metadata.schema.json",
+  "format": "dpe.component-metadata",
+  "formatVersion": 4,
+  "generatorVersion": "0.3.0",
+  "contracts": [],
+  "objectTypes": [],
+  "components": [
+    {
+      "typeId": "6bafa5b1-ae76-4cb7-a5a7-ac71c95efb6e",
+      "qualifiedName": "DragonPixel.ProjectComponents.MyMover",
+      "displayName": "MyMover",
+      "schemaVersion": 1,
+      "owner": "managed",
+      "implementationLanguage": "csharp",
+      "category": "Scripts",
+      "tooltip": "Moves its GameObject from the configured project input actions during Play.",
+      "addable": true,
+      "removable": true,
+      "resettable": true,
+      "sourcePath": "Components/CSharp/MyMover.cs",
+      "runtimeModuleId": "a8e4fed3-a347-4742-96aa-f67d7d57b61a",
+      "properties": [
+        {
+          "propertyId": "6bafa5b1-ae76-4cb7-a5a7-ac71c95efb6e.horizontal_action",
+          "displayName": "Horizontal Action",
+          "order": 0,
+          "readOnly": false,
+          "shape": { "kind": "string", "nullable": false },
+          "default": "move.x",
+          "category": "Input",
+          "tooltip": "Portable action used for horizontal runtime-only motion."
+        },
+        {
+          "propertyId": "6bafa5b1-ae76-4cb7-a5a7-ac71c95efb6e.vertical_action",
+          "displayName": "Vertical Action",
+          "order": 1,
+          "readOnly": false,
+          "shape": { "kind": "string", "nullable": false },
+          "default": "move.y",
+          "category": "Input",
+          "tooltip": "Portable action used for vertical runtime-only motion."
+        },
+        {
+          "propertyId": "6bafa5b1-ae76-4cb7-a5a7-ac71c95efb6e.speed",
+          "displayName": "Speed",
+          "order": 2,
+          "readOnly": false,
+          "shape": { "kind": "number", "nullable": false },
+          "default": 5.0,
+          "minimum": 0.0,
+          "maximum": 1000.0,
+          "step": 0.1,
+          "units": "m/s",
+          "category": "Input",
+          "tooltip": "Runtime-only movement speed while the focused Game view supplies actions."
+        }
+      ]
+    }
+  ]
+}

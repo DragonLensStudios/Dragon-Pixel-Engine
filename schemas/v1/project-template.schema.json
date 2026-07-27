@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v1/project-template.schema.json",
+  "title": "Dragon Pixel Engine declarative project template",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "templateId", "templateVersion", "name", "kind", "engineRange", "entries"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v1/project-template.schema.json" },
+    "format": { "const": "dpe.project-template" },
+    "formatVersion": { "const": 1 },
+    "templateId": { "type": "string", "format": "uuid" },
+    "templateVersion": { "type": "integer", "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["2d", "3d"] },
+    "engineRange": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["directory", "generated-project", "generated-scene", "default-input", "component-project"] }
+        }
+      }
+    }
+  }
+}

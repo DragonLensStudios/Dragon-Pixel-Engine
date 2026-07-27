@@ -1,0 +1,81 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/input-map.schema.json",
+  "format": "dpe.inputmap",
+  "formatVersion": 1,
+  "inputMapId": "42a4b746-57aa-4591-b568-ea2a2896cc0d",
+  "name": "Default Input",
+  "activeControlMapId": "5c8c006c-0466-4b91-84a2-22be86647fe4",
+  "controlMaps": [
+    {
+      "mapId": "5c8c006c-0466-4b91-84a2-22be86647fe4",
+      "name": "Gameplay",
+      "enabled": true,
+      "actions": [
+        {
+          "actionId": "f5e719d2-f5b8-4aa0-b4e0-56a06044974f",
+          "name": "move.x",
+          "kind": "axis1d",
+          "bindings": [
+            { "bindingId": "b10df30f-7b71-49a0-87f9-1b406315f83a", "path": "keyboard/d", "scale": 1 },
+            { "bindingId": "73eb79f4-9a0c-48aa-91b3-36e69890aefc", "path": "keyboard/right", "scale": 1 },
+            { "bindingId": "4ac5b5d8-4162-4f6a-8511-231183081cd7", "path": "keyboard/a", "scale": -1 },
+            { "bindingId": "39d7214d-4db9-442c-ae24-dc3f9cb0e62c", "path": "keyboard/left", "scale": -1 },
+            { "bindingId": "92dd035f-8fde-4514-99a8-0f38ae46db03", "path": "gamepad/left-x", "scale": 1, "deadZone": 0.18 },
+            { "bindingId": "b2dbb0e1-5396-4bb9-8101-42fe691a086f", "path": "gamepad/dpad-right", "scale": 1 },
+            { "bindingId": "3b087011-cfa1-4c86-8f0e-814f41a035de", "path": "gamepad/dpad-left", "scale": -1 }
+          ]
+        },
+        {
+          "actionId": "64266ca8-d802-4af6-912f-a3c1686740d4",
+          "name": "move.y",
+          "kind": "axis1d",
+          "bindings": [
+            { "bindingId": "34795127-6d36-4a92-8638-b15701075737", "path": "keyboard/w", "scale": 1 },
+            { "bindingId": "982b033a-33bf-481e-99b3-3ab3416468bb", "path": "keyboard/up", "scale": 1 },
+            { "bindingId": "78fa2229-b555-461d-ab33-10b95971a307", "path": "keyboard/s", "scale": -1 },
+            { "bindingId": "a6999b84-2c26-4a55-9f39-a3f25643a2bb", "path": "keyboard/down", "scale": -1 },
+            { "bindingId": "d12284e5-45c0-4d6c-a1d0-ddf20191fe06", "path": "gamepad/left-y", "scale": -1, "deadZone": 0.18 },
+            { "bindingId": "290b5e57-3fe1-4ba7-95d4-2e348375c7d8", "path": "gamepad/dpad-up", "scale": 1 },
+            { "bindingId": "46bf220c-b217-463c-9efc-a7b5f2b8503a", "path": "gamepad/dpad-down", "scale": -1 }
+          ]
+        },
+        {
+          "actionId": "8ba6871d-a531-40ee-a83c-52f7b03dc9c7",
+          "name": "jump",
+          "kind": "button",
+          "bindings": [
+            { "bindingId": "83be119b-4056-4dce-82ba-de3b81c4b037", "path": "keyboard/space", "scale": 1 },
+            { "bindingId": "0c38cf14-cc54-4623-bc37-79418469d697", "path": "gamepad/south", "scale": 1 }
+          ]
+        },
+        {
+          "actionId": "e83af799-b58a-43f3-8190-6e4c5dc801b4",
+          "name": "look.x",
+          "kind": "axis1d",
+          "bindings": [
+            { "bindingId": "92e25e06-8865-4d46-bdce-60d16ca96c9e", "path": "mouse/delta-x", "scale": 0.02 },
+            { "bindingId": "b07414e6-f5b0-4415-a305-4e36f3eb8103", "path": "gamepad/right-x", "scale": 1, "deadZone": 0.18 }
+          ]
+        },
+        {
+          "actionId": "a7102ffd-a046-439f-aefe-2ec5bf25a19a",
+          "name": "look.y",
+          "kind": "axis1d",
+          "bindings": [
+            { "bindingId": "9a6dc308-c742-4492-b040-c6a0ca10c04c", "path": "mouse/delta-y", "scale": -0.02 },
+            { "bindingId": "fb8fc6a2-0236-4460-94dc-3a0b2cc996eb", "path": "gamepad/right-y", "scale": -1, "deadZone": 0.18 }
+          ]
+        },
+        {
+          "actionId": "21eac401-e957-4917-b3ed-60fc957359d2",
+          "name": "fire",
+          "kind": "button",
+          "bindings": [
+            { "bindingId": "87cb76af-4638-468d-a25f-f7aa2780f25c", "path": "mouse/left", "scale": 1 },
+            { "bindingId": "605856d9-41a4-4d00-ae26-41525e7bf0df", "path": "gamepad/right-trigger", "scale": 1, "deadZone": 0.1 }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "DPE_BUILD_POC_A": "ON",
+        "DPE_BUILD_POC_B": "ON",
+        "DPE_BUILD_POC_C": "ON",
+        "DPE_BUILD_POC_D": "ON",
+        "DPE_BUILD_CORE": "ON",
+        "DPE_BUILD_MANAGED": "ON",
+        "DPE_BUILD_EDITOR": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows MSVC v143",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/out/build/${presetName}-vcpkg",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "windows-msvc-asan",
+      "displayName": "Windows MSVC v143 with AddressSanitizer",
+      "inherits": "windows-msvc",
+      "cacheVariables": {
+        "DPE_ENABLE_ASAN": "ON"
+      }
+    },
+    {
+      "name": "unix-clang",
+      "displayName": "macOS/Linux Clang",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "unix-clang-asan",
+      "displayName": "macOS/Linux Clang with AddressSanitizer",
+      "inherits": "unix-clang",
+      "cacheVariables": {
+        "DPE_ENABLE_ASAN": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-asan",
+      "configurePreset": "windows-msvc-asan",
+      "configuration": "Release"
+    },
+    {
+      "name": "unix-release",
+      "configurePreset": "unix-clang",
+      "configuration": "Release"
+    },
+    {
+      "name": "unix-asan",
+      "configurePreset": "unix-clang-asan",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-asan",
+      "configurePreset": "windows-msvc-asan",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "unix-release",
+      "configurePreset": "unix-clang",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "unix-asan",
+      "configurePreset": "unix-clang-asan",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

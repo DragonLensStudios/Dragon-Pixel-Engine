@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v4/project.schema.json",
+  "title": "Dragon Pixel Engine project manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "engineRange", "projectId", "name", "startupScene", "sceneRoots", "assetRoots", "componentRoots", "requiredSdks", "buildTargets", "packageTargets", "pluginRequirements"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v4/project.schema.json" },
+    "format": { "const": "dpe.project" },
+    "formatVersion": { "const": 4 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "engineRange": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "startupScene": { "type": "string", "minLength": 1 },
+    "sceneRoots": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "assetRoots": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "componentRoots": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "requiredSdks": { "type": "array", "items": { "type": "object" } },
+    "buildTargets": { "type": "array", "items": { "type": "object" } },
+    "packageTargets": { "type": "array", "items": { "type": "object" } },
+    "pluginRequirements": { "type": "array", "items": { "type": "object" } },
+    "templateProvenance": {
+      "type": "object",
+      "required": ["templateId", "templateVersion"],
+      "properties": {
+        "templateId": { "type": "string", "format": "uuid" },
+        "templateVersion": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    }
+  }
+}

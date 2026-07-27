@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v2/asset-metadata.schema.json",
+  "title": "Dragon Pixel Engine asset metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "assetId", "assetType", "source", "dependencies", "importSettings"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v2/asset-metadata.schema.json" },
+    "format": { "const": "dpe.asset" },
+    "formatVersion": { "const": 2 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "assetId": { "type": "string", "format": "uuid" },
+    "assetType": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "uniqueItems": true
+    },
+    "importSettings": { "type": "object" },
+    "importerDiagnostics": { "type": "array", "items": { "type": "object" } },
+    "previewDiagnostics": { "type": "array", "items": { "type": "object" } }
+  }
+}

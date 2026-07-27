@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v1/prefab.schema.json",
+  "title": "Dragon Pixel Engine linked prefab",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "prefabId", "revision", "rootEntityId", "entities", "prefabInstances", "dependencies"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v1/prefab.schema.json" },
+    "format": { "const": "dpe.prefab" },
+    "formatVersion": { "const": 1 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "prefabId": { "type": "string", "format": "uuid" },
+    "revision": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "rootEntityId": { "type": "string", "format": "uuid" },
+    "entities": { "type": "array", "items": { "type": "object" } },
+    "prefabInstances": { "type": "array", "items": { "$ref": "#/$defs/instance" } },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nestedPath", "sourceEntityId", "instanceEntityId"],
+      "properties": {
+        "nestedPath": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "sourceEntityId": { "type": "string", "format": "uuid" },
+        "instanceEntityId": { "type": "string", "format": "uuid" }
+      }
+    },
+    "instance": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["instanceId", "sourceAssetId", "sourceRevision", "rootEntityId", "placementParentId", "entityMappings", "overrides", "fallbackEntities"],
+      "properties": {
+        "instanceId": { "type": "string", "format": "uuid" },
+        "sourceAssetId": { "type": "string", "format": "uuid" },
+        "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "rootEntityId": { "type": "string", "format": "uuid" },
+        "placementParentId": { "type": ["string", "null"], "format": "uuid" },
+        "entityMappings": { "type": "array", "items": { "$ref": "#/$defs/mapping" } },
+        "overrides": { "type": "array", "items": { "type": "object" } },
+        "fallbackEntities": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  }
+}

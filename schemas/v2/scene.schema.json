@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v2/scene.schema.json",
+  "title": "Dragon Pixel Engine scene document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "sceneId", "engineVersion", "entities"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v2/scene.schema.json" },
+    "format": { "const": "dpe.scene" },
+    "formatVersion": { "const": 2 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "sceneId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string" },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "parentId", "enabled", "components"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string" },
+        "parentId": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "format": "uuid" }
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/componentRecord" }
+        }
+      }
+    },
+    "componentRecord": {
+      "type": "object",
+      "required": ["typeId", "qualifiedName", "schemaVersion", "owner", "enabled", "properties"],
+      "properties": {
+        "typeId": { "type": "string", "minLength": 1 },
+        "qualifiedName": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "owner": { "enum": ["native", "managed", "unknown"] },
+        "enabled": { "type": "boolean" },
+        "properties": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

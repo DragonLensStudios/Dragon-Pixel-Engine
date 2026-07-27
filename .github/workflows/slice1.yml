@@ -1,0 +1,156 @@
+name: Slice 1 cross-platform
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows 11 x64 / ${{ matrix.configuration }}
+    runs-on: windows-2022
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: 0
+      MSBUILDDISABLENODEREUSE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [release, asan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.203
+      - name: Install Qt 6.11.1 for MSVC 2022
+        shell: pwsh
+        run: |
+          $qtRoot = Join-Path $env:RUNNER_TEMP 'Qt-6.11.1-msvc2022_64'
+          $repository = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6111/qt6_6111_msvc2022_64/qt.qt6.6111.win64_msvc2022_64'
+          $archiveName = '6.11.1-0-202605090529qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z'
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $checksum = (Invoke-RestMethod "$repository/$archiveName.sha1").Trim().Split()[0].ToLowerInvariant()
+          Invoke-WebRequest "$repository/$archiveName" -OutFile $archive
+          $actualChecksum = (Get-FileHash -Algorithm SHA1 $archive).Hash.ToLowerInvariant()
+          if ($actualChecksum -ne $checksum) {
+            throw "Qt archive checksum mismatch: expected $checksum, got $actualChecksum."
+          }
+          New-Item -ItemType Directory -Force -Path $qtRoot | Out-Null
+          & 7z x $archive "-o$qtRoot" -y
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE." }
+          $qtVersion = & (Join-Path $qtRoot 'bin\qtpaths.exe') --qt-query QT_VERSION
+          if ($qtVersion -ne '6.11.1') { throw "Expected Qt 6.11.1, got $qtVersion." }
+          "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $qtRoot 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Configure, build, and test
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & (Join-Path $vs 'Common7\Tools\Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $env:VCPKG_ROOT) { throw 'The GitHub runner did not expose VCPKG_INSTALLATION_ROOT.' }
+          $configure = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-msvc-asan' } else { 'windows-msvc' }
+          $build = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-asan' } else { 'windows-release' }
+          cmake --preset $configure -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          cmake --build --preset $build
+          $junit = Join-Path $env:GITHUB_WORKSPACE "slice1-Windows-${{ matrix.configuration }}.xml"
+          ctest --preset $build --output-on-failure --output-junit $junit
+      - name: Upload Windows test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice1-windows-2022-${{ matrix.configuration }}-evidence
+          if-no-files-found: warn
+          path: |
+            slice1-Windows-${{ matrix.configuration }}.xml
+            out/build/**/Testing/Temporary/LastTest.log
+
+  unix:
+    name: ${{ matrix.os }} / ${{ matrix.configuration }}
+    runs-on: ${{ matrix.os }}
+    env:
+      DOTNET_CLI_USE_MSBUILD_SERVER: 0
+      MSBUILDDISABLENODEREUSE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+        configuration: [release, asan]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.203
+      - name: Bootstrap pinned vcpkg registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          vcpkg_root="$RUNNER_TEMP/vcpkg"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git "$vcpkg_root"
+          git -C "$vcpkg_root" checkout 40f3c709db80acf154ac4b17a1f83c564ebd022e
+          "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=$vcpkg_root" >> "$GITHUB_ENV"
+      - name: Install Qt for Linux
+        if: runner.os == 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          arch: linux_gcc_64
+          cache: true
+      - name: Install Qt for macOS
+        if: runner.os == 'macOS'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          arch: clang_64
+          cache: true
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-18-dev ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+      - name: Configure, build, and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          configure=unix-clang
+          build=unix-release
+          if [[ '${{ matrix.configuration }}' == 'asan' ]]; then
+            configure=unix-clang-asan
+            build=unix-asan
+          fi
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            [[ "$(uname -m)" == 'arm64' ]] || { echo "Expected macOS arm64 runner, got $(uname -m)" >&2; exit 1; }
+          fi
+          cmake --preset "$configure" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          cmake --build --preset "$build"
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION
+            qt_core="$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
+            [[ -f "$qt_core" ]] || { echo "QtCore framework binary was not found at $qt_core." >&2; exit 1; }
+            lipo "$qt_core" -verify_arch arm64
+            native_library_manifest="$RUNNER_TEMP/dragon-pixel-native-libraries.txt"
+            find src/managed -path '*/bin/Release/net10.0/*' -name '*.dylib' -type f | sort > "$native_library_manifest"
+            [[ -s "$native_library_manifest" ]] || { echo 'Managed adapter native libraries were not found.' >&2; exit 1; }
+            while IFS= read -r native_library; do
+              echo "Verifying arm64 native dependency: $native_library"
+              lipo "$native_library" -verify_arch arm64
+            done < "$native_library_manifest"
+          fi
+          junit="$GITHUB_WORKSPACE/slice1-${RUNNER_OS}-${{ matrix.configuration }}.xml"
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then
+            xvfb-run -a ctest --preset "$build" --output-on-failure --output-junit "$junit"
+          else
+            ctest --preset "$build" --output-on-failure --output-junit "$junit"
+          fi
+      - name: Upload Unix test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice1-${{ matrix.os }}-${{ matrix.configuration }}-evidence
+          if-no-files-found: warn
+          path: |
+            slice1-${{ runner.os }}-${{ matrix.configuration }}.xml
+            out/build/**/Testing/Temporary/LastTest.log

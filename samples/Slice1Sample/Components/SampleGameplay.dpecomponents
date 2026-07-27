@@ -1,0 +1,140 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v4/component-metadata.schema.json",
+  "format": "dpe.component-metadata",
+  "formatVersion": 4,
+  "generatorVersion": "0.3.0",
+  "contracts": [
+    {
+      "contractId": "da5089b4-5f31-405f-9175-c30178e6f98e",
+      "qualifiedName": "Sample.IMovementProfile",
+      "displayName": "Movement Profile",
+      "tooltip": "Configurable movement behavior data shared by C# and C++."
+    }
+  ],
+  "objectTypes": [
+    {
+      "typeId": "4216608a-f437-4c5a-a614-38c52cf3982b",
+      "qualifiedName": "Sample.InputBinding",
+      "displayName": "Input Binding",
+      "schemaVersion": 1,
+      "implements": [],
+      "properties": [
+        {
+          "propertyId": "sample.binding.action",
+          "displayName": "Action",
+          "order": 0,
+          "readOnly": false,
+          "shape": { "kind": "string", "nullable": false },
+          "default": "move.x",
+          "tooltip": "Portable input action consumed by the worker-only component."
+        },
+        {
+          "propertyId": "sample.binding.scale",
+          "displayName": "Scale",
+          "order": 1,
+          "readOnly": false,
+          "shape": { "kind": "number", "nullable": false },
+          "default": 1.0,
+          "minimum": -10.0,
+          "maximum": 10.0,
+          "step": 0.1
+        }
+      ]
+    },
+    {
+      "typeId": "0133ad64-f351-4427-8c85-89724c38ff63",
+      "qualifiedName": "Sample.PlatformMovementProfile",
+      "displayName": "Platform Movement",
+      "schemaVersion": 1,
+      "implements": [
+        "da5089b4-5f31-405f-9175-c30178e6f98e"
+      ],
+      "properties": [
+        {
+          "propertyId": "sample.movement.speed",
+          "displayName": "Speed",
+          "order": 0,
+          "readOnly": false,
+          "shape": { "kind": "number", "nullable": false },
+          "default": 5.0,
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "step": 0.1,
+          "units": "m/s"
+        },
+        {
+          "propertyId": "sample.movement.binding",
+          "displayName": "Input Binding",
+          "order": 1,
+          "readOnly": false,
+          "shape": {
+            "kind": "object",
+            "nullable": false,
+            "objectTypeId": "4216608a-f437-4c5a-a614-38c52cf3982b"
+          },
+          "default": {
+            "sample.binding.action": "move.x",
+            "sample.binding.scale": 1.0
+          }
+        },
+        {
+          "propertyId": "sample.movement.tags",
+          "displayName": "Tags",
+          "order": 2,
+          "readOnly": false,
+          "shape": {
+            "kind": "list",
+            "nullable": false,
+            "element": { "kind": "string", "nullable": false }
+          },
+          "default": ["player", "movable"]
+        },
+        {
+          "propertyId": "sample.movement.tuning",
+          "displayName": "Tuning",
+          "order": 3,
+          "readOnly": false,
+          "shape": {
+            "kind": "dictionary",
+            "nullable": false,
+            "element": { "kind": "number", "nullable": false }
+          },
+          "default": { "acceleration": 12.0, "deceleration": 16.0 }
+        }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "typeId": "ee23acae-dd2f-449d-a308-19ea39c15106",
+      "qualifiedName": "Sample.ManagedMoverComponent",
+      "displayName": "Managed Mover",
+      "schemaVersion": 1,
+      "owner": "managed",
+      "implementationLanguage": "csharp",
+      "category": "Scripts",
+      "tooltip": "Sample project-defined managed component.",
+      "addable": true,
+      "removable": true,
+      "resettable": true,
+      "sourcePath": "Components/CSharp/ManagedMover.cs",
+      "runtimeModuleId": "517950d4-f89b-4b81-bcd1-a2e843f83322",
+      "properties": [
+        {
+          "propertyId": "sample.mover.profile",
+          "displayName": "Movement Profile",
+          "order": 0,
+          "readOnly": false,
+          "shape": {
+            "kind": "polymorphic-object",
+            "nullable": true,
+            "contractId": "da5089b4-5f31-405f-9175-c30178e6f98e"
+          },
+          "default": null,
+          "category": "Movement",
+          "tooltip": "Inline movement configuration selected by interface contract."
+        }
+      ]
+    }
+  ]
+}

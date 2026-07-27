@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <DefineConstants>$(DefineConstants);DPE_MONOGAME</DefineConstants>
+    <AssemblyName>DragonPixel.Adapter.MonoGame.Worker</AssemblyName>
+    <RootNamespace>DragonPixel.Runtime.FrameworkWorker</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DragonPixel.Runtime.AdapterHost\DragonPixel.Runtime.AdapterHost.csproj" />
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5" />
+    <Compile Include="..\FrameworkSceneAdapter.Shared.cs" Link="FrameworkSceneAdapter.cs" />
+    <Compile Include="..\GraphicsConformanceProbe.Shared.cs" Link="GraphicsConformanceProbe.cs" />
+  </ItemGroup>
+</Project>

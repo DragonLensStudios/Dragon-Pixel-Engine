@@ -1,0 +1,23 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/project-template.schema.json",
+  "format": "dpe.project-template",
+  "formatVersion": 1,
+  "templateId": "91648f75-3696-4acb-8daa-33fd1c7bc625",
+  "templateVersion": 1,
+  "name": "Minimal 2D",
+  "kind": "2d",
+  "engineRange": ">=1.0.0 <2.0.0",
+  "entries": [
+    { "path": "Assets", "kind": "directory" },
+    { "path": "Assets/Input", "kind": "directory" },
+    { "path": "Components", "kind": "directory" },
+    { "path": "Components/CSharp", "kind": "directory" },
+    { "path": "Prefabs", "kind": "directory" },
+    { "path": "Scenes", "kind": "directory" },
+    { "path": "DragonPixelProject.json", "kind": "generated-project" },
+    { "path": "Scenes/Main.dpescene", "kind": "generated-scene" },
+    { "path": "Assets/DefaultInput.dpeasset", "kind": "default-input" },
+    { "path": "Assets/Input/DefaultGameplay.dpeinputmap", "kind": "default-input" },
+    { "path": "Components/CSharp/DragonPixel.ProjectComponents.csproj", "kind": "component-project" }
+  ]
+}

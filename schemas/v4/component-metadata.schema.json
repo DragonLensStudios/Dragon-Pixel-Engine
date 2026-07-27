@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v4/component-metadata.schema.json",
+  "title": "Dragon Pixel Engine component and structured object metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "generatorVersion", "contracts", "objectTypes", "components"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v4/component-metadata.schema.json" },
+    "format": { "const": "dpe.component-metadata" },
+    "formatVersion": { "const": 4 },
+    "generatorVersion": { "type": "string", "minLength": 1 },
+    "contracts": { "type": "array", "items": { "$ref": "#/$defs/contract" } },
+    "objectTypes": { "type": "array", "items": { "$ref": "#/$defs/objectType" } },
+    "components": { "type": "array", "items": { "$ref": "#/$defs/component" } }
+  },
+  "$defs": {
+    "stableId": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$" },
+    "uuid": { "type": "string", "format": "uuid" },
+    "contract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contractId", "qualifiedName", "displayName"],
+      "properties": {
+        "contractId": { "$ref": "#/$defs/uuid" },
+        "qualifiedName": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "tooltip": { "type": "string" }
+      }
+    },
+    "valueShape": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "nullable"],
+      "properties": {
+        "kind": { "enum": ["boolean", "integer", "number", "string", "vector2", "vector3", "quaternion", "color", "entity-reference", "asset-reference", "component-reference", "object", "list", "dictionary", "polymorphic-object"] },
+        "nullable": { "type": "boolean" },
+        "objectTypeId": { "$ref": "#/$defs/uuid" },
+        "contractId": { "$ref": "#/$defs/uuid" },
+        "referenceFilter": { "type": "string" },
+        "element": { "$ref": "#/$defs/valueShape" }
+      }
+    },
+    "property": {
+      "type": "object", "additionalProperties": false,
+      "required": ["propertyId", "displayName", "order", "readOnly", "shape"],
+      "properties": {
+        "propertyId": { "$ref": "#/$defs/stableId" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "order": { "type": "integer", "minimum": 0 },
+        "readOnly": { "type": "boolean" },
+        "shape": { "$ref": "#/$defs/valueShape" },
+        "default": {}, "minimum": { "type": "number" }, "maximum": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 }, "units": { "type": "string" },
+        "enumChoices": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "category": { "type": "string" }, "tooltip": { "type": "string" }, "drawerKey": { "type": "string" }
+      }
+    },
+    "objectType": {
+      "type": "object", "additionalProperties": false,
+      "required": ["typeId", "qualifiedName", "displayName", "schemaVersion", "implements", "properties"],
+      "properties": {
+        "typeId": { "$ref": "#/$defs/uuid" }, "qualifiedName": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 }, "schemaVersion": { "type": "integer", "minimum": 1 },
+        "implements": { "type": "array", "items": { "$ref": "#/$defs/uuid" }, "uniqueItems": true },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/property" } }
+      }
+    },
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["typeId", "qualifiedName", "displayName", "schemaVersion", "owner", "implementationLanguage", "category", "addable", "removable", "resettable", "properties"],
+      "properties": {
+        "typeId": { "$ref": "#/$defs/uuid" }, "qualifiedName": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 }, "schemaVersion": { "type": "integer", "minimum": 1 },
+        "owner": { "enum": ["native", "managed", "data-only"] },
+        "implementationLanguage": { "enum": ["cpp", "csharp", "data-only"] },
+        "category": { "type": "string" }, "tooltip": { "type": "string" },
+        "addable": { "type": "boolean" }, "removable": { "type": "boolean" }, "resettable": { "type": "boolean" },
+        "sourcePath": { "type": "string" }, "runtimeModuleId": { "type": "string" },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/property" } }
+      }
+    }
+  }
+}
