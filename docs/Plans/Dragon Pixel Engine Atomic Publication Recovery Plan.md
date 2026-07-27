@@ -1,6 +1,6 @@
 # Feature Plan: Dragon Pixel Engine Atomic Publication Recovery
 
-> **Status:** Ready for review — draft PR #2 open and unmerged
+> **Status:** Complete — reviewed and merged through PR #2
 > **Branch:** `feature/atomic-publication-recovery`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers
@@ -201,6 +201,7 @@ The ignored local evidence bundle is hash-bound below. Both JUnit files report 5
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop`.
 - [x] PR left unmerged for human review.
+- [x] Human review completed and PR merged into `develop`.
 
 ## Work Log
 
@@ -225,9 +226,10 @@ The ignored local evidence bundle is hash-bound below. Both JUnit files report 5
 | 2026-07-27 | Durable evidence and mirrors verified | JUnit reports 56 tests/zero failures/zero skips for both matrices; copied raw logs contain 56 pass records each; every recorded evidence artifact matches its SHA-256. `git diff --check` passes and `Test-DocumentationMirrors.ps1` passes **58 UTF-8/LF Markdown pairs at DPE-ARCH-0014**. |
 | 2026-07-27 | Aggregate branch review passed | Reviewed the complete `develop...HEAD` diff and ordered commit sequence locally and through an independent read-only review. No P0/P1/P2 issue, enum-ordinal break, C ABI exposure, test/timeout weakening, architecture promotion, support-claim expansion, or unrelated change was found. The branch remains limited to atomic publication/recovery implementation, its native tests, governing plan/evidence, ADR status evidence, and current repository handoff text. |
 | 2026-07-27 | Branch published for human review | Pushed `feature/atomic-publication-recovery` through reviewed commit `0efd02e` and opened draft PR [#2](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/2) into `develop`. The PR remains unmerged; this final mirrored handoff record is the only post-review content change. |
+| 2026-07-27 | Human review and merge completed | PR [#2](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/2) was reviewed and merged into `develop` at merge commit `17e481d700096e491698f597d8590988042b8203`. A fresh fetch confirms local and remote `develop` match that commit. The feature is complete; later hardening limits remain tracked rather than silently claimed resolved. |
 
 ## Handoff Notes
 
-Phase 1 implementation and its required Windows verification are complete and ready for human review. The branch repairs the stale-successor defect, serializes cooperating same-root save/recovery callers, separates API/probe retry evidence, preserves externally changed targets, rolls back only safely owned prefixes, and retains deterministic prepared/committed journal candidates. The new current Windows baseline is 56/56 strict Release and 56/56 MSVC ASan; this does not close a POC, ADR, slice, release, Ubuntu/macOS gate, or KNI support claim.
+Phase 1 implementation, required Windows verification, human review, and merge are complete. The merged repair resolves the stale-successor defect, serializes cooperating same-root save/recovery callers, separates API/probe retry evidence, preserves externally changed targets, rolls back only safely owned prefixes, and retains deterministic prepared/committed journal candidates. The current `develop` Windows baseline is 56/56 strict Release and 56/56 MSVC ASan; this does not close a POC, ADR, slice, release, Ubuntu/macOS gate, or KNI support claim.
 
-Remaining hardening is explicit: ADR-0006 handle/inode pinning for noncooperating writers and `save_utf8_atomic` outside the lease; replacement of the locked Unix `Transactions` pathname while its old inode remains advisory-locked; startup journal v1's inability to infer attempted count if a live originally-existing/missing-target restoration itself fails; the ambiguous single-file POSIX case where no-clobber `link` publishes but staged `unlink` fails; and current Linux/macOS execution evidence for the new POSIX paths. Aggregate review and mirror verification are complete. Draft PR [#2](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/2) is open into `develop` and remains unmerged for human review.
+Remaining hardening is explicit: ADR-0006 handle/inode pinning for noncooperating writers and `save_utf8_atomic` outside the lease; replacement of the locked Unix `Transactions` pathname while its old inode remains advisory-locked; startup journal v1's inability to infer attempted count if a live originally-existing/missing-target restoration itself fails; the ambiguous single-file POSIX case where no-clobber `link` publishes but staged `unlink` fails; and current Linux/macOS execution evidence for the new POSIX paths. Aggregate review and mirror verification are complete. PR [#2](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/2) is merged; subsequent work must branch from current `develop`.
