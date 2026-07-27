@@ -1544,6 +1544,13 @@ save_result save_utf8_transaction(
             return {false, "The transaction exceeded its document limit."};
         }
 
+        const auto pending_recovery = recover_utf8_transactions(recovery_root);
+        if (!pending_recovery.succeeded)
+        {
+            return {false, "Could not recover pending transactions before starting a new save: "
+                + pending_recovery.error};
+        }
+
         transaction_record record;
         auto result = resolve_recovery_paths(recovery_root, true, record.paths);
         if (!result.succeeded)
