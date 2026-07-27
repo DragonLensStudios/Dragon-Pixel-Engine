@@ -26,4 +26,8 @@ if (-not $failureWasRejected) {
     throw 'A failing native command was allowed to pass.'
 }
 
+Invoke-DpeCiNative -Operation 'Expected recovery command' -FilePath $env:ComSpec -ArgumentList @(
+    '/d', '/c', 'exit', '0'
+)
+
 Write-Host 'Windows CI native-command failure propagation passed.' -ForegroundColor Green
