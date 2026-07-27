@@ -224,9 +224,30 @@ const component_record* find_component(const dragonpixel::scene::entity& value, 
 void verify_scene_round_trip()
 {
     const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
-    require(registry.size() >= 7, "Default metadata registration failed.");
-    require(registry.find(dragonpixel::metadata::builtin_component_ids::transform)->schema_version == 2,
+    require(registry.size() == 16, "Default metadata registration did not retain every built-in component.");
+    const auto* transform_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::transform);
+    require(transform_descriptor != nullptr && transform_descriptor->schema_version == 2,
         "Transform schema version was wrong.");
+    require(transform_descriptor->category == "Core"
+            && transform_descriptor->tooltip == "Required GameObject transform."
+            && !transform_descriptor->addable
+            && !transform_descriptor->removable
+            && transform_descriptor->resettable
+            && transform_descriptor->language == dragonpixel::metadata::implementation_language::cpp
+            && transform_descriptor->source_path.empty()
+            && transform_descriptor->runtime_module_id.empty(),
+        "Explicit Transform descriptor defaults changed.");
+    const auto* rotator_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::rotator);
+    require(rotator_descriptor != nullptr
+            && rotator_descriptor->category.empty()
+            && rotator_descriptor->tooltip.empty()
+            && rotator_descriptor->addable
+            && rotator_descriptor->removable
+            && rotator_descriptor->resettable
+            && rotator_descriptor->language == dragonpixel::metadata::implementation_language::cpp
+            && rotator_descriptor->source_path.empty()
+            && rotator_descriptor->runtime_module_id.empty(),
+        "Explicit default component descriptor values changed.");
     const auto* camera_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::camera);
     require(camera_descriptor != nullptr, "Camera metadata registration failed.");
     const auto primary_property = std::find_if(
