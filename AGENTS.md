@@ -307,9 +307,9 @@ Use `docs/Development/Verification Checklist.md` to select the required feature 
 
 ## Current Work Boundary
 
-The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. The completed focused DPE-ARCH-0014 implementation record is `Dragon Pixel Engine New Project Asset Workflow Prefab Hierarchy and Multi-Inspector Plan.md`. The active development-process work item is `Dragon Pixel Engine Development Constitution Workflow Setup Plan.md`; it installs this feature workflow without starting a product feature or changing DPE-ARCH-0014. Other narrower plans remain historical evidence and are superseded for active tracking only.
+The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. The current product work item is the mirrored `Dragon Pixel Engine Atomic Publication Recovery Plan.md` on `feature/atomic-publication-recovery`; its implementation and required Windows matrices are ready for review but remain unmerged. The DPE-ARCH-0014 Project Hub/asset/Hierarchy/multi-Inspector plan and the development-constitution setup plan are completed focused records. Other narrower plans remain historical evidence and are superseded for active tracking only.
 
-After the governance setup is reviewed and merged into `develop`, the next recommended product feature is `feature/atomic-publication-recovery`, using the installed master and start prompts. Do not begin it on the unmerged governance branch.
+The atomic-publication branch must be reviewed and merged into `develop` before another feature begins. Do not stack the next feature on this unmerged branch.
 
 Proceed in evidence-backed increments:
 
@@ -320,23 +320,21 @@ Proceed in evidence-backed increments:
 5. Complete Slice 4 through POC S: one product-version source, frozen performance/memory budgets, long-running and corruption recovery, complete compatibility fixtures, clean install/update/rollback/uninstall, security/license/privacy/accessibility reviews, documentation/reference-project reproduction, and final three-platform release-candidate evidence.
 6. Close each slice only when every acceptance statement has direct durable evidence. Mark the active plan complete and publish `1.0.0` only after all applicable gates pass.
 
-The last complete Windows baseline passes 45 of 45 strict Release tests and 45 of 45 MSVC AddressSanitizer tests; focused DPE-ARCH-0010 editor/component, DPE-ARCH-0011 Rider source-authoring, DPE-ARCH-0012 managed-controller/runtime-transform, and DPE-ARCH-0013 input-map/rebinding Release/sanitizer aliases pass. Focused DPE-ARCH-0014 Windows evidence passes 18 of 18 Release aliases, the complete Release editor-interaction test, 9 of 9 sanitizer service/model/prefab aliases, and 5 focused sanitizer interaction functions; its refreshed 188-record production-style bundle hash-verifies, passes the packaged MonoGame self-test, and creates/opens a minimal project outside the source tree. The aggregate DPE-ARCH-0014 sanitizer interaction run is inconclusive at its 480-second harness timeout. The intermittent atomic-publication recovery defect blocks a new authoritative complete matrix. Aggregate POC J Qt-event-to-paint timing remains open, Ubuntu's latest full evidence predates DPE-ARCH-0008, macOS retains the 14-of-15 POC B failure, POCs M-S remain open with only focused Windows portions of M/O implemented, every ADR remains Proposed, and KNI remains experimental.
+The current post-atomic-repair feature branch passes 56 of 56 strict Windows Release tests in 423.22 seconds and 56 of 56 MSVC AddressSanitizer tests in 560.43 seconds; final `s1.native_core` stability passes 100 of 100 Release and 50 of 50 sanitizer repetitions. The formerly inconclusive aggregate sanitizer interaction aliases pass in 181.13 and 179.14 seconds under unchanged 480-second caps, so the recorded Windows full-matrix blocker is cleared on this branch. Focused DPE-ARCH-0010 through DPE-ARCH-0014 editor/runtime/input/project/asset/Hierarchy/multi-Inspector evidence and the refreshed 188-record production-style bundle remain green. ADR-0006 handle-pinning/noncooperating-writer limits and current POSIX execution remain open. Complete POC J acceptance remains open, Ubuntu's latest full evidence predates DPE-ARCH-0008, macOS retains the 14-of-15 POC B failure, POCs M-S remain open with only focused Windows portions of M/O implemented, every ADR remains Proposed, and KNI remains experimental.
 
 Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, promote an ADR without its named gate, claim a slice from partial/platform-local evidence, or broaden beyond the documented 1.0 scope into Unreal, AAA rendering, networking, visual scripting, a marketplace, or general IDE behavior.
 
 ### Recommended focused feature sequence
 
-Re-evaluate after every reviewed merge, beginning with:
+Re-evaluate after the atomic-publication branch is reviewed and merged, beginning with:
 
-1. `feature/atomic-publication-recovery`
-2. `feature/full-windows-matrix-recovery`
-3. `feature/editor-library-modularization`
-4. `feature/ci-gitflow-integration`
-5. `feature/public-repository-readiness`
-6. `feature/developer-preview-packaging`
-7. `feature/ubuntu-current-matrix`
-8. `feature/macos-frame-throughput`
-9. `feature/poc-j-input-latency`
+1. `feature/editor-library-modularization`
+2. `feature/ci-gitflow-integration`
+3. `feature/public-repository-readiness`
+4. `feature/developer-preview-packaging`
+5. `feature/ubuntu-current-matrix`
+6. `feature/macos-frame-throughput`
+7. `feature/poc-j-input-latency`
 
 Do not mechanically start the next listed feature if current evidence, an accepted plan, or explicit user direction changes the priority.
 
