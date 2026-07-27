@@ -2,13 +2,51 @@ name: Slice 1 cross-platform
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, develop, "feature/**", "release/**", "hotfix/**"]
   pull_request:
+    branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+env:
+  DPE_CI_MINIMUM_WINDOWS_TESTS: "56"
+  DPE_CI_MINIMUM_UNIX_TESTS: "55"
+
+concurrency:
+  group: slice1-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
+  ci-policy:
+    name: CI policy / GitFlow contracts
+    runs-on: ubuntu-24.04
+    env:
+      CI_EVENT_NAME: ${{ github.event_name }}
+      CI_REF_NAME: ${{ github.ref_name }}
+      CI_HEAD_REF: ${{ github.head_ref }}
+      CI_BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test CI validation contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py' -v
+      - name: Validate GitFlow event relationship
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/validate_ci.py gitflow \
+            --event-name "$CI_EVENT_NAME" \
+            --ref-name "$CI_REF_NAME" \
+            --head-ref "$CI_HEAD_REF" \
+            --base-ref "$CI_BASE_REF"
+
   windows:
     name: Windows 11 x64 / ${{ matrix.configuration }}
+    needs: ci-policy
     runs-on: windows-2022
     env:
       DOTNET_CLI_USE_MSBUILD_SERVER: 0
@@ -19,12 +57,35 @@ jobs:
         configuration: [release, asan]
     steps:
       - uses: actions/checkout@v4
+      - name: Test Windows native-command failure propagation
+        shell: pwsh
+        run: ./scripts/ci/tests/Test-WindowsCI.ps1
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.203
+      - name: Bootstrap pinned vcpkg registry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          Import-Module (Join-Path $env:GITHUB_WORKSPACE 'scripts\ci\WindowsCI.psm1') -Force
+          $git = (Get-Command git -ErrorAction Stop).Source
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          Invoke-DpeCiNative -Operation 'vcpkg clone' -FilePath $git -ArgumentList @(
+            'clone', '--filter=blob:none', 'https://github.com/microsoft/vcpkg.git', $vcpkgRoot
+          )
+          Invoke-DpeCiNative -Operation 'vcpkg baseline checkout' -FilePath $git -ArgumentList @(
+            '-C', $vcpkgRoot, 'checkout', '40f3c709db80acf154ac4b17a1f83c564ebd022e'
+          )
+          Invoke-DpeCiNative -Operation 'vcpkg bootstrap' -FilePath (Join-Path $vcpkgRoot 'bootstrap-vcpkg.bat') -ArgumentList @(
+            '-disableMetrics'
+          )
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Qt 6.11.1 for MSVC 2022
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
           $qtRoot = Join-Path $env:RUNNER_TEMP 'Qt-6.11.1-msvc2022_64'
           $repository = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6111/qt6_6111_msvc2022_64/qt.qt6.6111.win64_msvc2022_64'
           $archiveName = '6.11.1-0-202605090529qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z'
@@ -39,35 +100,86 @@ jobs:
           & 7z x $archive "-o$qtRoot" -y
           if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE." }
           $qtVersion = & (Join-Path $qtRoot 'bin\qtpaths.exe') --qt-query QT_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "qtpaths failed with exit code $LASTEXITCODE." }
           if ($qtVersion -ne '6.11.1') { throw "Expected Qt 6.11.1, got $qtVersion." }
           "QT_ROOT_DIR=$qtRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           (Join-Path $qtRoot 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Configure, build, and test
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          Import-Module (Join-Path $env:GITHUB_WORKSPACE 'scripts\ci\WindowsCI.psm1') -Force
+
+          function Get-RequiredCommand {
+            param([Parameter(Mandatory)][string]$Name)
+
+            $command = Get-Command $Name -ErrorAction SilentlyContinue
+            if ($null -eq $command) {
+              throw "Required command '$Name' is not available."
+            }
+            return $command.Source
+          }
+
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe was not found.' }
           $vs = & $vswhere -latest -products * -version '[17.0,18.0)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          & (Join-Path $vs 'Common7\Tools\Launch-VsDevShell.ps1') -Arch amd64 -HostArch amd64
-          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
-          if (-not $env:VCPKG_ROOT) { throw 'The GitHub runner did not expose VCPKG_INSTALLATION_ROOT.' }
+          if ($LASTEXITCODE -ne 0) { throw "Visual Studio discovery failed with exit code $LASTEXITCODE." }
+          if ([string]::IsNullOrWhiteSpace($vs)) { throw 'Visual Studio 2022 with MSVC was not found.' }
+          $vs = $vs.Trim()
+          $developerShell = Join-Path $vs 'Common7\Tools\Launch-VsDevShell.ps1'
+          if (-not (Test-Path -LiteralPath $developerShell)) { throw "Visual Studio developer shell was not found at $developerShell." }
+          & $developerShell -Arch amd64 -HostArch amd64 -SkipAutomaticLocation
+
+          $ninjaDirectory = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja'
+          if (Test-Path -LiteralPath (Join-Path $ninjaDirectory 'ninja.exe')) {
+            $env:Path = "$ninjaDirectory;$env:Path"
+          }
+
+          $vcpkgRoot = $env:VCPKG_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) { throw 'Pinned VCPKG_ROOT was not exported.' }
+          $vcpkgToolchain = Join-Path $vcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
+          if (-not (Test-Path -LiteralPath $vcpkgToolchain)) { throw "vcpkg toolchain was not found at $vcpkgToolchain." }
+          $env:VCPKG_ROOT = $vcpkgRoot
+
+          $cmake = Get-RequiredCommand cmake
+          $ctest = Get-RequiredCommand ctest
+          $ninja = Get-RequiredCommand ninja
+          $python = Get-RequiredCommand python
+          $null = Get-RequiredCommand cl
+          $dotnet = Get-RequiredCommand dotnet
+          Invoke-DpeCiNative -Operation 'CMake version query' -FilePath $cmake -ArgumentList @('--version')
+          Invoke-DpeCiNative -Operation 'Ninja version query' -FilePath $ninja -ArgumentList @('--version')
+          Invoke-DpeCiNative -Operation '.NET SDK version query' -FilePath $dotnet -ArgumentList @('--version')
+
           $configure = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-msvc-asan' } else { 'windows-msvc' }
           $build = if ('${{ matrix.configuration }}' -eq 'asan') { 'windows-asan' } else { 'windows-release' }
-          cmake --preset $configure -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
-          cmake --build --preset $build
+          Invoke-DpeCiNative -Operation 'CMake configure' -FilePath $cmake -ArgumentList @(
+            '--preset', $configure,
+            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR",
+            "-DCMAKE_MAKE_PROGRAM=$ninja"
+          )
+          Invoke-DpeCiNative -Operation 'CMake build' -FilePath $cmake -ArgumentList @('--build', '--preset', $build)
           $junit = Join-Path $env:GITHUB_WORKSPACE "slice1-Windows-${{ matrix.configuration }}.xml"
-          ctest --preset $build --output-on-failure --output-junit $junit
+          Invoke-DpeCiNative -Operation 'CTest' -FilePath $ctest -ArgumentList @(
+            '--preset', $build, '--output-on-failure', '--output-junit', $junit
+          )
+          Invoke-DpeCiNative -Operation 'JUnit evidence validation' -FilePath $python -ArgumentList @(
+            'scripts/ci/validate_ci.py', 'junit', $junit, '--minimum-tests', $env:DPE_CI_MINIMUM_WINDOWS_TESTS
+          )
       - name: Upload Windows test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: slice1-windows-2022-${{ matrix.configuration }}-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             slice1-Windows-${{ matrix.configuration }}.xml
             out/build/**/Testing/Temporary/LastTest.log
 
   unix:
     name: ${{ matrix.os }} / ${{ matrix.configuration }}
+    needs: ci-policy
     runs-on: ${{ matrix.os }}
     env:
       DOTNET_CLI_USE_MSBUILD_SERVER: 0
@@ -107,7 +219,7 @@ jobs:
           cache: true
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-18-dev ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y autoconf autoconf-archive automake clang libclang-rt-18-dev libltdl-dev libtool ninja-build pkg-config libglib2.0-0t64 libgl1-mesa-dev libgl1-mesa-dri libopenal1 libsdl2-2.0-0 libxkbcommon-x11-0 xvfb xauth
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: brew install ninja
@@ -115,6 +227,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          for command in clang clang++ cmake ctest dotnet ninja python3; do
+            command -v "$command" >/dev/null || { echo "Required command '$command' is not available." >&2; exit 1; }
+          done
+          clang --version
+          cmake --version
+          dotnet --version
+          ninja --version
           configure=unix-clang
           build=unix-release
           if [[ '${{ matrix.configuration }}' == 'asan' ]]; then
@@ -145,12 +264,13 @@ jobs:
           else
             ctest --preset "$build" --output-on-failure --output-junit "$junit"
           fi
+          python3 scripts/ci/validate_ci.py junit "$junit" --minimum-tests "$DPE_CI_MINIMUM_UNIX_TESTS"
       - name: Upload Unix test evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: slice1-${{ matrix.os }}-${{ matrix.configuration }}-evidence
-          if-no-files-found: warn
+          if-no-files-found: error
           path: |
             slice1-${{ runner.os }}-${{ matrix.configuration }}.xml
             out/build/**/Testing/Temporary/LastTest.log

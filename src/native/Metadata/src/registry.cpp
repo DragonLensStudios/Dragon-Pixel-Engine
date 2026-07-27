@@ -46,6 +46,40 @@ property_descriptor authoring_property(
     return result;
 }
 
+component_descriptor builtin_component(
+    std::string type_id,
+    std::string qualified_name,
+    std::string display_name,
+    std::uint32_t schema_version,
+    runtime_owner owner,
+    std::vector<property_descriptor> properties,
+    std::string category = {},
+    std::string tooltip = {},
+    bool addable = true,
+    bool removable = true,
+    bool resettable = true,
+    implementation_language language = implementation_language::cpp,
+    std::string source_path = {},
+    std::string runtime_module_id = {})
+{
+    component_descriptor result{};
+    result.type_id = std::move(type_id);
+    result.qualified_name = std::move(qualified_name);
+    result.display_name = std::move(display_name);
+    result.schema_version = schema_version;
+    result.owner = owner;
+    result.properties = std::move(properties);
+    result.category = std::move(category);
+    result.tooltip = std::move(tooltip);
+    result.addable = addable;
+    result.removable = removable;
+    result.resettable = resettable;
+    result.language = language;
+    result.source_path = std::move(source_path);
+    result.runtime_module_id = std::move(runtime_module_id);
+    return result;
+}
+
 property_descriptor physics_property(
     std::string id,
     std::string name,
@@ -196,7 +230,7 @@ std::vector<std::reference_wrapper<const component_descriptor>> registry::descri
 registry registry::slice_one_defaults()
 {
     registry result;
-    const auto transform_added = result.add(component_descriptor{
+    const auto transform_added = result.add(builtin_component(
         std::string{builtin_component_ids::transform},
         "DragonPixel.Native.TransformComponent",
         "Transform",
@@ -217,9 +251,8 @@ registry registry::slice_one_defaults()
         "Required GameObject transform.",
         false,
         false,
-        true,
-    });
-    const auto rotator_added = result.add(component_descriptor{
+        true));
+    const auto rotator_added = result.add(builtin_component(
         std::string{builtin_component_ids::rotator},
         "DragonPixel.Managed.RotatorComponent",
         "Rotator",
@@ -232,9 +265,8 @@ registry registry::slice_one_defaults()
             authoring_property("dpe.rotator.target", "Target", value_type::entity_reference, 1,
                 "null", {}, {}, {}, {}, {}, true, "entity", "Behavior",
                 "Optional GameObject rotated by this component."),
-        },
-    });
-    const auto camera_added = result.add(component_descriptor{
+        }));
+    const auto camera_added = result.add(builtin_component(
         std::string{builtin_component_ids::camera}, "DragonPixel.Native.CameraComponent", "Camera", 1, runtime_owner::native,
         {
             authoring_property("dpe.camera.primary", "Primary", value_type::boolean, 0, "true", {}, {}, {}, {}, {}, false, {}, "Camera",
@@ -249,9 +281,8 @@ registry registry::slice_one_defaults()
                 "m", {}, false, {}, "Camera", "Near clipping distance."),
             authoring_property("dpe.camera.far", "Far clip", value_type::number, 5, "1000.0", 0.001, {}, 1.0,
                 "m", {}, false, {}, "Camera", "Far clipping distance."),
-        },
-    });
-    const auto sprite_added = result.add(component_descriptor{
+        }));
+    const auto sprite_added = result.add(builtin_component(
         std::string{builtin_component_ids::sprite}, "DragonPixel.Native.SpriteComponent", "Sprite", 1, runtime_owner::native,
         {
             authoring_property("dpe.sprite.asset", "Texture", value_type::asset_reference, 0, "\"builtin://default-sprite\"",
@@ -261,18 +292,16 @@ registry registry::slice_one_defaults()
                 "Linear RGBA tint multiplied with the sprite.", "color"),
             authoring_property("dpe.sprite.layer", "Layer", value_type::integer, 2, "0", -32768.0, 32767.0, 1.0,
                 {}, {}, false, {}, "Rendering", "Signed sprite ordering layer."),
-        },
-    });
-    const auto mesh_added = result.add(component_descriptor{
+        }));
+    const auto mesh_added = result.add(builtin_component(
         std::string{builtin_component_ids::mesh}, "DragonPixel.Native.StaticMeshComponent", "Static Mesh", 1, runtime_owner::native,
         {
             authoring_property("dpe.mesh.asset", "Mesh", value_type::asset_reference, 0, "\"builtin://cube\"",
                 {}, {}, {}, {}, {}, false, "mesh", "Rendering", "Static-mesh-compatible asset reference.", "asset-reference"),
             authoring_property("dpe.mesh.material", "Material", value_type::asset_reference, 1, "\"builtin://default-material\"",
                 {}, {}, {}, {}, {}, false, "material", "Rendering", "Material-compatible asset reference.", "asset-reference"),
-        },
-    });
-    const auto material_added = result.add(component_descriptor{
+        }));
+    const auto material_added = result.add(builtin_component(
         std::string{builtin_component_ids::material}, "DragonPixel.Native.MaterialComponent", "Material", 1, runtime_owner::native,
         {
             authoring_property("dpe.material.base_color", "Base color", value_type::color, 0,
@@ -280,9 +309,8 @@ registry registry::slice_one_defaults()
                 "Linear RGBA base color.", "color"),
             authoring_property("dpe.material.roughness", "Roughness", value_type::number, 1, "0.5", 0.0, 1.0, 0.01,
                 {}, {}, false, {}, "Rendering", "Baseline material roughness."),
-        },
-    });
-    const auto light_added = result.add(component_descriptor{
+        }));
+    const auto light_added = result.add(builtin_component(
         std::string{builtin_component_ids::light}, "DragonPixel.Native.LightComponent", "Light", 1, runtime_owner::native,
         {
             authoring_property("dpe.light.kind", "Kind", value_type::string, 0, "\"directional\"", {}, {}, {}, {},
@@ -294,9 +322,8 @@ registry registry::slice_one_defaults()
                 {}, {}, false, {}, "Lighting", "Non-negative light intensity."),
             authoring_property("dpe.light.range", "Range", value_type::number, 3, "10.0", 0.01, {}, 0.1,
                 "m", {}, false, {}, "Lighting", "Point-light influence range."),
-        },
-    });
-    const auto rigid_body_2d_added = result.add(component_descriptor{
+        }));
+    const auto rigid_body_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::rigid_body_2d}, "DragonPixel.Native.RigidBody2DComponent", "Rigid Body 2D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics2d.body_mode", "Body mode", value_type::string, 0, "\"dynamic\"", {}, {}, {}, {}, {"static", "kinematic", "dynamic"}),
@@ -305,9 +332,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics2d.gravity_scale", "Gravity scale", value_type::number, 3, "1.0", -100.0, 100.0, 0.05),
             physics_property("dpe.physics2d.initial_velocity", "Initial velocity", value_type::vector2, 4, R"({"x":0.0,"y":0.0})", {}, {}, {}, "m/s", {}, "physics-vector2"),
             physics_property("dpe.physics2d.ccd", "Continuous collision", value_type::boolean, 5, "false"),
-        },
-    });
-    const auto box_collider_2d_added = result.add(component_descriptor{
+        }));
+    const auto box_collider_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::box_collider_2d}, "DragonPixel.Native.BoxCollider2DComponent", "Box Collider 2D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics2d.size", "Size", value_type::vector2, 0, R"({"x":1.0,"y":1.0})", 0.0001, {}, 0.05, "m", {}, "collider-size2"),
@@ -318,9 +344,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.restitution", "Restitution", value_type::number, 5, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.physics.layer", "Layer", value_type::integer, 6, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 7, "65535", 0.0, 65535.0, 1.0),
-        },
-    });
-    const auto circle_collider_2d_added = result.add(component_descriptor{
+        }));
+    const auto circle_collider_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::circle_collider_2d}, "DragonPixel.Native.CircleCollider2DComponent", "Circle Collider 2D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics2d.radius", "Radius", value_type::number, 0, "0.5", 0.0001, {}, 0.05, "m", {}, "collider-radius"),
@@ -331,9 +356,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.restitution", "Restitution", value_type::number, 5, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.physics.layer", "Layer", value_type::integer, 6, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 7, "65535", 0.0, 65535.0, 1.0),
-        },
-    });
-    const auto rigid_body_3d_added = result.add(component_descriptor{
+        }));
+    const auto rigid_body_3d_added = result.add(builtin_component(
         std::string{builtin_component_ids::rigid_body_3d}, "DragonPixel.Native.RigidBody3DComponent", "Rigid Body 3D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics3d.body_mode", "Body mode", value_type::string, 0, "\"dynamic\"", {}, {}, {}, {}, {"static", "kinematic", "dynamic"}),
@@ -342,9 +366,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics3d.gravity_scale", "Gravity scale", value_type::number, 3, "1.0", -100.0, 100.0, 0.05),
             physics_property("dpe.physics3d.initial_velocity", "Initial velocity", value_type::vector3, 4, R"({"x":0.0,"y":0.0,"z":0.0})", {}, {}, {}, "m/s", {}, "physics-vector3"),
             physics_property("dpe.physics3d.ccd", "Continuous collision", value_type::boolean, 5, "false"),
-        },
-    });
-    const auto box_collider_3d_added = result.add(component_descriptor{
+        }));
+    const auto box_collider_3d_added = result.add(builtin_component(
         std::string{builtin_component_ids::box_collider_3d}, "DragonPixel.Native.BoxCollider3DComponent", "Box Collider 3D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics3d.size", "Size", value_type::vector3, 0, R"({"x":1.0,"y":1.0,"z":1.0})", 0.0001, {}, 0.05, "m", {}, "collider-size3"),
@@ -354,9 +377,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.restitution", "Restitution", value_type::number, 4, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.physics.layer", "Layer", value_type::integer, 5, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 6, "65535", 0.0, 65535.0, 1.0),
-        },
-    });
-    const auto sphere_collider_3d_added = result.add(component_descriptor{
+        }));
+    const auto sphere_collider_3d_added = result.add(builtin_component(
         std::string{builtin_component_ids::sphere_collider_3d}, "DragonPixel.Native.SphereCollider3DComponent", "Sphere Collider 3D", 1, runtime_owner::native,
         {
             physics_property("dpe.physics3d.radius", "Radius", value_type::number, 0, "0.5", 0.0001, {}, 0.05, "m", {}, "collider-radius"),
@@ -366,9 +388,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.restitution", "Restitution", value_type::number, 4, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.physics.layer", "Layer", value_type::integer, 5, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 6, "65535", 0.0, 65535.0, 1.0),
-        },
-    });
-    const auto tilemap_2d_added = result.add(component_descriptor{
+        }));
+    const auto tilemap_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::tilemap_2d}, "DragonPixel.Native.Tilemap2DComponent", "Tilemap 2D", 1, runtime_owner::native,
         {
             authoring_property("dpe.tilemap.asset", "Tilemap", value_type::asset_reference, 0, "null",
@@ -378,9 +399,8 @@ registry registry::slice_one_defaults()
                 "Linear RGBA tint multiplied with every tile.", "color"),
             authoring_property("dpe.tilemap.layer", "Render layer", value_type::integer, 2, "0", -32768.0, 32767.0, 1.0,
                 {}, {}, false, {}, "Tiles", "Base ordering layer for tilemap layers."),
-        },
-    });
-    const auto tilemap_collider_2d_added = result.add(component_descriptor{
+        }));
+    const auto tilemap_collider_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::tilemap_collider_2d}, "DragonPixel.Native.TilemapCollider2DComponent", "Tilemap Collider 2D", 1, runtime_owner::native,
         {
             physics_property("dpe.tilemap.collider.sensor", "Sensor", value_type::boolean, 0, "false"),
@@ -388,9 +408,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.tilemap.collider.restitution", "Restitution", value_type::number, 2, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.tilemap.collider.layer", "Layer", value_type::integer, 3, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.tilemap.collider.mask", "Mask", value_type::integer, 4, "65535", 0.0, 65535.0, 1.0),
-        },
-    });
-    const auto input_motion_2d_added = result.add(component_descriptor{
+        }));
+    const auto input_motion_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::input_motion_2d}, "DragonPixel.Native.InputMotion2DComponent", "Input Motion 2D", 1, runtime_owner::native,
         {
             authoring_property("dpe.input.horizontal_action", "Horizontal action", value_type::string, 0, "\"move.x\"",
@@ -401,8 +420,7 @@ registry registry::slice_one_defaults()
                 "m/s", {}, false, {}, "Input", "Runtime-only speed while the focused Game view supplies actions."),
         },
         "Input",
-        "Moves this GameObject in the isolated Play world from focused Game-view actions.",
-    });
+        "Moves this GameObject in the isolated Play world from focused Game-view actions."));
     if (!transform_added || !rotator_added || !camera_added || !sprite_added || !mesh_added
         || !material_added || !light_added || !rigid_body_2d_added || !box_collider_2d_added
         || !circle_collider_2d_added || !rigid_body_3d_added || !box_collider_3d_added

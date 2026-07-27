@@ -81,6 +81,17 @@ Use the portions relevant to the feature.
 - [ ] macOS sanitizer
 - [ ] Unsupported or unrun results stated honestly
 
+## CI evidence
+
+- [ ] Workflow syntax and action semantics validated
+- [ ] GitFlow event source/target relationship accepted
+- [ ] Native command failures propagate to the job result
+- [ ] JUnit evidence exists and is readable
+- [ ] JUnit contains at least the repository-defined minimum tests
+- [ ] JUnit reports zero failures and zero errors
+- [ ] Platform and configuration results reported separately
+- [ ] Candidate required-check names are unique, stable, and observed
+
 ## Documentation
 
 - [ ] Feature plan current

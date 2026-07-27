@@ -6,6 +6,9 @@ ARG QT_VERSION=6.11.1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        autoconf \
+        autoconf-archive \
+        automake \
         ca-certificates \
         clang \
         cmake \
@@ -42,7 +45,9 @@ RUN apt-get update \
         libxi6 \
         libxkbcommon0 \
         libxkbcommon-x11-0 \
+        libltdl-dev \
         libxrender1 \
+        libtool \
         ninja-build \
         p7zip-full \
         pkg-config \

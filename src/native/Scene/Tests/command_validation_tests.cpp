@@ -64,6 +64,21 @@ property_descriptor property(
     return result;
 }
 
+component_descriptor component(
+    std::string type_id,
+    std::string qualified_name,
+    std::string display_name,
+    std::vector<property_descriptor> properties)
+{
+    component_descriptor result{};
+    result.type_id = std::move(type_id);
+    result.qualified_name = std::move(qualified_name);
+    result.display_name = std::move(display_name);
+    result.owner = runtime_owner::native;
+    result.properties = std::move(properties);
+    return result;
+}
+
 dragonpixel::metadata::registry make_registry()
 {
     auto boolean = property("p.bool", value_type::boolean, 0, "true");
@@ -92,12 +107,10 @@ dragonpixel::metadata::registry make_registry()
     nullable.nullable = true;
 
     dragonpixel::metadata::registry registry;
-    require(registry.add(component_descriptor{
+    require(registry.add(component(
                 std::string{known_type},
                 "Tests.KnownComponent",
                 "Known Component",
-                1,
-                runtime_owner::native,
                 {
                     std::move(boolean),
                     std::move(integer),
@@ -110,17 +123,13 @@ dragonpixel::metadata::registry make_registry()
                     std::move(entity_reference),
                     std::move(asset_reference),
                     std::move(nullable),
-                },
-            }),
+                })),
         "Could not register known component descriptor");
-    require(registry.add(component_descriptor{
+    require(registry.add(component(
                 std::string{required_type},
                 "Tests.RequiredComponent",
                 "Required Component",
-                1,
-                runtime_owner::native,
-                {property("p.required", value_type::string, 0, {})},
-            }),
+                {property("p.required", value_type::string, 0, {})})),
         "Could not register required component descriptor");
     return registry;
 }

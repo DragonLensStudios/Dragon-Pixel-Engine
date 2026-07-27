@@ -81,27 +81,6 @@ bool write_atomic(const QString& path, const QByteArray& bytes, QString& error)
     return true;
 }
 
-std::optional<QJsonObject> read_json_object(
-    const QString& path,
-    ProjectLifecycleResult& result,
-    const QString& code)
-{
-    QFile input{path};
-    if (!input.open(QIODevice::ReadOnly))
-    {
-        add_diagnostic(result, code, input.errorString(), path);
-        return std::nullopt;
-    }
-    QJsonParseError parse_error;
-    const auto document = QJsonDocument::fromJson(input.readAll(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !document.isObject())
-    {
-        add_diagnostic(result, code, parse_error.errorString(), path);
-        return std::nullopt;
-    }
-    return document.object();
-}
-
 std::optional<ProjectTemplateDescriptor> parse_template(
     const QString& manifest_path,
     QVector<ProjectLifecycleDiagnostic>* diagnostics)

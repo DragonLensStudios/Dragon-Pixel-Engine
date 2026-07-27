@@ -1,6 +1,6 @@
 # Feature Plan: Dragon Pixel Engine Editor Library Modularization
 
-> **Status:** Ready for review — draft PR #3 open and unmerged; POSIX CI blocked before editor build
+> **Status:** Completed — human-reviewed PR #3 merged into `develop`
 > **Branch:** `feature/editor-library-modularization`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers
@@ -171,7 +171,8 @@ PR #3 CI attempted all six platform/configuration jobs. Windows Release and MSVC
 - [x] Aggregate diff and commit sequence reviewed.
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop`.
-- [x] PR left unmerged for human review.
+- [x] PR left unmerged at the implementation handoff.
+- [x] Human review completed and PR #3 merged into `develop`.
 
 ## Work Log
 
@@ -191,7 +192,8 @@ PR #3 CI attempted all six platform/configuration jobs. Windows Release and MSVC
 | 2026-07-27 | Aggregate branch review passed | Reviewed the complete `origin/develop...HEAD` commit sequence and aggregate nine-file scope, including the pending evidence updates. The branch contains the mirrored feature plan, the reusable editor object-library extraction, the object-library-safe warning/sanitizer helper, and current workflow/status documentation only. No C++ behavior, executable/test identity, test registration, timeout, platform threshold, public contract, architecture revision, support claim, or unrelated file changes. `git diff --check` passes. |
 | 2026-07-27 | Branch published for human review | Pushed `feature/editor-library-modularization` through reviewed commit `918aadc` and opened draft PR [#3](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/3) into `develop`. The GitHub connector returned HTTP 403 for PR creation, so the authenticated GitHub CLI fallback created the draft. The PR remains unmerged; the subsequent CI triage changes only durable evidence. |
 | 2026-07-27 | Pull-request CI triaged | The six-job GitHub Actions run passes Windows Release and MSVC ASan. macOS Release/ASan both fail before the editor target on 16 unchanged Metadata aggregate-initializer warnings promoted by AppleClang 17 `-Werror`; Ubuntu Release/ASan both fail before project configuration when the vcpkg `libxcrypt` build cannot locate the `Ninja Multi-Config` program. No failing job reaches the new editor-library compilation boundary. The failures are recorded as current POSIX platform/harness blockers and are not repaired on this focused branch. |
+| 2026-07-27 | Human review and merge completed | The user confirmed the feature works and merged PR #3 into `develop`. GitHub reports merge commit `b3281fa1820a1fa25bad6cb270a3aebbf024d3f7`. The next feature started from that fetched integration commit; the original CI blockers remain preserved above as the evidence that selected `feature/ci-gitflow-integration`. |
 
 ## Handoff Notes
 
-Implementation, scoped Windows verification, aggregate review, and publication are complete. The internal build boundary changes no engine/runtime contract and promotes no POC, ADR, slice, release, platform, or KNI claim. Draft PR [#3](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/3) is open and unmerged for human review. Its Windows Release/ASan checks pass; its four POSIX checks are blocked before the editor target by the unchanged macOS Metadata warning failure and Ubuntu Ninja/vcpkg provisioning failure recorded above. Current Ubuntu/macOS matrices, complete POC H accessibility evidence, and the full `EditorWindow` service split remain open. Do not broaden this branch into CI, Metadata, platform-matrix, public-repository, packaging-breadth, or POC J work.
+Implementation, scoped Windows verification, human review, and merge are complete. PR [#3](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/3) merged into `develop` at `b3281fa1820a1fa25bad6cb270a3aebbf024d3f7`. The internal build boundary changes no engine/runtime contract and promotes no POC, ADR, slice, release, platform, or KNI claim. The recorded CI failures now feed the focused `feature/ci-gitflow-integration` follow-up; current Ubuntu/macOS matrices, complete POC H accessibility evidence, and the full `EditorWindow` service split remain open.

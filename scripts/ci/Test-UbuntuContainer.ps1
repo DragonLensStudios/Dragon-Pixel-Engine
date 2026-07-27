@@ -23,11 +23,13 @@ if (-not $SkipImageBuild) {
 $configurePreset = if ($AddressSanitizer) { 'unix-clang-asan' } else { 'unix-clang' }
 $buildPreset = if ($AddressSanitizer) { 'unix-asan' } else { 'unix-release' }
 $testVerbosity = if ($VerboseTests) { '--verbose' } else { '--output-on-failure' }
+$junit = if ($AddressSanitizer) { '/tmp/slice1-Ubuntu-asan.xml' } else { '/tmp/slice1-Ubuntu-release.xml' }
 $containerScript = @"
 set -euo pipefail
 cmake --preset $configurePreset
 cmake --build --preset $buildPreset
-xvfb-run -a ctest --preset $buildPreset $testVerbosity
+xvfb-run -a ctest --preset $buildPreset $testVerbosity --output-junit $junit
+python3 scripts/ci/validate_ci.py junit $junit --minimum-tests 55
 "@
 
 & docker run --rm --init `
