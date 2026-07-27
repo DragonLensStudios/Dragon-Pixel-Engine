@@ -10,7 +10,12 @@ target_sources(DragonPixelEditorLibrary PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/AssetService.h"
     "${CMAKE_CURRENT_LIST_DIR}/SelectionService.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/SelectionService.h"
+    "${CMAKE_CURRENT_LIST_DIR}/TileImportService.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/TileImportService.h"
 )
+target_compile_definitions(DragonPixelEditorLibrary PRIVATE
+    DPE_TILED_IMPORTER_WORKER="$<TARGET_FILE:DragonPixelTiledImporterWorker>")
+add_dependencies(DragonPixelEditorLibrary DragonPixelTiledImporterWorker)
 target_compile_definitions(DragonPixelEditorLibrary PRIVATE
     DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates")
 
@@ -69,6 +74,32 @@ set_tests_properties(
     poc_o.asset_import_cache_integrity
     PROPERTIES TIMEOUT 30)
 
+add_executable(DragonPixelTileImportServiceTests
+    "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/ProjectIndexService.h"
+    "${CMAKE_CURRENT_LIST_DIR}/ProjectLifecycleService.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/ProjectLifecycleService.h"
+    "${CMAKE_CURRENT_LIST_DIR}/AssetService.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/AssetService.h"
+    "${CMAKE_CURRENT_LIST_DIR}/TileImportService.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/TileImportService.h"
+    "${CMAKE_CURRENT_LIST_DIR}/TileImportServiceTests.cpp"
+)
+target_link_libraries(DragonPixelTileImportServiceTests PRIVATE
+    DragonPixel::Tiles Qt6::Core Qt6::Gui Qt6::Test)
+target_compile_definitions(DragonPixelTileImportServiceTests PRIVATE
+    DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates"
+    DPE_TILED_IMPORTER_WORKER="$<TARGET_FILE:DragonPixelTiledImporterWorker>")
+add_dependencies(DragonPixelTileImportServiceTests DragonPixelTiledImporterWorker)
+set_target_properties(DragonPixelTileImportServiceTests PROPERTIES AUTOMOC ON)
+dpe_configure_native_target(DragonPixelTileImportServiceTests)
+add_test(NAME s3.tiled_tile_import_service COMMAND DragonPixelTileImportServiceTests)
+add_test(NAME poc_o.tiled_tile_import_isolation COMMAND DragonPixelTileImportServiceTests)
+set_tests_properties(
+    s3.tiled_tile_import_service
+    poc_o.tiled_tile_import_isolation
+    PROPERTIES TIMEOUT 60)
+
 if(WIN32)
     if(NOT DPE_EDITOR_QT_BIN_DIRECTORY)
         get_target_property(DPE_PROJECT_INDEX_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
@@ -83,6 +114,8 @@ if(WIN32)
         poc_m.project_creation_recovery
         s3.asset_service
         poc_o.asset_import_cache_integrity
+        s3.tiled_tile_import_service
+        poc_o.tiled_tile_import_isolation
         PROPERTIES
         ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${DPE_EDITOR_QT_BIN_DIRECTORY}")
 endif()
