@@ -2,11 +2,11 @@
 
 > **Status:** Verification complete; draft PR handoff pending
 > **Disposition:** Implementation ready for aggregate review and publication
-> **Branch:** `feature/tiled-tilemap-import`  
-> **Target:** `develop`  
-> **Owner:** Codex implementation; human review and merge  
-> **Started:** 2026-07-27  
-> **Updated:** 2026-07-27  
+> **Branch:** `feature/tiled-tilemap-import`
+> **Target:** `develop`
+> **Owner:** Codex implementation; human review and merge
+> **Started:** 2026-07-27
+> **Updated:** 2026-07-27
 > **Governing architecture:** `DPE-ARCH-0014`
 
 ## Goal
@@ -183,7 +183,7 @@ Primary references:
 - [x] Required hosted platform evidence is recorded honestly as pending post-push CI; no platform claim is promoted.
 - [x] Developer bundle contains and verifies the importer worker.
 - [x] Documentation and mirrored plan are current and byte-identical.
-- [ ] Aggregate diff and commit sequence reviewed.
+- [x] Aggregate diff and commit sequence reviewed.
 - [ ] Branch pushed.
 - [ ] Draft PR opened into `develop`.
 - [ ] Human review occurs before merge.
@@ -197,11 +197,12 @@ Primary references:
 | 2026-07-27 | Compatibility research | Official Tiled 1.12.2 JSON, TMX/TSX, global-ID, and layer documentation was checked. The supported subset and rejection rules above are based on those primary specifications. |
 | 2026-07-27 | Branch and plan started | Created `feature/tiled-tilemap-import` directly from current `develop` and created this mirrored plan before source changes. |
 | 2026-07-27 | Increment 1 complete | Added the separate `DragonPixelTiledImporterWorker` and a QtCore/C++20 conversion library outside `DragonPixelEditorLibrary`. It validates the versioned request, contained inline/external JSON TileSet and PNG dependencies, orthogonal map subset, finite/infinite native arrays, limits, stable IDs, Y-axis conversion, and all Tiled orthogonal GID flip combinations before emitting staged native documents. The first run exposed an existing writer defect where a collision-free tile serialized as `[null]`; `json(nullptr)` plus a permanent native round-trip test repairs it. The focused Release build succeeded and `s2.tile_documents`, `poc_k.tile_documents`, `s2.tiled_tilemap_importer`, and `poc_k.tiled_tilemap_importer` passed 4/4 in 0.16 seconds. Commits: `81a6d17` and `a67d244`. |
-| 2026-07-27 | Increment 2 complete | `TileImportService` assigns identities, writes a versioned request into an operation-owned temporary directory, launches the worker without a shell, contains cancellation/timeout/crash, validates the result inventory/paths/IDs/statistics and source stability, and passes immutable bytes to `AssetService`. `AssetService` re-parses native documents, verifies the one-Texture/TileSet/Tilemap contract and atlas bounds, creates the v3 dependency sidecars, refuses collisions, publishes six files through one operation, and removes only newly created outputs if project-index validation unexpectedly fails. Real-worker, tampered-path, worker-lifecycle, invalid-PNG, collision, dependency, and no-partial-publication tests pass. Commits: `fc87ac1` and `d7864d0`. |
+| 2026-07-27 | Increment 2 complete | `TileImportService` assigns identities, writes a versioned request into an operation-owned temporary directory, launches the worker without a shell, contains cancellation/timeout/crash, validates the result inventory/paths/IDs/statistics and source stability, and passes immutable bytes to `AssetService`. `AssetService` re-parses native documents, verifies the one-Texture/TileSet/Tilemap contract and atlas bounds, creates the v3 dependency sidecars, refuses collisions, publishes six files through one operation, and removes only newly created outputs if project-index validation unexpectedly fails. Real-worker, tampered-path/identity, worker-lifecycle, invalid-PNG, collision, dependency, and no-partial-publication tests pass. Commits: `fc87ac1`, `d7864d0`, and `e0b70e3`. |
 | 2026-07-27 | Increment 3 complete | Added **Assets > Import Tiled Tilemap...** with `Ctrl+Alt+T`, `.tmj`/`.json` selection, pixels-per-unit input, modal progress/cancellation, structured Console/UI diagnostics, Project Explorer refresh, and automatic Tile Palette opening. A public Qt test performs a real worker import into a temporary writable project, confirms the new texture/TileSet/tilemap is indexed and opened, and proves the scene entity set/path is unchanged. Commits: `74682bb` and `89e3514`. |
-| 2026-07-27 | Focused Release verified | The final nine-alias Release matrix (`s2.tile_documents`, both POC K document/import aliases, ProjectIndex, both AssetService/POC O aliases, and both TileImportService/POC O aliases) passed **9/9 in 6.34 seconds**. The two affected existing Qt functions passed **4/4 assertions in 3.127 seconds** and the actual-worker UI import passed **3/3 assertions in 3.149 seconds**. An earlier attempt to run both complete interaction aliases in one 120-second orchestration call was killed at 124 seconds before completion and is inconclusive; it is not reported as passing evidence. |
-| 2026-07-27 | Focused sanitizer verified | The corresponding MSVC AddressSanitizer build succeeded. The final nine-alias sanitizer matrix passed **9/9 in 21.37 seconds**. The two affected existing Qt functions passed **4/4 assertions in 4.685 seconds**, and the actual-worker UI import passed **3/3 assertions in 3.443 seconds**, with no sanitizer report. |
-| 2026-07-27 | Developer bundle verified | `Build-Production-Editor.ps1 -Fast` generated the production-style Windows bundle with the importer adjacent to the editor. The manifest contains **189** file records, zero missing/hash-mismatched/unlisted files. Importer SHA-256 is `D8AC528B99A4D2A4CEF331FDF63691A9B4F61D99B91F2DAF23B901F8575F3A66`; editor SHA-256 is `9DDB3EC6452A53CC4EC46DDA8C6D03EE2A4343A69A321EE8B71785A6D888D87F`; manifest SHA-256 is `225141F2287BD25E83C9487661AFADB576DF0E16EF9FC84B38D81AAB639FE46D`. One composite follow-up check used a relative path after the build script entered a Visual Studio shell and therefore reported a false missing-manifest error; a separate absolute-path verification produced the recorded green inventory. Commit: `3fb419f`. |
+| 2026-07-27 | Focused Release verified | The final nine-alias Release matrix (`s2.tile_documents`, both POC K document/import aliases, ProjectIndex, both AssetService/POC O aliases, and both TileImportService/POC O aliases) passed **9/9 in 6.48 seconds**. The two affected existing Qt functions passed **4/4 assertions in 3.127 seconds** and the actual-worker UI import passed **3/3 assertions in 3.149 seconds**. An earlier attempt to run both complete interaction aliases in one 120-second orchestration call was killed at 124 seconds before completion and is inconclusive; it is not reported as passing evidence. |
+| 2026-07-27 | Focused sanitizer verified | The corresponding MSVC AddressSanitizer build succeeded. The final nine-alias sanitizer matrix passed **9/9 in 21.05 seconds**. The two affected existing Qt functions passed **4/4 assertions in 4.685 seconds**, and the actual-worker UI import passed **3/3 assertions in 3.443 seconds**, with no sanitizer report. |
+| 2026-07-27 | Developer bundle verified | The final `Build-Production-Editor.ps1 -Fast` run generated the production-style Windows bundle with the importer adjacent to the editor. The manifest contains **189** file records, zero missing/hash-mismatched/unlisted files. Importer SHA-256 is `D8AC528B99A4D2A4CEF331FDF63691A9B4F61D99B91F2DAF23B901F8575F3A66`; editor SHA-256 is `605AEC7FC8D261919B54B1432AA5BEA3EDB48A524749AECED19A29DA00D23688`; manifest SHA-256 is `49152DACA9AD810818457EBF477ABA9800D3854498F32BDA1241AABE1BD488EC`. An earlier composite follow-up check used a relative path after the build script entered a Visual Studio shell and therefore reported a false missing-manifest error; the final absolute-path build/inventory command completed green. Commit: `3fb419f`. |
+| 2026-07-27 | Aggregate review complete | Reviewed the 24-file, 2,709-insertion/5-deletion aggregate diff and the ten focused commits from `54d9474` through `e0b70e3`. Changes remain limited to the Tiled importer, editor supervision/publication/UI, tile writer regression, focused tests, bundle deployment, README, mirrored plan/master tracker, and affected Proposed ADR evidence. `git diff --check develop` is clean; no generated build output, unrelated source, public format/ABI, support threshold, or platform claim changed. |
 
 ## Handoff Notes
 
