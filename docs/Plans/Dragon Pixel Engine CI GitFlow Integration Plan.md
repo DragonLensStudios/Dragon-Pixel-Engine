@@ -1,11 +1,11 @@
 # Dragon Pixel Engine CI GitFlow Integration Plan
 
-**Status:** In progress  
-**Branch:** `feature/ci-gitflow-integration`  
-**Target:** `develop`  
-**Owner:** Dragon Pixel Engine maintainers with Codex implementation support  
-**Created:** 2026-07-27  
-**Last updated:** 2026-07-27  
+> **Status:** In progress
+> **Branch:** `feature/ci-gitflow-integration`
+> **Target:** `develop`
+> **Owner:** Dragon Pixel Engine maintainers with Codex implementation support
+> **Created:** 2026-07-27
+> **Last updated:** 2026-07-27
 
 ## Goal and user value
 
