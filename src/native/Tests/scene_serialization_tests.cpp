@@ -17,6 +17,18 @@
 #include <string_view>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+
 namespace
 {
 using dragonpixel::core::uuid;
@@ -43,6 +55,63 @@ void require(bool condition, const std::string& message)
         throw std::runtime_error{message};
     }
 }
+
+class scoped_test_recovery_lease final
+{
+public:
+    explicit scoped_test_recovery_lease(const std::filesystem::path& transaction_base)
+    {
+#if defined(_WIN32)
+        handle_ = CreateFileW(
+            transaction_base.c_str(),
+            DELETE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            nullptr);
+        require(handle_ != INVALID_HANDLE_VALUE,
+            "Could not acquire the external Windows recovery-lease fixture.");
+#else
+        descriptor_ = ::open(
+            transaction_base.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+        if (descriptor_ < 0 || ::flock(descriptor_, LOCK_EX | LOCK_NB) != 0)
+        {
+            if (descriptor_ >= 0)
+            {
+                static_cast<void>(::close(descriptor_));
+                descriptor_ = -1;
+            }
+            require(false, "Could not acquire the external Unix recovery-lease fixture.");
+        }
+#endif
+    }
+
+    scoped_test_recovery_lease(const scoped_test_recovery_lease&) = delete;
+    scoped_test_recovery_lease& operator=(const scoped_test_recovery_lease&) = delete;
+
+    ~scoped_test_recovery_lease()
+    {
+#if defined(_WIN32)
+        if (handle_ != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(handle_);
+        }
+#else
+        if (descriptor_ >= 0)
+        {
+            static_cast<void>(::close(descriptor_));
+        }
+#endif
+    }
+
+private:
+#if defined(_WIN32)
+    HANDLE handle_{INVALID_HANDLE_VALUE};
+#else
+    int descriptor_{-1};
+#endif
+};
 
 uuid parse_uuid(const char* value)
 {
@@ -850,6 +919,73 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
             && !std::filesystem::exists(committed_directory.path())
             && dragonpixel::serialization::recover_utf8_transactions(committed_cleanup_root).succeeded,
         "Committed startup recovery rolled back valid targets or did not finish interrupted cleanup.");
+
+    const auto lease_root = root / "lease";
+    std::filesystem::remove_all(lease_root, error);
+    std::filesystem::create_directories(lease_root);
+    const auto lease_scene_target = lease_root / "scene.dpescene";
+    const auto lease_tile_target = lease_root / "tile.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                lease_scene_target, "lease-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                lease_tile_target, "lease-tile-before\n").succeeded,
+        "Could not arrange the recovery-root lease fixture.");
+    const auto lease_transaction_base =
+        lease_root / ".dragonpixel" / "Recovery" / "Transactions";
+    std::filesystem::create_directories(lease_transaction_base);
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> lease_writes{
+        {lease_scene_target, "lease-scene-after\n"},
+        {lease_tile_target, "lease-tile-after\n"},
+    };
+    const auto independent_root = root / "independent";
+    std::filesystem::remove_all(independent_root, error);
+    std::filesystem::create_directories(independent_root);
+    const auto independent_target = independent_root / "independent.dpescene";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                independent_target, "independent-before\n").succeeded,
+        "Could not arrange the independent recovery-root fixture.");
+    dragonpixel::serialization::save_result blocked_save;
+    dragonpixel::serialization::save_result blocked_recovery;
+    {
+        const scoped_test_recovery_lease held_lease{lease_transaction_base};
+        blocked_save = dragonpixel::serialization::save_utf8_transaction(
+            lease_writes, lease_root);
+        blocked_recovery = dragonpixel::serialization::recover_utf8_transactions(lease_root);
+        const std::vector<dragonpixel::serialization::utf8_transaction_write> independent_writes{
+            {independent_target, "independent-after\n"},
+        };
+        const auto independent_result = dragonpixel::serialization::save_utf8_transaction(
+            independent_writes, independent_root);
+        require(!blocked_save.succeeded
+                && !blocked_recovery.succeeded
+                && blocked_save.error.starts_with(
+                    "Could not acquire the transaction recovery-root lease after 7 attempt(s):")
+                && blocked_recovery.error.starts_with(
+                    "Could not acquire the transaction recovery-root lease after 7 attempt(s):")
+                && read_file(lease_scene_target) == "lease-scene-before\n"
+                && read_file(lease_tile_target) == "lease-tile-before\n"
+                && std::distance(
+                       std::filesystem::directory_iterator{lease_transaction_base},
+                       std::filesystem::directory_iterator{}) == 0
+                && independent_result.succeeded
+                && read_file(independent_target) == "independent-after\n",
+            "A held recovery-root lease did not reject same-root save/recovery without blocking another root: "
+                + blocked_save.error + " " + blocked_recovery.error + " " + independent_result.error);
+    }
+    auto lease_scene_backup = lease_scene_target;
+    lease_scene_backup += ".bak";
+    auto lease_tile_backup = lease_tile_target;
+    lease_tile_backup += ".bak";
+    const auto post_lease_result = dragonpixel::serialization::save_utf8_transaction(
+        lease_writes, lease_root);
+    require(post_lease_result.succeeded
+            && dragonpixel::serialization::recover_utf8_transactions(lease_root).succeeded
+            && read_file(lease_scene_target) == "lease-scene-after\n"
+            && read_file(lease_tile_target) == "lease-tile-after\n"
+            && read_file(lease_scene_backup) == "lease-scene-before\n"
+            && read_file(lease_tile_backup) == "lease-tile-before\n",
+        "The recovery-root lease was not released for a subsequent transaction: "
+            + post_lease_result.error);
 
     const auto interrupted_new_target = transaction_root / "interrupted-new.json";
     const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted_creation{

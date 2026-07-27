@@ -34,6 +34,8 @@
 #else
 #include <cerrno>
 #include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -84,6 +86,7 @@ enum class recovery_fault
 #if defined(_WIN32)
 constexpr std::array<DWORD, 6> windows_retry_delays_ms{1, 2, 4, 8, 16, 32};
 #endif
+constexpr std::array<unsigned int, 6> transaction_lease_retry_delays_ms{1, 2, 4, 8, 16, 32};
 
 std::filesystem::path ascii_path(std::string_view value)
 {
@@ -1200,6 +1203,152 @@ save_result write_journal(
     return {true, {}};
 }
 
+class recovery_root_lease final
+{
+public:
+    recovery_root_lease() = default;
+    recovery_root_lease(const recovery_root_lease&) = delete;
+    recovery_root_lease& operator=(const recovery_root_lease&) = delete;
+
+    ~recovery_root_lease()
+    {
+#if defined(_WIN32)
+        if (handle_ != INVALID_HANDLE_VALUE)
+        {
+            CloseHandle(handle_);
+        }
+#else
+        if (descriptor_ >= 0)
+        {
+            static_cast<void>(::close(descriptor_));
+        }
+#endif
+    }
+
+    save_result acquire(const recovery_paths& paths)
+    {
+        const auto& lease_path = paths.transaction_base;
+        if (!is_within(paths.root, lease_path))
+        {
+            return {false, "The transaction lease path escaped its recovery root."};
+        }
+
+        std::error_code filesystem_error;
+        const auto status = std::filesystem::symlink_status(lease_path, filesystem_error);
+        if (filesystem_error
+            || std::filesystem::is_symlink(status)
+            || !std::filesystem::is_directory(status))
+        {
+            return {false, "The transaction lease path was not a safe directory."};
+        }
+
+#if defined(_WIN32)
+        DWORD last_error = ERROR_SUCCESS;
+        for (std::size_t attempt = 0;; ++attempt)
+        {
+            const auto candidate = CreateFileW(
+                lease_path.c_str(),
+                DELETE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                nullptr);
+            if (candidate != INVALID_HANDLE_VALUE)
+            {
+                FILE_ATTRIBUTE_TAG_INFO attributes{};
+                BY_HANDLE_FILE_INFORMATION identity{};
+                const auto safe = GetFileType(candidate) == FILE_TYPE_DISK
+                    && GetFileInformationByHandleEx(
+                        candidate, FileAttributeTagInfo, &attributes, sizeof(attributes))
+                    && GetFileInformationByHandle(candidate, &identity)
+                    && (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+                    && (attributes.FileAttributes
+                        & (FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
+                if (!safe)
+                {
+                    CloseHandle(candidate);
+                    return {false, "The transaction lease handle was not a safe directory."};
+                }
+                handle_ = candidate;
+                return {true, {}};
+            }
+
+            last_error = GetLastError();
+            const auto retryable = last_error == ERROR_SHARING_VIOLATION
+                || last_error == ERROR_LOCK_VIOLATION
+                || last_error == ERROR_ACCESS_DENIED;
+            if (!retryable || attempt >= transaction_lease_retry_delays_ms.size())
+            {
+                return {
+                    false,
+                    "Could not acquire the transaction recovery-root lease after "
+                        + std::to_string(attempt + 1) + " attempt(s): Win32 error "
+                        + std::to_string(last_error) + " (" + windows_system_message(last_error)
+                        + "); lease=\"" + path_to_utf8(lease_path) + "\"."};
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{transaction_lease_retry_delays_ms[attempt]});
+        }
+#else
+        int last_error = 0;
+        for (std::size_t attempt = 0;; ++attempt)
+        {
+            const auto candidate = ::open(
+                lease_path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (candidate >= 0)
+            {
+                struct stat identity{};
+                if (::fstat(candidate, &identity) != 0
+                    || !S_ISDIR(identity.st_mode))
+                {
+                    last_error = errno;
+                    static_cast<void>(::close(candidate));
+                    return {
+                        false,
+                        "The transaction lease handle was not a safe directory: "
+                            + std::string{std::strerror(last_error)} + "."};
+                }
+                if (::flock(candidate, LOCK_EX | LOCK_NB) == 0)
+                {
+                    descriptor_ = candidate;
+                    return {true, {}};
+                }
+                last_error = errno;
+                static_cast<void>(::close(candidate));
+            }
+            else
+            {
+                last_error = errno;
+            }
+
+            const auto retryable = last_error == EWOULDBLOCK
+                || last_error == EAGAIN
+                || last_error == EACCES
+                || last_error == EINTR;
+            if (!retryable || attempt >= transaction_lease_retry_delays_ms.size())
+            {
+                return {
+                    false,
+                    "Could not acquire the transaction recovery-root lease after "
+                        + std::to_string(attempt + 1) + " attempt(s): "
+                        + std::string{std::strerror(last_error)} + "; lease=\""
+                        + path_to_utf8(lease_path) + "\"."};
+            }
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds{transaction_lease_retry_delays_ms[attempt]});
+        }
+#endif
+    }
+
+private:
+#if defined(_WIN32)
+    HANDLE handle_{INVALID_HANDLE_VALUE};
+#else
+    int descriptor_{-1};
+#endif
+};
+
 save_result remove_transaction_directory(const transaction_record& record)
 {
     bool exists = false;
@@ -1695,6 +1844,40 @@ save_result write_staged_postimages(const transaction_record& record)
     }
     return {true, {}};
 }
+
+save_result recover_utf8_transactions_locked(const recovery_paths& paths)
+{
+    std::error_code error;
+    std::vector<std::filesystem::path> transactions;
+    for (std::filesystem::directory_iterator iterator{paths.transaction_base, error}, end;
+         !error && iterator != end; iterator.increment(error))
+    {
+        const auto status = iterator->symlink_status(error);
+        if (error)
+        {
+            break;
+        }
+        if (std::filesystem::is_symlink(status) || !std::filesystem::is_directory(status))
+        {
+            return {false, "The transaction recovery directory contained an unsafe artifact."};
+        }
+        transactions.push_back(iterator->path());
+    }
+    if (error)
+    {
+        return {false, "Could not enumerate transaction recovery artifacts: " + error.message()};
+    }
+    std::sort(transactions.begin(), transactions.end());
+    for (const auto& transaction : transactions)
+    {
+        const auto recovered = recover_transaction_directory(paths, transaction);
+        if (!recovered.succeeded)
+        {
+            return recovered;
+        }
+    }
+    return {true, {}};
+}
 }
 
 save_result save_utf8_atomic(
@@ -1774,18 +1957,23 @@ save_result save_utf8_transaction(
             return {false, "The transaction exceeded its document limit."};
         }
 
-        const auto pending_recovery = recover_utf8_transactions(recovery_root);
-        if (!pending_recovery.succeeded)
-        {
-            return {false, "Could not recover pending transactions before starting a new save: "
-                + pending_recovery.error};
-        }
-
         transaction_record record;
         auto result = resolve_recovery_paths(recovery_root, true, record.paths);
         if (!result.succeeded)
         {
             return result;
+        }
+        recovery_root_lease lease;
+        result = lease.acquire(record.paths);
+        if (!result.succeeded)
+        {
+            return result;
+        }
+        const auto pending_recovery = recover_utf8_transactions_locked(record.paths);
+        if (!pending_recovery.succeeded)
+        {
+            return {false, "Could not recover pending transactions before starting a new save: "
+                + pending_recovery.error};
         }
         result = prepare_transaction_entries(record, writes);
         if (!result.succeeded)
@@ -1955,36 +2143,13 @@ save_result recover_utf8_transactions(const std::filesystem::path& recovery_root
         {
             return result;
         }
-        std::error_code error;
-        std::vector<std::filesystem::path> transactions;
-        for (std::filesystem::directory_iterator iterator{paths.transaction_base, error}, end;
-             !error && iterator != end; iterator.increment(error))
+        recovery_root_lease lease;
+        result = lease.acquire(paths);
+        if (!result.succeeded)
         {
-            const auto status = iterator->symlink_status(error);
-            if (error)
-            {
-                break;
-            }
-            if (std::filesystem::is_symlink(status) || !std::filesystem::is_directory(status))
-            {
-                return {false, "The transaction recovery directory contained an unsafe artifact."};
-            }
-            transactions.push_back(iterator->path());
+            return result;
         }
-        if (error)
-        {
-            return {false, "Could not enumerate transaction recovery artifacts: " + error.message()};
-        }
-        std::sort(transactions.begin(), transactions.end());
-        for (const auto& transaction : transactions)
-        {
-            result = recover_transaction_directory(paths, transaction);
-            if (!result.succeeded)
-            {
-                return result;
-            }
-        }
-        return {true, {}};
+        return recover_utf8_transactions_locked(paths);
     }
     catch (const std::exception& exception)
     {
