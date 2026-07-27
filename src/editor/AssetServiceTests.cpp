@@ -3,6 +3,9 @@
 #include "ProjectIndexService.h"
 #include "ProjectLifecycleService.h"
 
+#include <dragonpixel/tiles/tile_documents.h>
+
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -52,6 +55,47 @@ bool write_object(const QString& path, const QJsonObject& object)
     return output.open(QIODevice::WriteOnly | QIODevice::Truncate)
         && output.write(QJsonDocument{object}.toJson(QJsonDocument::Indented)) > 0;
 }
+
+dragonpixel::core::uuid uuid(const char* value)
+{
+    return *dragonpixel::core::uuid::parse(value);
+}
+
+QByteArray png_bytes()
+{
+    QImage image{4, 4, QImage::Format_RGBA8888};
+    image.fill(qRgba(20, 120, 220, 255));
+    QByteArray bytes;
+    QBuffer buffer{&bytes};
+    return buffer.open(QIODevice::WriteOnly) && image.save(&buffer, "PNG")
+        ? bytes : QByteArray{};
+}
+
+TileAssetPublicationRequest tile_publication(const QString& manifest)
+{
+    constexpr auto tilemap_id = "10000000-0000-4000-8000-000000000001";
+    constexpr auto tileset_id = "10000000-0000-4000-8000-000000000002";
+    constexpr auto texture_id = "10000000-0000-4000-8000-000000000003";
+    dragonpixel::tiles::tile_set_document set{
+        uuid(tileset_id), "Test Tiles", uuid(texture_id), {2, 2}, {}, {}, 2.0,
+        {{uuid("10000000-0000-4000-8000-000000000010"), "Tile 0", {0, 0, 2, 2}, std::nullopt}}};
+    dragonpixel::tiles::tilemap_document map{
+        uuid(tilemap_id), "Test Map", {uuid(tileset_id)},
+        {{uuid("10000000-0000-4000-8000-000000000020"), "Ground", true, 0,
+            {{0, 0, {{0, set.tiles.front().tile_id, false, false, 0}}}}}}};
+    return {
+        manifest,
+        QStringLiteral("Imported Map"),
+        QString::fromLatin1(tilemap_id),
+        QString::fromLatin1(tileset_id),
+        QString::fromLatin1(texture_id),
+        QByteArray::fromStdString(dragonpixel::tiles::write_tilemap(map)),
+        QByteArray::fromStdString(dragonpixel::tiles::write_tile_set(set)),
+        png_bytes(),
+        QString(64, QLatin1Char{'a'}),
+        2.0,
+    };
+}
 } // namespace
 
 class AssetServiceTests final : public QObject
@@ -59,6 +103,76 @@ class AssetServiceTests final : public QObject
     Q_OBJECT
 
 private slots:
+    void publishes_validated_tile_import_with_dependency_chain()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto manifest = create_project(temp);
+        QVERIFY(!manifest.isEmpty());
+        const auto request = tile_publication(manifest);
+
+        AssetService service;
+        const auto result = service.publish_tile_import(request);
+        QVERIFY2(result.succeeded, result.diagnostics.isEmpty()
+            ? "unknown tile publication failure"
+            : qPrintable(result.diagnostics.constFirst().message));
+        QCOMPARE(result.asset_ids, QStringList({request.texture_asset_id,
+            request.tileset_asset_id, request.tilemap_asset_id}));
+        QCOMPARE(result.metadata_paths.size(), 3);
+        QCOMPARE(result.affected_paths.size(), 6);
+
+        const auto indexed = ProjectIndexService{}.build_candidate(manifest);
+        QVERIFY(indexed.succeeded());
+        const auto* texture = indexed.candidate->find_by_id(request.texture_asset_id);
+        const auto* set = indexed.candidate->find_by_id(request.tileset_asset_id);
+        const auto* map = indexed.candidate->find_by_id(request.tilemap_asset_id);
+        QVERIFY(texture != nullptr && set != nullptr && map != nullptr);
+        QCOMPARE(texture->asset_type, QStringLiteral("sprite"));
+        QCOMPARE(texture->source_ownership, QStringLiteral("copied"));
+        QCOMPARE(set->asset_type, QStringLiteral("tileset"));
+        QCOMPARE(set->source_ownership, QStringLiteral("generated"));
+        QCOMPARE(set->dependencies, QStringList{request.texture_asset_id});
+        QCOMPARE(map->asset_type, QStringLiteral("tilemap"));
+        QCOMPARE(map->dependencies, QStringList{request.tileset_asset_id});
+        QCOMPARE(map->document.value(QStringLiteral("importer")).toObject()
+            .value(QStringLiteral("id")).toString(), QStringLiteral("dragonpixel.tiled-json"));
+        QCOMPARE(map->document.value(QStringLiteral("importSettings")).toObject()
+            .value(QStringLiteral("sourceMapHash")).toString(), request.source_map_hash);
+        QVERIFY(service.runtime_binding(manifest, request.texture_asset_id).succeeded);
+    }
+
+    void rejects_invalid_or_colliding_tile_publication_without_partial_files()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto manifest = create_project(temp);
+        QVERIFY(!manifest.isEmpty());
+        AssetService service;
+
+        auto invalid = tile_publication(manifest);
+        invalid.texture_bytes = QByteArrayLiteral("not a png");
+        const auto rejected = service.publish_tile_import(invalid);
+        QVERIFY(!rejected.succeeded);
+        QCOMPARE(rejected.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILE-DOCUMENT"));
+        const auto assets = QDir{QFileInfo{manifest}.absolutePath()}.filePath(
+            QStringLiteral("Assets"));
+        QVERIFY(!QFileInfo::exists(QDir{assets}.filePath(
+            QStringLiteral("Imported Map.tilemap.dpeasset"))));
+        QVERIFY(ProjectIndexService{}.build_candidate(manifest).succeeded());
+
+        const auto valid = tile_publication(manifest);
+        const auto published = service.publish_tile_import(valid);
+        QVERIFY(published.succeeded);
+        const auto preserved = read_bytes(published.affected_paths.constFirst());
+        const auto collision = service.publish_tile_import(valid);
+        QVERIFY(!collision.succeeded);
+        QCOMPARE(collision.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILE-COLLISION"));
+        QCOMPARE(read_bytes(published.affected_paths.constFirst()), preserved);
+        QVERIFY(ProjectIndexService{}.build_candidate(manifest).succeeded());
+    }
+
     void imports_png_copy_and_generic_with_asset_v3()
     {
         QTemporaryDir temp;

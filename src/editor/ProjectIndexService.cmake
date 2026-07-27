@@ -56,7 +56,8 @@ add_executable(DragonPixelAssetServiceTests
     "${CMAKE_CURRENT_LIST_DIR}/AssetService.h"
     "${CMAKE_CURRENT_LIST_DIR}/AssetServiceTests.cpp"
 )
-target_link_libraries(DragonPixelAssetServiceTests PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+target_link_libraries(DragonPixelAssetServiceTests PRIVATE
+    DragonPixel::Tiles Qt6::Core Qt6::Gui Qt6::Test)
 target_compile_definitions(DragonPixelAssetServiceTests PRIVATE
     DPE_PROJECT_TEMPLATES_ROOT="${CMAKE_SOURCE_DIR}/templates")
 set_target_properties(DragonPixelAssetServiceTests PROPERTIES AUTOMOC ON)

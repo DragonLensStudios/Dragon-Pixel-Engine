@@ -283,9 +283,7 @@ void rejected_inputs_leave_no_staged_artifacts()
 
     map = finite_map();
     map["tilesets"] = json::array({{{"firstgid", 1}, {"source", "../outside.tsj"}}});
-    expect_failure(map, "DPE-TILED-DEPENDENCY-ESCAPE", [](const temporary_tree& tree) {
-        write_bytes(tree.path.parent_path() / "outside.tsj", inline_tileset().dump(2));
-    });
+    expect_failure(map, "DPE-TILED-DEPENDENCY-ESCAPE");
 
     map = finite_map();
     map["layers"].front()["data"].front() = 99;
