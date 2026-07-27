@@ -741,6 +741,64 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
     require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
         "Transaction recovery was not idempotent after cleanup.");
 
+    const auto successor_root = root / "successor-transaction";
+    std::filesystem::remove_all(successor_root, error);
+    std::filesystem::create_directories(successor_root);
+    const auto successor_scene_target = successor_root / "successor.dpescene";
+    const auto successor_tile_target = successor_root / "successor.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                successor_scene_target, "successor-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                successor_tile_target, "successor-tile-before\n").succeeded,
+        "Could not arrange the successor transaction fixture.");
+    auto successor_scene_backup = successor_scene_target;
+    successor_scene_backup += ".bak";
+    auto successor_tile_backup = successor_tile_target;
+    successor_tile_backup += ".bak";
+    const auto successor_artifacts =
+        successor_root / ".dragonpixel" / "Recovery" / "Transactions";
+    const auto successor_artifact_count = [&] {
+        if (!std::filesystem::exists(successor_artifacts))
+        {
+            return std::size_t{};
+        }
+        return static_cast<std::size_t>(std::distance(
+            std::filesystem::directory_iterator{successor_artifacts},
+            std::filesystem::directory_iterator{}));
+    };
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> superseded_interruption{
+        {successor_scene_target, "successor-scene-interrupted\n"},
+        {successor_tile_target, "successor-tile-interrupted\n"},
+    };
+    const auto superseded_interruption_result = dragonpixel::serialization::save_utf8_transaction(
+        superseded_interruption,
+        successor_root,
+        dragonpixel::serialization::transaction_save_fault::leave_interrupted_after_first_replace);
+    require(!superseded_interruption_result.succeeded
+            && read_file(successor_scene_target) == "successor-scene-interrupted\n"
+            && read_file(successor_tile_target) == "successor-tile-before\n"
+            && successor_artifact_count() == 1,
+        "The superseded interruption fixture did not retain its prepared recovery journal.");
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> successor{
+        {successor_scene_target, "successor-scene-after\n"},
+        {successor_tile_target, "successor-tile-after\n"},
+    };
+    const auto successor_result =
+        dragonpixel::serialization::save_utf8_transaction(successor, successor_root);
+    const auto successor_recovery =
+        dragonpixel::serialization::recover_utf8_transactions(successor_root);
+    require(successor_result.succeeded
+            && successor_recovery.succeeded
+            && read_file(successor_scene_target) == "successor-scene-after\n"
+            && read_file(successor_tile_target) == "successor-tile-after\n"
+            && read_file(successor_scene_backup) == "successor-scene-before\n"
+            && read_file(successor_tile_backup) == "successor-tile-before\n"
+            && successor_artifact_count() == 0,
+        "A successor save did not recover the prior prepared transaction before publication: successor="
+            + successor_result.error + "; recovery=" + successor_recovery.error);
+
     const auto interrupted_new_target = transaction_root / "interrupted-new.json";
     const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted_creation{
         {interrupted_new_target, "created-before-interruption\n"},
