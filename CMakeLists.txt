@@ -49,5 +49,7 @@ if(DPE_BUILD_POC_D)
 endif()
 
 if(DPE_BUILD_EDITOR)
+    find_package(Qt6 6.11 REQUIRED COMPONENTS Core)
+    add_subdirectory(src/importers/Tiled)
     add_subdirectory(src/editor)
 endif()
