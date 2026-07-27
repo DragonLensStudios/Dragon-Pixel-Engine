@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 namespace
 {
@@ -625,6 +626,18 @@ struct GeneratedFile final
     QByteArray before;
     QFileDevice::Permissions permissions{};
 };
+
+GeneratedFile generated_file(
+    GeneratedFileKind kind,
+    QString target_path,
+    QByteArray contents)
+{
+    GeneratedFile file;
+    file.kind = kind;
+    file.target_path = std::move(target_path);
+    file.contents = std::move(contents);
+    return file;
+}
 
 bool matches_stage_fault(GeneratedFileKind kind, ComponentCreationFault fault)
 {
@@ -1982,7 +1995,7 @@ ComponentCreationResult ComponentModuleService::create(const ComponentCreationRe
         : cpp_source(class_name, result.type_id, request.display_name.trimmed());
 
     QList<GeneratedFile> files{
-        {GeneratedFileKind::source, result.source_path, source},
+        generated_file(GeneratedFileKind::source, result.source_path, source),
     };
     if (request.language == ProjectComponentLanguage::cpp)
     {
@@ -1994,7 +2007,10 @@ ComponentCreationResult ComponentModuleService::create(const ComponentCreationRe
             return result;
         }
         if (!QFileInfo::exists(header_path))
-            files.push_back({GeneratedFileKind::native_header, header_path, native_header()});
+            files.push_back(generated_file(
+                GeneratedFileKind::native_header,
+                header_path,
+                native_header()));
         else
         {
             QByteArray existing_header;
@@ -2007,8 +2023,10 @@ ComponentCreationResult ComponentModuleService::create(const ComponentCreationRe
             }
         }
     }
-    files.push_back({GeneratedFileKind::manifest, result.manifest_path,
-        QJsonDocument{manifest}.toJson(QJsonDocument::Indented)});
+    files.push_back(generated_file(
+        GeneratedFileKind::manifest,
+        result.manifest_path,
+        QJsonDocument{manifest}.toJson(QJsonDocument::Indented)));
 
     for (const auto& file : files)
     {

@@ -1829,8 +1829,12 @@ void EditorWindow::create_project_component(ProjectComponentLanguage language)
             &root_accepted);
         if (!root_accepted) return;
     }
-    ComponentCreationRequest request{
-        project_root_, component_roots, name, QStringLiteral("Scripts"), language};
+    ComponentCreationRequest request;
+    request.project_root = project_root_;
+    request.component_roots = component_roots;
+    request.display_name = name;
+    request.category = QStringLiteral("Scripts");
+    request.language = language;
     request.selected_component_root = selected_component_root;
     append_console(
         QStringLiteral("Generating contained %1 source and metadata for %2...")
@@ -3245,7 +3249,7 @@ void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
     if (!project_index_.candidate)
     {
         project_model_->rebuild(project_index_);
-        project_current_folder_ = {};
+        project_current_folder_ = QPersistentModelIndex{};
         project_explorer_->setRootIndex({});
         project_thumbnail_view_->setRootIndex({});
         project_breadcrumb_->setText(QStringLiteral("Project"));
