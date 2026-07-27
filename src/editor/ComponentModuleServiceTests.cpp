@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <iostream>
 #include <system_error>
+#include <utility>
 
 namespace
 {
@@ -106,7 +107,14 @@ ComponentCreationRequest creation_request(
     ComponentCreationFault fault = ComponentCreationFault::none,
     QStringList roots = {QString::fromUtf8(declared_root)})
 {
-    return {project, roots, name, QStringLiteral("Tests/Unicode"), language, fault};
+    ComponentCreationRequest request;
+    request.project_root = project;
+    request.component_roots = std::move(roots);
+    request.display_name = name;
+    request.category = QStringLiteral("Tests/Unicode");
+    request.language = language;
+    request.injected_fault = fault;
+    return request;
 }
 
 bool empty_and_ambiguous_roots_are_rejected()
