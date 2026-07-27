@@ -307,9 +307,9 @@ Use `docs/Development/Verification Checklist.md` to select the required feature 
 
 ## Current Work Boundary
 
-The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. The current product work item is the mirrored `Dragon Pixel Engine Editor Library Modularization Plan.md` on `feature/editor-library-modularization`. The atomic-publication recovery feature was reviewed and merged into `develop` through PR #2 at `17e481d700096e491698f597d8590988042b8203`. The DPE-ARCH-0014 Project Hub/asset/Hierarchy/multi-Inspector plan and the development-constitution setup plan are completed focused records. Other narrower plans remain historical evidence and are superseded for active tracking only.
+The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. The current product work item is the mirrored `Dragon Pixel Engine CI GitFlow Integration Plan.md` on `feature/ci-gitflow-integration`. The editor-library modularization feature was reviewed and merged into `develop` through PR #3 at `b3281fa1820a1fa25bad6cb270a3aebbf024d3f7`; atomic-publication recovery was previously merged through PR #2 at `17e481d700096e491698f597d8590988042b8203`. The DPE-ARCH-0014 Project Hub/asset/Hierarchy/multi-Inspector plan and the development-constitution setup plan are completed focused records. Other narrower plans remain historical evidence and are superseded for active tracking only.
 
-The editor-library modularization branch must be reviewed and merged into `develop` before another feature begins. Do not stack the next feature on this unmerged branch.
+The CI/GitFlow integration branch must be reviewed and merged into `develop` before another feature begins. Do not stack the next feature on this unmerged branch.
 
 Proceed in evidence-backed increments:
 
@@ -320,20 +320,19 @@ Proceed in evidence-backed increments:
 5. Complete Slice 4 through POC S: one product-version source, frozen performance/memory budgets, long-running and corruption recovery, complete compatibility fixtures, clean install/update/rollback/uninstall, security/license/privacy/accessibility reviews, documentation/reference-project reproduction, and final three-platform release-candidate evidence.
 6. Close each slice only when every acceptance statement has direct durable evidence. Mark the active plan complete and publish `1.0.0` only after all applicable gates pass.
 
-The current `develop` baseline after merged atomic repair passes 56 of 56 strict Windows Release tests in 423.22 seconds and 56 of 56 MSVC AddressSanitizer tests in 560.43 seconds; final `s1.native_core` stability passes 100 of 100 Release and 50 of 50 sanitizer repetitions. The formerly inconclusive aggregate sanitizer interaction aliases pass in 181.13 and 179.14 seconds under unchanged 480-second caps. On the current editor-library branch, the complete Release and ASan builds pass, focused production/crash/Qt aliases pass 5 of 5 in 284.03 and 403.70 seconds, both presets retain 56 registered tests, and the refreshed 188-record production-style bundle hash-verifies and passes its packaged MonoGame self-test. PR #3 CI passes Windows Release/ASan; macOS Release/ASan stop before the editor target on unchanged Metadata initializer warnings, and Ubuntu Release/ASan stop before project configuration on missing Ninja/vcpkg provisioning. ADR-0006 handle-pinning/noncooperating-writer limits and current POSIX execution remain open. Complete POC J acceptance remains open, no current POSIX matrix passes, macOS retains the 14-of-15 POC B failure, POCs M-S remain open with only focused Windows portions of M/O implemented, every ADR remains Proposed, and KNI remains experimental.
+The current CI/GitFlow branch makes Windows native commands fail closed, validates GitFlow relationships and JUnit evidence, resolves the runner's Visual Studio Ninja explicitly, supplies the proven Ubuntu autotools prerequisites, and removes the strict AppleClang aggregate-initializer failure without changing descriptor values. Its local strict Windows Release matrix passes 56 of 56 in 410 seconds and MSVC AddressSanitizer passes 56 of 56 in 551 seconds; both JUnit files satisfy the minimum-56/zero-failure contract. Hosted pull-request Windows, Ubuntu, and macOS evidence remains pending, and the local Docker daemon was unavailable. The merged atomic-repair `s1.native_core` stability evidence remains 100 of 100 Release and 50 of 50 sanitizer repetitions, and the aggregate sanitizer interaction aliases remain under unchanged 480-second caps. ADR-0006 handle-pinning/noncooperating-writer limits and current POSIX execution remain open. Complete POC J acceptance remains open, no current POSIX matrix passes, macOS retains the 14-of-15 POC B failure, POCs M-S remain open with only focused Windows portions of M/O implemented, every ADR remains Proposed, and KNI remains experimental.
 
 Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, promote an ADR without its named gate, claim a slice from partial/platform-local evidence, or broaden beyond the documented 1.0 scope into Unreal, AAA rendering, networking, visual scripting, a marketplace, or general IDE behavior.
 
 ### Recommended focused feature sequence
 
-Re-evaluate after the editor-library modularization branch is reviewed and merged, beginning with:
+Re-evaluate after the CI/GitFlow integration branch is reviewed and merged, beginning with:
 
-1. `feature/ci-gitflow-integration`
-2. `feature/public-repository-readiness`
-3. `feature/developer-preview-packaging`
-4. `feature/ubuntu-current-matrix`
-5. `feature/macos-frame-throughput`
-6. `feature/poc-j-input-latency`
+1. `feature/public-repository-readiness`
+2. `feature/developer-preview-packaging`
+3. `feature/ubuntu-current-matrix`
+4. `feature/macos-frame-throughput`
+5. `feature/poc-j-input-latency`
 
 Do not mechanically start the next listed feature if current evidence, an accepted plan, or explicit user direction changes the priority.
 
