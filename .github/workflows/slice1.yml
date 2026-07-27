@@ -2,13 +2,47 @@ name: Slice 1 cross-platform
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, develop, "feature/**", "release/**", "hotfix/**"]
   pull_request:
+    branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: slice1-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  ci-policy:
+    name: CI policy / GitFlow contracts
+    runs-on: ubuntu-24.04
+    env:
+      CI_EVENT_NAME: ${{ github.event_name }}
+      CI_REF_NAME: ${{ github.ref_name }}
+      CI_HEAD_REF: ${{ github.head_ref }}
+      CI_BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test CI validation contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/ci/tests -p 'test_*.py' -v
+      - name: Validate GitFlow event relationship
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/validate_ci.py gitflow \
+            --event-name "$CI_EVENT_NAME" \
+            --ref-name "$CI_REF_NAME" \
+            --head-ref "$CI_HEAD_REF" \
+            --base-ref "$CI_BASE_REF"
+
   windows:
     name: Windows 11 x64 / ${{ matrix.configuration }}
+    needs: ci-policy
     runs-on: windows-2022
     env:
       DOTNET_CLI_USE_MSBUILD_SERVER: 0
@@ -68,6 +102,7 @@ jobs:
 
   unix:
     name: ${{ matrix.os }} / ${{ matrix.configuration }}
+    needs: ci-policy
     runs-on: ${{ matrix.os }}
     env:
       DOTNET_CLI_USE_MSBUILD_SERVER: 0
