@@ -58,6 +58,8 @@ enum class publication_fault
     reported_failure_after_publication,
     persistent_sharing_violation,
     target_changed_after_validation,
+    target_missing_before_publication,
+    transient_sharing_violation_then_target_missing,
 };
 
 enum class publication_target_state
@@ -603,13 +605,19 @@ save_result windows_topology_failure(
     const publication_topology_result& topology,
     const std::filesystem::path& target,
     const std::filesystem::path& staged,
-    const std::optional<std::filesystem::path>& backup)
+    const std::optional<std::filesystem::path>& backup,
+    std::optional<DWORD> triggering_error = std::nullopt)
 {
+    const auto triggering_detail = triggering_error
+        ? " Triggering API error " + std::to_string(*triggering_error) + " ("
+            + windows_system_message(*triggering_error) + ")."
+        : std::string{};
     return {
         false,
         "Could not verify a safe " + std::string{api} + " publication topology after "
             + std::to_string(probes) + " probe(s) and " + std::to_string(api_attempts)
-            + " API attempt(s): " + topology.detail + " target=\"" + path_to_utf8(target)
+            + " API attempt(s): " + topology.detail + triggering_detail + " target=\""
+            + path_to_utf8(target)
             + "\"; staged=\"" + path_to_utf8(staged) + "\"; backup="
             + (backup ? "\"" + path_to_utf8(*backup) + "\"" : "<none>") + "."};
 }
@@ -885,14 +893,14 @@ save_result replace_staged_file(
             {
                 return windows_topology_failure(
                     "ReplaceFileW", topology_probes, api_attempts,
-                    topology, target, staged, backup);
+                    topology, target, staged, backup, last_error);
             }
             if (delay_index >= windows_retry_delays_ms.size())
             {
                 return topology.state == publication_topology::unavailable
                     ? windows_topology_failure(
                         "ReplaceFileW", topology_probes, api_attempts,
-                        topology, target, staged, backup)
+                        topology, target, staged, backup, last_error)
                     : windows_publication_failure(
                         "ReplaceFileW", last_error, api_attempts, target, staged, backup);
             }
@@ -910,10 +918,13 @@ save_result replace_staged_file(
         flags |= MOVEFILE_REPLACE_EXISTING;
     }
     const auto transient_api_fault = injected_fault == publication_fault::transient_sharing_violation
-        || injected_fault == publication_fault::transient_sharing_violation_then_topology_unavailable;
+        || injected_fault == publication_fault::transient_sharing_violation_then_topology_unavailable
+        || injected_fault == publication_fault::transient_sharing_violation_then_target_missing;
     const auto persistent_api_fault = injected_fault == publication_fault::persistent_sharing_violation;
     auto inject_topology_unavailable =
         injected_fault == publication_fault::transient_sharing_violation_then_topology_unavailable;
+    auto inject_target_missing =
+        injected_fault == publication_fault::transient_sharing_violation_then_target_missing;
     std::size_t delay_index = 0;
     std::size_t topology_probes = 1;
     std::size_t api_attempts = 0;
@@ -962,6 +973,15 @@ save_result replace_staged_file(
             return windows_publication_failure(
                 "MoveFileExW", last_error, api_attempts, target, staged, backup);
         }
+        if (inject_target_missing)
+        {
+            const auto removed = remove_file(target);
+            if (!removed.succeeded)
+            {
+                return removed;
+            }
+            inject_target_missing = false;
+        }
         topology = inspect_move_file_retry_topology(
             target,
             staged,
@@ -977,14 +997,14 @@ save_result replace_staged_file(
         {
             return windows_topology_failure(
                 "MoveFileExW", topology_probes, api_attempts,
-                topology, target, staged, backup);
+                topology, target, staged, backup, last_error);
         }
         if (delay_index >= windows_retry_delays_ms.size())
         {
             return topology.state == publication_topology::unavailable
                 ? windows_topology_failure(
                     "MoveFileExW", topology_probes, api_attempts,
-                    topology, target, staged, backup)
+                    topology, target, staged, backup, last_error)
                 : windows_publication_failure(
                     "MoveFileExW", last_error, api_attempts, target, staged, backup);
         }
@@ -1333,29 +1353,78 @@ json journal_json(const transaction_record& record)
     };
 }
 
+std::string journal_contents_for_phase(
+    const transaction_record& record,
+    std::string_view phase)
+{
+    auto document = journal_json(record);
+    document["phase"] = phase;
+    return document.dump(2) + "\n";
+}
+
 save_result write_journal(
     const transaction_record& record,
-    publication_fault injected_fault = publication_fault::none)
+    publication_fault injected_fault = publication_fault::none,
+    bool retain_flushed_candidate_on_failure = false)
 {
     const auto temporary = temporary_path(record.journal);
-    const auto contents = journal_json(record).dump(2) + "\n";
+    const auto contents = journal_contents_for_phase(record, record.phase);
     auto result = write_and_flush(temporary, contents);
     if (!result.succeeded)
     {
         static_cast<void>(remove_file(temporary));
         return {false, "Could not flush the transaction journal: " + result.error};
     }
+    // A retained fallback is useful after a crash only if the directory entry
+    // for the fully flushed candidate reached the filesystem as well.
+    flush_parent_directory(temporary);
     const auto expected_target_state = record.phase == "staging"
         ? publication_target_state::missing
         : publication_target_state::existing;
+    std::optional<std::string> expected_target_hash;
+    if (record.phase == "prepared")
+    {
+        expected_target_hash = sha256_hex(journal_contents_for_phase(record, "staging"));
+    }
+    else if (record.phase == "committed")
+    {
+        expected_target_hash = sha256_hex(journal_contents_for_phase(record, "prepared"));
+    }
+    if (injected_fault == publication_fault::target_missing_before_publication)
+    {
+        result = remove_file(record.journal);
+        if (!result.succeeded)
+        {
+            if (!retain_flushed_candidate_on_failure)
+            {
+                static_cast<void>(remove_file(temporary));
+            }
+            return {false, "Could not remove the transaction journal before publication: "
+                + result.error};
+        }
+    }
     const auto replacement_fault = injected_fault == publication_fault::reported_failure_after_publication
+            || injected_fault == publication_fault::target_missing_before_publication
         ? publication_fault::none
         : injected_fault;
+    const auto expected_target_hash_view = expected_target_hash
+        ? std::optional<std::string_view>{*expected_target_hash}
+        : std::nullopt;
+    const auto expected_staged_hash = sha256_hex(contents);
     result = replace_staged_file(
-        record.journal, temporary, std::nullopt, expected_target_state, replacement_fault);
+        record.journal,
+        temporary,
+        std::nullopt,
+        expected_target_state,
+        replacement_fault,
+        expected_target_hash_view,
+        expected_staged_hash);
     if (!result.succeeded)
     {
-        static_cast<void>(remove_file(temporary));
+        if (!retain_flushed_candidate_on_failure)
+        {
+            static_cast<void>(remove_file(temporary));
+        }
         return {false, "Could not publish the transaction journal: " + result.error};
     }
     flush_parent_directory(record.journal);
@@ -1960,7 +2029,7 @@ save_result validate_loaded_entry_paths(transaction_record& record)
     return ensure_no_aliases(record.entries);
 }
 
-save_result load_journal(
+save_result initialize_loaded_record(
     const recovery_paths& paths,
     const std::filesystem::path& transaction_directory,
     transaction_record& record)
@@ -1978,23 +2047,25 @@ save_result load_journal(
         return {false, "A transaction artifact directory did not have a valid transaction ID."};
     }
     record.journal = record.directory / ascii_path("journal.json");
-    bool journal_exists = false;
-    bool journal_regular = false;
-    bool journal_symlink = false;
-    auto inspected = inspect_path(record.journal, journal_exists, journal_regular, journal_symlink);
-    if (!inspected.succeeded || !journal_exists || !journal_regular || journal_symlink)
-    {
-        return inspected.succeeded
-            ? save_result{false, "A transaction artifact directory had no safe journal."}
-            : inspected;
-    }
-    const auto size = std::filesystem::file_size(record.journal, error);
+    record.phase.clear();
+    record.entries.clear();
+    return {true, {}};
+}
+
+save_result load_journal_file(
+    transaction_record& record,
+    const std::filesystem::path& journal_source,
+    bool candidate_is_rollback_metadata,
+    std::string* exact_contents = nullptr)
+{
+    std::error_code error;
+    const auto size = std::filesystem::file_size(journal_source, error);
     if (error || size > maximum_journal_size)
     {
         return {false, "A transaction journal was unreadable or exceeded its size limit."};
     }
     std::string encoded;
-    auto read = read_file(record.journal, encoded);
+    auto read = read_file(journal_source, encoded);
     if (!read.succeeded)
     {
         return read;
@@ -2013,6 +2084,10 @@ save_result load_journal(
     if (record.phase != "staging" && record.phase != "prepared" && record.phase != "committed")
     {
         return {false, "A transaction journal had an unsupported phase."};
+    }
+    if (candidate_is_rollback_metadata && record.phase == "committed")
+    {
+        record.phase = "prepared";
     }
     for (const auto& value : document["entries"])
     {
@@ -2036,7 +2111,105 @@ save_result load_journal(
         }
         record.entries.push_back(std::move(entry));
     }
-    return validate_loaded_entry_paths(record);
+    const auto validated = validate_loaded_entry_paths(record);
+    if (validated.succeeded && exact_contents)
+    {
+        *exact_contents = std::move(encoded);
+    }
+    return validated;
+}
+
+save_result load_canonical_journal(
+    const recovery_paths& paths,
+    const std::filesystem::path& transaction_directory,
+    transaction_record& record,
+    std::string* exact_contents = nullptr)
+{
+    auto initialized = initialize_loaded_record(paths, transaction_directory, record);
+    if (!initialized.succeeded)
+    {
+        return initialized;
+    }
+    bool journal_exists = false;
+    bool journal_regular = false;
+    bool journal_symlink = false;
+    const auto inspected = inspect_path(
+        record.journal, journal_exists, journal_regular, journal_symlink);
+    if (!inspected.succeeded || !journal_exists || !journal_regular || journal_symlink)
+    {
+        return inspected.succeeded
+            ? save_result{false, "A transaction artifact directory had no safe canonical journal."}
+            : inspected;
+    }
+    return load_journal_file(record, record.journal, false, exact_contents);
+}
+
+save_result load_journal(
+    const recovery_paths& paths,
+    const std::filesystem::path& transaction_directory,
+    transaction_record& record)
+{
+    auto initialized = initialize_loaded_record(paths, transaction_directory, record);
+    if (!initialized.succeeded)
+    {
+        return initialized;
+    }
+
+    bool journal_exists = false;
+    bool journal_regular = false;
+    bool journal_symlink = false;
+    auto inspected = inspect_path(
+        record.journal, journal_exists, journal_regular, journal_symlink);
+    if (!inspected.succeeded)
+    {
+        return inspected;
+    }
+    if (journal_exists || journal_symlink)
+    {
+        if (!journal_exists || !journal_regular || journal_symlink)
+        {
+            return {false, "A transaction artifact directory had an unsafe canonical journal."};
+        }
+        return load_journal_file(record, record.journal, false);
+    }
+
+    const auto candidate_prefix = path_to_utf8(record.journal.filename()) + ".tmp-";
+    std::optional<std::filesystem::path> candidate;
+    std::error_code error;
+    for (std::filesystem::directory_iterator iterator{record.directory, error}, end;
+         !error && iterator != end; iterator.increment(error))
+    {
+        const auto candidate_name = path_to_utf8(iterator->path().filename());
+        if (!candidate_name.starts_with(candidate_prefix))
+        {
+            continue;
+        }
+        const auto status = iterator->symlink_status(error);
+        if (error)
+        {
+            break;
+        }
+        if (!has_valid_staging_name(record.journal, iterator->path())
+            || std::filesystem::is_symlink(status)
+            || !std::filesystem::is_regular_file(status))
+        {
+            return {false, "A transaction artifact directory had a malformed or unsafe journal candidate."};
+        }
+        if (candidate)
+        {
+            return {false, "A transaction artifact directory had multiple journal candidates."};
+        }
+        candidate = iterator->path();
+    }
+    if (error)
+    {
+        return {false, "Could not enumerate transaction journal candidates: " + error.message()};
+    }
+    if (!candidate)
+    {
+        return {false, "A transaction artifact directory had no safe journal."};
+    }
+    return load_journal_file(record, *candidate, true);
 }
 
 save_result recover_transaction(
@@ -2393,9 +2566,22 @@ save_result save_utf8_transaction(
                 : save_result{false, result.error + " Recovery failed: " + recovered.error};
         }
         record.phase = "prepared";
-        result = write_journal(record);
+        const auto prepared_journal_fault = injected_fault
+                == transaction_save_fault::leave_prepared_journal_candidate_after_primary_removal
+            ? publication_fault::target_missing_before_publication
+            : publication_fault::none;
+        result = write_journal(record, prepared_journal_fault, true);
         if (!result.succeeded)
         {
+            if (injected_fault
+                == transaction_save_fault::leave_prepared_journal_candidate_after_primary_removal)
+            {
+                return {
+                    false,
+                    "Injected interruption after the prepared journal candidate was flushed; "
+                    "canonical journal absent: "
+                        + result.error};
+            }
             const auto recovered = recover_transaction(record);
             return recovered.succeeded ? result
                 : save_result{false, result.error + " Recovery failed: " + recovered.error};
@@ -2475,13 +2661,22 @@ save_result save_utf8_transaction(
                         == transaction_save_fault::second_target_changed_after_ambiguous_api_failure
                     || injected_fault
                         == transaction_save_fault::
-                            second_target_inspection_unavailable_after_ambiguous_api_failure);
+                            second_target_inspection_unavailable_after_ambiguous_api_failure
+                    || injected_fault
+                        == transaction_save_fault::second_target_missing_after_ambiguous_api_failure);
             if (result.succeeded
                 && index == 1
                 && injected_fault
                     == transaction_save_fault::second_target_changed_after_ambiguous_api_failure)
             {
                 result = write_and_flush(entry.target, "injected-external-change\n");
+            }
+            if (result.succeeded
+                && index == 1
+                && injected_fault
+                    == transaction_save_fault::second_target_missing_after_ambiguous_api_failure)
+            {
+                result = remove_file(entry.target);
             }
             if (result.succeeded && force_reported_failure)
             {
@@ -2559,17 +2754,33 @@ save_result save_utf8_transaction(
         {
             committed_journal_fault = publication_fault::reported_failure_after_publication;
         }
+        else if (injected_fault
+            == transaction_save_fault::committed_journal_candidate_after_primary_removal)
+        {
+            committed_journal_fault = publication_fault::target_missing_before_publication;
+        }
+        else if (injected_fault
+            == transaction_save_fault::
+                committed_journal_transient_sharing_violation_then_primary_missing)
+        {
+            committed_journal_fault =
+                publication_fault::transient_sharing_violation_then_target_missing;
+        }
         else if (injected_fault == transaction_save_fault::committed_journal_persistent_sharing_violation
             || injected_fault
                 == transaction_save_fault::committed_journal_persistent_sharing_violation_then_transient_recovery_read)
         {
             committed_journal_fault = publication_fault::persistent_sharing_violation;
         }
-        result = write_journal(record, committed_journal_fault);
+        const auto intended_committed_contents = journal_contents_for_phase(record, "committed");
+        const auto prior_prepared_contents = journal_contents_for_phase(record, "prepared");
+        result = write_journal(record, committed_journal_fault, true);
         if (!result.succeeded)
         {
             transaction_record durable_record;
-            const auto loaded = load_journal(record.paths, record.directory, durable_record);
+            std::string durable_contents;
+            const auto loaded = load_canonical_journal(
+                record.paths, record.directory, durable_record, &durable_contents);
             if (!loaded.succeeded)
             {
                 return {
@@ -2578,16 +2789,17 @@ save_result save_utf8_transaction(
                     "no recovery changes were made: "
                         + result.error + " " + loaded.error};
             }
-            if (durable_record.phase == "committed")
+            if (durable_contents == intended_committed_contents)
             {
                 static_cast<void>(recover_transaction(durable_record));
                 return {true, {}};
             }
-            if (durable_record.phase != "prepared")
+            if (durable_contents != prior_prepared_contents)
             {
                 return {
                     false,
-                    "The committed marker could not be flushed and the durable journal was not prepared; "
+                    "The committed marker could not be flushed and the canonical journal did not exactly "
+                    "match the intended committed or prior prepared bytes; "
                     "no recovery changes were made: "
                         + result.error};
             }

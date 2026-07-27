@@ -43,6 +43,10 @@ enum class transaction_save_fault
     second_target_reported_failure_after_publication,
     second_target_changed_after_ambiguous_api_failure,
     second_target_inspection_unavailable_after_ambiguous_api_failure,
+    committed_journal_candidate_after_primary_removal,
+    committed_journal_transient_sharing_violation_then_primary_missing,
+    second_target_missing_after_ambiguous_api_failure,
+    leave_prepared_journal_candidate_after_primary_removal,
 };
 
 [[nodiscard]] save_result save_utf8_atomic(

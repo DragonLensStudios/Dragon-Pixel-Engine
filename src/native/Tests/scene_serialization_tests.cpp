@@ -749,6 +749,19 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         return static_cast<std::size_t>(std::distance(
             std::filesystem::directory_iterator{artifacts}, std::filesystem::directory_iterator{}));
     };
+    const auto journal_candidates = [](const std::filesystem::path& transaction_directory) {
+        std::vector<std::filesystem::path> result;
+        constexpr std::string_view prefix = "journal.json.tmp-";
+        for (const auto& entry : std::filesystem::directory_iterator{transaction_directory})
+        {
+            if (entry.path().filename().string().starts_with(prefix))
+            {
+                result.push_back(entry.path());
+            }
+        }
+        std::sort(result.begin(), result.end());
+        return result;
+    };
     require(artifact_count() == 0, "Completed or synchronously recovered transactions left artifacts behind.");
 
     const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted{
@@ -809,6 +822,51 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "Startup-style recovery did not restore the exact transaction pre-images.");
     require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
         "Transaction recovery was not idempotent after cleanup.");
+
+    const auto scene_backup_before_prepared_candidate = read_file(scene_backup);
+    const auto tile_backup_before_prepared_candidate = read_file(tile_backup);
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> prepared_candidate_writes{
+        {scene_target, "scene-prepared-candidate-must-not-appear\n"},
+        {tile_target, "tile-prepared-candidate-must-not-appear\n"},
+    };
+    const auto prepared_candidate_result = dragonpixel::serialization::save_utf8_transaction(
+        prepared_candidate_writes,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::
+            leave_prepared_journal_candidate_after_primary_removal);
+    require(!prepared_candidate_result.succeeded
+            && read_file(scene_target) == "scene-after\n"
+            && read_file(tile_target) == "tile-after\n"
+            && read_file(scene_backup) == scene_backup_before_prepared_candidate
+            && read_file(tile_backup) == tile_backup_before_prepared_candidate
+            && artifact_count() == 1,
+        "The prepared-candidate interruption seam changed a target or backup: "
+            + prepared_candidate_result.error);
+    const auto prepared_candidate_directory_entry =
+        *std::filesystem::directory_iterator{artifacts};
+    const auto prepared_candidate_directory = prepared_candidate_directory_entry.path();
+    const auto prepared_candidates = journal_candidates(prepared_candidate_directory);
+    constexpr std::string_view journal_candidate_prefix = "journal.json.tmp-";
+    require(!std::filesystem::exists(prepared_candidate_directory / "journal.json")
+            && prepared_candidates.size() == 1
+            && std::filesystem::is_regular_file(prepared_candidates.front())
+            && !std::filesystem::is_symlink(prepared_candidates.front())
+            && uuid::parse(prepared_candidates.front().filename().string().substr(
+                   journal_candidate_prefix.size())).has_value()
+            && nlohmann::ordered_json::parse(read_file(prepared_candidates.front())).at("phase")
+                == "prepared",
+        "The prepared-journal failure did not retain exactly one safe canonical candidate.");
+    const auto prepared_candidate_recovery =
+        dragonpixel::serialization::recover_utf8_transactions(transaction_root);
+    require(prepared_candidate_recovery.succeeded
+            && read_file(scene_target) == "scene-after\n"
+            && read_file(tile_target) == "tile-after\n"
+            && read_file(scene_backup) == scene_backup_before_prepared_candidate
+            && read_file(tile_backup) == tile_backup_before_prepared_candidate
+            && artifact_count() == 0
+            && dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
+        "Startup recovery did not clean the sole prepared journal candidate idempotently: "
+            + prepared_candidate_recovery.error);
 
     const auto successor_root = root / "successor";
     std::filesystem::remove_all(successor_root, error);
@@ -1134,12 +1192,64 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         reported_api_root,
         dragonpixel::serialization::transaction_save_fault::
             second_target_reported_failure_after_publication);
+    auto reported_api_first_backup = reported_api_first;
+    reported_api_first_backup += ".bak";
+    auto reported_api_second_backup = reported_api_second;
+    reported_api_second_backup += ".bak";
     require(!reported_api_result.succeeded
             && read_file(reported_api_first) == "reported-first-before\n"
             && read_file(reported_api_second) == "reported-second-before\n"
+            && read_file(reported_api_first_backup) == "reported-first-before\n"
+            && read_file(reported_api_second_backup) == "reported-second-before\n"
             && recovery_artifact_count(reported_api_root) == 0,
         "An ambiguously reported completed publication did not restore the attempted prefix: "
             + reported_api_result.error);
+
+    const auto missing_ambiguous_root = root / "ma";
+    std::filesystem::remove_all(missing_ambiguous_root, error);
+    std::filesystem::create_directories(missing_ambiguous_root);
+    const auto missing_ambiguous_first = missing_ambiguous_root / "first.dpescene";
+    const auto missing_ambiguous_second = missing_ambiguous_root / "second.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                missing_ambiguous_first, "missing-first-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                missing_ambiguous_second, "missing-second-before\n").succeeded,
+        "Could not arrange the missing-after-ambiguous-publication fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> missing_ambiguous_writes{
+        {missing_ambiguous_first, "missing-first-after\n"},
+        {missing_ambiguous_second, "missing-second-after\n"},
+    };
+    const auto missing_ambiguous_result = dragonpixel::serialization::save_utf8_transaction(
+        missing_ambiguous_writes,
+        missing_ambiguous_root,
+        dragonpixel::serialization::transaction_save_fault::
+            second_target_missing_after_ambiguous_api_failure);
+    auto missing_ambiguous_first_backup = missing_ambiguous_first;
+    missing_ambiguous_first_backup += ".bak";
+    auto missing_ambiguous_second_backup = missing_ambiguous_second;
+    missing_ambiguous_second_backup += ".bak";
+    require(!missing_ambiguous_result.succeeded
+            && read_file(missing_ambiguous_first) == "missing-first-before\n"
+            && read_file(missing_ambiguous_second) == "missing-second-before\n"
+            && read_file(missing_ambiguous_first_backup) == "missing-first-before\n"
+            && read_file(missing_ambiguous_second_backup) == "missing-second-before\n"
+            && recovery_artifact_count(missing_ambiguous_root) == 0,
+        "A missing existing target after an ambiguous API attempt was not restored from its pre-image: "
+            + missing_ambiguous_result.error);
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> missing_successor_writes{
+        {missing_ambiguous_first, "missing-first-successor\n"},
+        {missing_ambiguous_second, "missing-second-successor\n"},
+    };
+    const auto missing_successor_result = dragonpixel::serialization::save_utf8_transaction(
+        missing_successor_writes, missing_ambiguous_root);
+    require(missing_successor_result.succeeded
+            && read_file(missing_ambiguous_first) == "missing-first-successor\n"
+            && read_file(missing_ambiguous_second) == "missing-second-successor\n"
+            && read_file(missing_ambiguous_first_backup) == "missing-first-before\n"
+            && read_file(missing_ambiguous_second_backup) == "missing-second-before\n"
+            && recovery_artifact_count(missing_ambiguous_root) == 0,
+        "A successor transaction did not complete after missing-target reconciliation: "
+            + missing_successor_result.error);
 
     const auto ambiguous_change_root = root / "ca";
     std::filesystem::remove_all(ambiguous_change_root, error);
@@ -1160,9 +1270,15 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         ambiguous_change_root,
         dragonpixel::serialization::transaction_save_fault::
             second_target_changed_after_ambiguous_api_failure);
+    auto ambiguous_change_first_backup = ambiguous_change_first;
+    ambiguous_change_first_backup += ".bak";
+    auto ambiguous_change_second_backup = ambiguous_change_second;
+    ambiguous_change_second_backup += ".bak";
     require(!ambiguous_change_result.succeeded
             && read_file(ambiguous_change_first) == "ambiguous-first-before\n"
             && read_file(ambiguous_change_second) == "injected-external-change\n"
+            && read_file(ambiguous_change_first_backup) == "ambiguous-first-before\n"
+            && read_file(ambiguous_change_second_backup) == "ambiguous-second-before\n"
             && recovery_artifact_count(ambiguous_change_root) == 0,
         "An external owner after an ambiguous API attempt was not preserved: "
             + ambiguous_change_result.error);
@@ -1186,11 +1302,17 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         unavailable_inspection_root,
         dragonpixel::serialization::transaction_save_fault::
             second_target_inspection_unavailable_after_ambiguous_api_failure);
+    auto unavailable_inspection_first_backup = unavailable_inspection_first;
+    unavailable_inspection_first_backup += ".bak";
+    auto unavailable_inspection_second_backup = unavailable_inspection_second;
+    unavailable_inspection_second_backup += ".bak";
     require(!unavailable_inspection_result.succeeded
             && unavailable_inspection_result.error.find("no rollback changes were made")
                 != std::string::npos
             && read_file(unavailable_inspection_first) == "unavailable-first-after\n"
             && read_file(unavailable_inspection_second) == "unavailable-second-after\n"
+            && read_file(unavailable_inspection_first_backup) == "unavailable-first-before\n"
+            && read_file(unavailable_inspection_second_backup) == "unavailable-second-before\n"
             && recovery_artifact_count(unavailable_inspection_root) == 1,
         "Unavailable post-attempt inspection did not retain the recoverable transaction unchanged: "
             + unavailable_inspection_result.error);
@@ -1199,6 +1321,8 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
     require(unavailable_recovery.succeeded
             && read_file(unavailable_inspection_first) == "unavailable-first-before\n"
             && read_file(unavailable_inspection_second) == "unavailable-second-before\n"
+            && read_file(unavailable_inspection_first_backup) == "unavailable-first-before\n"
+            && read_file(unavailable_inspection_second_backup) == "unavailable-second-before\n"
             && recovery_artifact_count(unavailable_inspection_root) == 0,
         "Startup recovery did not resolve the retained ambiguous transaction: "
             + unavailable_recovery.error);
@@ -1328,6 +1452,121 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "An ambiguously reported committed-marker publication rolled back a durable commit: "
             + ambiguous_committed_marker_result.error);
 
+    const auto candidate_root = root / "candidate";
+    std::filesystem::remove_all(candidate_root, error);
+    std::filesystem::create_directories(candidate_root);
+    const auto candidate_scene_target = candidate_root / "candidate.dpescene";
+    const auto candidate_tile_target = candidate_root / "candidate.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                candidate_scene_target, "candidate-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                candidate_tile_target, "candidate-tile-before\n").succeeded,
+        "Could not arrange the committed journal-candidate fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> candidate_writes{
+        {candidate_scene_target, "candidate-scene-after\n"},
+        {candidate_tile_target, "candidate-tile-after\n"},
+    };
+    const auto candidate_result = dragonpixel::serialization::save_utf8_transaction(
+        candidate_writes,
+        candidate_root,
+        dragonpixel::serialization::transaction_save_fault::
+            committed_journal_candidate_after_primary_removal);
+    auto candidate_scene_backup = candidate_scene_target;
+    candidate_scene_backup += ".bak";
+    auto candidate_tile_backup = candidate_tile_target;
+    candidate_tile_backup += ".bak";
+    const auto candidate_artifacts =
+        candidate_root / ".dragonpixel" / "Recovery" / "Transactions";
+    require(!candidate_result.succeeded
+            && recovery_artifact_count(candidate_root) == 1
+            && read_file(candidate_scene_target) == "candidate-scene-after\n"
+            && read_file(candidate_tile_target) == "candidate-tile-after\n"
+            && read_file(candidate_scene_backup) == "candidate-scene-before\n"
+            && read_file(candidate_tile_backup) == "candidate-tile-before\n",
+        "The committed-journal publication failure did not retain its post-images and backups: "
+            + candidate_result.error);
+    const auto candidate_directory_entry =
+        *std::filesystem::directory_iterator{candidate_artifacts};
+    const auto candidate_directory = candidate_directory_entry.path();
+    const auto committed_candidates = journal_candidates(candidate_directory);
+    require(!std::filesystem::exists(candidate_directory / "journal.json")
+            && committed_candidates.size() == 1
+            && std::filesystem::is_regular_file(committed_candidates.front())
+            && !std::filesystem::is_symlink(committed_candidates.front())
+            && uuid::parse(committed_candidates.front().filename().string().substr(
+                   journal_candidate_prefix.size())).has_value(),
+        "The committed-journal publication failure did not retain one safe named candidate.");
+    const auto committed_candidate_contents = read_file(committed_candidates.front());
+    const auto committed_candidate_journal =
+        nlohmann::ordered_json::parse(committed_candidate_contents);
+    require(committed_candidate_journal.at("phase") == "committed"
+            && committed_candidate_journal.at("entries").size() == 2,
+        "The retained journal candidate was not the exact committed transaction metadata.");
+
+    const auto malformed_canonical = candidate_directory / "journal.json";
+    require(dragonpixel::serialization::save_utf8_atomic(malformed_canonical, "{}\n").succeeded,
+        "Could not arrange the canonical-wins journal fixture.");
+    const auto canonical_wins_result =
+        dragonpixel::serialization::recover_utf8_transactions(candidate_root);
+    require(!canonical_wins_result.succeeded
+            && read_file(candidate_scene_target) == "candidate-scene-after\n"
+            && read_file(candidate_tile_target) == "candidate-tile-after\n"
+            && read_file(committed_candidates.front()) == committed_candidate_contents
+            && recovery_artifact_count(candidate_root) == 1,
+        "Recovery bypassed a malformed canonical journal in favor of a candidate.");
+    require(std::filesystem::remove(malformed_canonical),
+        "Could not remove the malformed canonical journal fixture.");
+
+    const auto malformed_candidate = candidate_directory / "journal.json.tmp-not-a-uuid";
+    error.clear();
+    require(std::filesystem::copy_file(
+                committed_candidates.front(), malformed_candidate, std::filesystem::copy_options::none, error)
+            && !error,
+        "Could not arrange the malformed journal-candidate fixture.");
+    const auto malformed_candidate_result =
+        dragonpixel::serialization::recover_utf8_transactions(candidate_root);
+    require(!malformed_candidate_result.succeeded
+            && read_file(candidate_scene_target) == "candidate-scene-after\n"
+            && read_file(candidate_tile_target) == "candidate-tile-after\n"
+            && read_file(candidate_scene_backup) == "candidate-scene-before\n"
+            && read_file(candidate_tile_backup) == "candidate-tile-before\n"
+            && recovery_artifact_count(candidate_root) == 1,
+        "A malformed journal candidate was accepted or mutated transaction state.");
+    require(std::filesystem::remove(malformed_candidate),
+        "Could not remove the malformed journal-candidate fixture.");
+
+    const auto duplicate_candidate = candidate_directory
+        / ("journal.json.tmp-" + uuid::random_v4().to_string());
+    error.clear();
+    require(std::filesystem::copy_file(
+                committed_candidates.front(), duplicate_candidate, std::filesystem::copy_options::none, error)
+            && !error,
+        "Could not arrange the duplicate journal-candidate fixture.");
+    const auto duplicate_candidate_result =
+        dragonpixel::serialization::recover_utf8_transactions(candidate_root);
+    require(!duplicate_candidate_result.succeeded
+            && read_file(candidate_scene_target) == "candidate-scene-after\n"
+            && read_file(candidate_tile_target) == "candidate-tile-after\n"
+            && read_file(candidate_scene_backup) == "candidate-scene-before\n"
+            && read_file(candidate_tile_backup) == "candidate-tile-before\n"
+            && read_file(committed_candidates.front()) == committed_candidate_contents
+            && read_file(duplicate_candidate) == committed_candidate_contents
+            && recovery_artifact_count(candidate_root) == 1,
+        "Duplicate valid journal candidates did not reject recovery without mutation.");
+    require(std::filesystem::remove(duplicate_candidate),
+        "Could not remove the duplicate journal-candidate fixture.");
+    const auto sole_candidate_recovery =
+        dragonpixel::serialization::recover_utf8_transactions(candidate_root);
+    require(sole_candidate_recovery.succeeded
+            && read_file(candidate_scene_target) == "candidate-scene-before\n"
+            && read_file(candidate_tile_target) == "candidate-tile-before\n"
+            && read_file(candidate_scene_backup) == "candidate-scene-before\n"
+            && read_file(candidate_tile_backup) == "candidate-tile-before\n"
+            && recovery_artifact_count(candidate_root) == 0
+            && dragonpixel::serialization::recover_utf8_transactions(candidate_root).succeeded,
+        "The sole committed candidate was not treated as prepared rollback metadata idempotently: "
+            + sole_candidate_recovery.error);
+
 #if defined(_WIN32)
     const auto temporary_artifact_count = [&] {
         std::size_t count = 0;
@@ -1376,6 +1615,63 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
             && temporary_artifact_count() == 0,
         "Transient committed-journal topology inspection did not recover to a clean commit: "
             + transient_topology_result.error);
+
+    const auto missing_primary_root = root / "wjm";
+    std::filesystem::remove_all(missing_primary_root, error);
+    std::filesystem::create_directories(missing_primary_root);
+    const auto missing_primary_scene = missing_primary_root / "scene.dpescene";
+    const auto missing_primary_tile = missing_primary_root / "tile.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                missing_primary_scene, "missing-primary-scene-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(
+                missing_primary_tile, "missing-primary-tile-before\n").succeeded,
+        "Could not arrange the Windows missing-primary journal fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> missing_primary_writes{
+        {missing_primary_scene, "missing-primary-scene-after\n"},
+        {missing_primary_tile, "missing-primary-tile-after\n"},
+    };
+    const auto missing_primary_result = dragonpixel::serialization::save_utf8_transaction(
+        missing_primary_writes,
+        missing_primary_root,
+        dragonpixel::serialization::transaction_save_fault::
+            committed_journal_transient_sharing_violation_then_primary_missing);
+    auto missing_primary_scene_backup = missing_primary_scene;
+    missing_primary_scene_backup += ".bak";
+    auto missing_primary_tile_backup = missing_primary_tile;
+    missing_primary_tile_backup += ".bak";
+    const auto missing_primary_artifacts =
+        missing_primary_root / ".dragonpixel" / "Recovery" / "Transactions";
+    require(!missing_primary_result.succeeded
+            && missing_primary_result.error.find("after 2 probe(s) and 1 API attempt(s)")
+                != std::string::npos
+            && missing_primary_result.error.find("Triggering API error 32 (")
+                != std::string::npos
+            && read_file(missing_primary_scene) == "missing-primary-scene-after\n"
+            && read_file(missing_primary_tile) == "missing-primary-tile-after\n"
+            && read_file(missing_primary_scene_backup) == "missing-primary-scene-before\n"
+            && read_file(missing_primary_tile_backup) == "missing-primary-tile-before\n"
+            && recovery_artifact_count(missing_primary_root) == 1,
+        "The Windows sharing-violation seam did not retain an inspectable committed candidate: "
+            + missing_primary_result.error);
+    const auto missing_primary_directory_entry =
+        *std::filesystem::directory_iterator{missing_primary_artifacts};
+    const auto missing_primary_directory = missing_primary_directory_entry.path();
+    const auto missing_primary_candidates = journal_candidates(missing_primary_directory);
+    require(!std::filesystem::exists(missing_primary_directory / "journal.json")
+            && missing_primary_candidates.size() == 1
+            && nlohmann::ordered_json::parse(read_file(missing_primary_candidates.front())).at("phase")
+                == "committed",
+        "The Windows missing-primary seam did not retain exactly one committed candidate.");
+    const auto missing_primary_recovery =
+        dragonpixel::serialization::recover_utf8_transactions(missing_primary_root);
+    require(missing_primary_recovery.succeeded
+            && read_file(missing_primary_scene) == "missing-primary-scene-before\n"
+            && read_file(missing_primary_tile) == "missing-primary-tile-before\n"
+            && read_file(missing_primary_scene_backup) == "missing-primary-scene-before\n"
+            && read_file(missing_primary_tile_backup) == "missing-primary-tile-before\n"
+            && recovery_artifact_count(missing_primary_root) == 0,
+        "Startup recovery did not roll back the Windows retained journal candidate: "
+            + missing_primary_recovery.error);
 
     const std::vector<dragonpixel::serialization::utf8_transaction_write> persistent_journal_retry{
         {scene_target, "scene-must-not-survive-journal-exhaustion\n"},
