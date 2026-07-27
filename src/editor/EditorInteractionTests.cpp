@@ -1213,7 +1213,9 @@ private slots:
         QVERIFY(QFileInfo::exists(expected_prefab));
 
         const auto second_proxy = find_text(window.hierarchy_->model(), QStringLiteral("Lit Cube (3D)"));
+        QVERIFY(second_proxy.isValid());
         const auto second_source = window.hierarchy_filter_->mapToSource(second_proxy);
+        QVERIFY(second_source.isValid());
         std::unique_ptr<QMimeData> cross_project_mime{
             window.hierarchy_model_->mimeData({second_source})};
         auto payload = QJsonDocument::fromJson(cross_project_mime->data(
@@ -1221,7 +1223,10 @@ private slots:
         payload.insert(QStringLiteral("projectId"), QStringLiteral("different-project"));
         cross_project_mime->setData(QStringLiteral("application/x-dragonpixel-entity"),
             QJsonDocument{payload}.toJson(QJsonDocument::Compact));
-        QVERIFY(!window.handle_project_browser_drop(cross_project_mime.get(), prefab_folder));
+        const auto refreshed_prefab_folder = find_role(window.project_model_,
+            EditorRoles::project_logical_path, QStringLiteral("Prefabs"));
+        QVERIFY(refreshed_prefab_folder.isValid());
+        QVERIFY(!window.handle_project_browser_drop(cross_project_mime.get(), refreshed_prefab_folder));
     }
 
     void metadata_v4_polymorphic_inspector_and_tile_transactions_are_functional()

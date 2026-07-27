@@ -1,6 +1,6 @@
 # Dragon Pixel Engine New Project, Asset Workflow, Prefab, Hierarchy, and Multi-Inspector Plan
 
-> **Status:** In progress  
+> **Status:** Implemented; focused Windows verification complete, acceptance gates remain open
 > **Started:** 2026-07-27  
 > **Design baseline:** `DPE-ARCH-0013`  
 > **Target design revision:** `DPE-ARCH-0014`  
@@ -80,18 +80,26 @@ This increment advances POCs F, H, M, and O but does not close an ADR, POC, slic
 | 2026-07-27 | Selected | User approved implementation of the decision-complete New Project, asset workflow, linked-prefab drag, Hierarchy, and multi-Inspector plan. Required documentation mirrors pass 47 UTF-8/LF pairs at `DPE-ARCH-0013` before the increment. |
 | 2026-07-27 | In progress | Creating this mirrored plan and preparing synchronized `DPE-ARCH-0014` architecture/provenance updates before source changes. |
 | 2026-07-27 | Governance published | Published synchronized `DPE-ARCH-0014` Design, `RESULT-DPE-ARCH-0014` Prompt/Result, Notes intake, ADR-0005/0007/0008/0013/0018/0020 refinements, ADR index, `AGENTS.md`, README boundary, and this plan. The recursive validator passes all 48 UTF-8/LF Markdown pairs. Design SHA-256 is `C9692A2F0556ECF0A7BF047941F874BA7922980F546587D9514C4C9B4EE64E1E`; Prompt/Result SHA-256 is `2A7575D605DFA0AD7B76E675160DDCD8D00F59B6C30CA08DF756EE41ED72F6FF`. Source implementation may now begin. |
+| 2026-07-27 | Project lifecycle implemented | Added project-v4, project-template-v1, and asset-v3 schemas; relocatable Minimal 2D/3D templates; contained staged `ProjectLifecycleService` creation/dry-run/cancellation/recovery/recent-project/clean-scene paths; v1-v3 in-memory project compatibility; Project Hub; and File-menu New Project, New Scene, and Save Scene As. No-argument launch no longer selects the sample implicitly, while explicit project/scene, development, and self-test entry points remain compatible. |
+| 2026-07-27 | Asset and Project Browser implemented | Added copy/read-only-link PNG/JPEG and generic imports, asset-v2 reads and asset-v3 writes, stable IDs and hashes, dependency results, immutable runtime bindings, create/rename/move/duplicate/trash/restore operations, contained recovery journals, and atomic folder moves. The Project Browser now has folder/content panes, breadcrumbs, list/thumbnail modes, search/type/status filters, details, badges, stable refresh selection, keyboard/context actions, and existing Rider/component source editing. Imported image bytes render and pick through the separate MonoGame and KNI workers. |
+| 2026-07-27 | Drag, prefab, Hierarchy, and Inspector implemented | Added versioned project/entity MIME envelopes and validated OS import, project moves, image/prefab Scene and Hierarchy drops, Inspector asset assignment, and locally owned Hierarchy-root-to-Project linked-prefab creation. Hierarchy selection is ordered and supports accessible add/expand/collapse/rename/delete/duplicate/parent/focus/prefab actions plus atomic top-level multi-root grouping/reparent/reorder/enable/delete/duplicate behavior. `SelectionService` now backs reusable Inspector panels; View > New Inspector creates independent stable docks with lock snapshots, mixed-value intersection editing, all-or-nothing multi-target transactions, exact Undo before-images, unavailable deleted-target state, and unlocked layout restoration. |
+| 2026-07-27 | Runtime and workspace defects repaired | Runtime input correlations now retain original event timestamps while deferring expiry until the worker handshake is ready, so queued startup input is presented instead of expiring. Workspace state v6 safely reconstructs persisted extra Inspector docks and Start Play consistently raises the Game dock. The sanitizer investigation also found and corrected a test-only stale `QModelIndex` reuse after the Project model refreshed during prefab creation; the test now reacquires the destination through a stable domain role. |
+| 2026-07-27 | Windows Release evidence | Focused contract/service/rendering/Rider/prefab aliases pass **18/18**. `AssetServiceTests` pass **9/9**. The complete registered `s2.editor_interactions` Release test passes in **121.29 seconds**. The final five DPE-ARCH-0014 interaction functions—Project Hub, locked/mixed multi-Inspector, atomic Hierarchy operations, project/Hierarchy domain drops, and pre-handshake input—pass with QTest totals **7/7 in 37.07 seconds**. `git diff --check` passes. |
+| 2026-07-27 | Windows sanitizer evidence | Nine focused service/model/prefab MSVC AddressSanitizer aliases pass **9/9**. The final five DPE-ARCH-0014 interaction functions pass with QTest totals **7/7 in 59.97 seconds**, with no AddressSanitizer diagnostic and no orphaned workers. An attempted aggregate sanitizer `s2.editor_interactions` run exceeded its 480-second harness timeout without a sanitizer report; it is inconclusive and is not recorded as a complete sanitizer-suite pass. |
+| 2026-07-27 | Production bundle and external-project proof | `Build-Production-Editor.ps1 -SkipConfigure` rebuilt the production-style developer bundle and its packaged MonoGame self-test exited zero. All **188** manifest records exist and hash-verify with no unlisted files. Bundle-manifest SHA-256 is `B304E12BFA6F2BBC1F49739D62E8D41E908C46ED4A2BD1E56FDF90CB926DFAB1`; editor SHA-256 is `1616B2383EDD640A6846715DCBA81744FC18C124EA02EEB0B7595AFD316F87E9`. The deployed no-argument executable showed the Project Hub and created/opened `C:\Users\monyd\Documents\DPE Packaged Workflow 20260727` from packaged Minimal 2D resources. The result is `dpe.project` v4 with a `dpe.scene` v3 containing exactly one orthographic `Main Camera` and generated Assets, Prefabs, and Components roots. |
+| 2026-07-27 | Final disposition and handoff | The requested implementation is complete for the focused Windows increment. Current Ubuntu/macOS matrices were not available in this work item; the known intermittent atomic-publication recovery defect still blocks a new authoritative full Windows matrix; aggregate POC J timing remains open; and the sanitizer aggregate is inconclusive. Therefore POCs F/H/M/O, all named ADRs, Slices 2/3, cross-platform acceptance, release-package acceptance, and KNI production support remain open. Next work should repair the atomic-publication defect, run the complete Windows matrices, and execute current Ubuntu/macOS Release/sanitizer/device-rendering/accessibility evidence. |
 
 ## Completion Checklist
 
 - [x] Publish and mirror `DPE-ARCH-0014` governance and contract updates.
-- [ ] Implement project lifecycle service, templates, Project Hub, New Project, New Scene, and Save As.
-- [ ] Implement project-v4/template-v1 compatibility fixtures.
-- [ ] Implement asset-v3 service, image import/runtime binding, and recoverable trash.
-- [ ] Implement the two-pane Project Browser and public asset operations.
-- [ ] Implement versioned drag/drop and linked prefab paths.
-- [ ] Implement Hierarchy multi-root operations and usability controls.
-- [ ] Implement reusable multiple Inspector docks and lock-safe target routing.
-- [ ] Pass focused Release and sanitizer verification.
-- [ ] Verify production bundle and new-project launch outside the source tree.
-- [ ] Record remaining platform/POC blockers without overstating acceptance.
-- [ ] Verify every mirrored Markdown pair is byte-identical UTF-8/no-BOM with LF endings.
+- [x] Implement project lifecycle service, templates, Project Hub, New Project, New Scene, and Save As.
+- [x] Implement project-v4/template-v1 compatibility fixtures.
+- [x] Implement asset-v3 service, image import/runtime binding, and recoverable trash.
+- [x] Implement the two-pane Project Browser and public asset operations.
+- [x] Implement versioned drag/drop and linked prefab paths.
+- [x] Implement Hierarchy multi-root operations and usability controls.
+- [x] Implement reusable multiple Inspector docks and lock-safe target routing.
+- [x] Pass focused Release and sanitizer verification.
+- [x] Verify production bundle and new-project launch outside the source tree.
+- [x] Record remaining platform/POC blockers without overstating acceptance.
+- [x] Verify every mirrored Markdown pair is byte-identical UTF-8/no-BOM with LF endings.
