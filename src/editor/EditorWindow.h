@@ -183,6 +183,9 @@ private:
     void unpack_prefab(bool completely);
     void create_tile_set_from_png();
     void import_tiled_tilemap();
+    [[nodiscard]] bool perform_tiled_tilemap_import(
+        const QString& source,
+        double pixels_per_unit);
     void create_project_component(ProjectComponentLanguage language);
     void build_project_components();
     void edit_project_source(const QString& source_path);

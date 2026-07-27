@@ -234,6 +234,53 @@ QByteArray read_bytes(const QString& path)
     QFile file{path};
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
 }
+
+QString create_tiled_map_fixture(const QString& root)
+{
+    if (!QDir{}.mkpath(root))
+    {
+        return {};
+    }
+    QImage atlas{4, 4, QImage::Format_RGBA8888};
+    atlas.fill(QColor{55, 175, 95});
+    if (!atlas.save(QDir{root}.filePath(QStringLiteral("atlas.png")), "PNG"))
+    {
+        return {};
+    }
+    const QJsonObject map{
+        {QStringLiteral("type"), QStringLiteral("map")},
+        {QStringLiteral("orientation"), QStringLiteral("orthogonal")},
+        {QStringLiteral("infinite"), false},
+        {QStringLiteral("tilewidth"), 2},
+        {QStringLiteral("tileheight"), 2},
+        {QStringLiteral("width"), 2},
+        {QStringLiteral("height"), 1},
+        {QStringLiteral("tilesets"), QJsonArray{QJsonObject{
+            {QStringLiteral("firstgid"), 1},
+            {QStringLiteral("name"), QStringLiteral("Terrain")},
+            {QStringLiteral("tilewidth"), 2},
+            {QStringLiteral("tileheight"), 2},
+            {QStringLiteral("tilecount"), 4},
+            {QStringLiteral("columns"), 2},
+            {QStringLiteral("image"), QStringLiteral("atlas.png")},
+            {QStringLiteral("imagewidth"), 4},
+            {QStringLiteral("imageheight"), 4}}}},
+        {QStringLiteral("layers"), QJsonArray{QJsonObject{
+            {QStringLiteral("id"), 1},
+            {QStringLiteral("name"), QStringLiteral("Ground")},
+            {QStringLiteral("type"), QStringLiteral("tilelayer")},
+            {QStringLiteral("visible"), true},
+            {QStringLiteral("width"), 2},
+            {QStringLiteral("height"), 1},
+            {QStringLiteral("data"), QJsonArray{1, 4}}}}},
+    };
+    const auto path = QDir{root}.filePath(QStringLiteral("TiledImportLevel.tmj"));
+    QFile output{path};
+    const auto bytes = QJsonDocument{map}.toJson(QJsonDocument::Indented);
+    return output.open(QIODevice::WriteOnly | QIODevice::Truncate)
+            && output.write(bytes) == bytes.size()
+        ? path : QString{};
+}
 }
 
 class EditorInteractionTests final : public QObject
@@ -346,6 +393,44 @@ private slots:
         QVERIFY(window.tabifiedDockWidgets(scene).contains(game));
         QVERIFY(window.tabifiedDockWidgets(scene).contains(onboarding));
         QVERIFY(window.tabifiedDockWidgets(console).contains(tile_palette));
+    }
+
+    void tiled_import_action_publishes_and_opens_the_palette_without_scene_mutation()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("TiledImportProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+        const auto source = create_tiled_map_fixture(
+            temporary.filePath(QStringLiteral("External Tiled Source")));
+        QVERIFY(!source.isEmpty());
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        const auto entity_count = window.scene_->entities().size();
+        const auto scene_path = window.scene_path_;
+
+        QVERIFY(window.perform_tiled_tilemap_import(source, 2.0));
+        QCOMPARE(window.scene_->entities().size(), entity_count);
+        QCOMPARE(window.scene_path_, scene_path);
+        QVERIFY(window.tile_palette_dock_->isVisible());
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        QCOMPARE(QFileInfo{window.tile_document_service_->tilemap_path()}.fileName(),
+            QStringLiteral("TiledImportLevel.dpetilemap"));
+        QVERIFY(window.project_index_.succeeded());
+        const auto tilemap = std::find_if(window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.asset_type == QStringLiteral("tilemap")
+                    && QFileInfo{entry.resolved_source_path}.fileName()
+                        == QStringLiteral("TiledImportLevel.dpetilemap");
+            });
+        QVERIFY(tilemap != window.project_index_.candidate->entries.cend());
     }
 
     void worker_client_rejects_downgraded_regressing_and_future_correlated_frames()

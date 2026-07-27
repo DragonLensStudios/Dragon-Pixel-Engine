@@ -1821,6 +1821,13 @@ void EditorWindow::import_tiled_tilemap()
         return;
     }
 
+    (void)perform_tiled_tilemap_import(source, pixels_per_unit);
+}
+
+bool EditorWindow::perform_tiled_tilemap_import(
+    const QString& source,
+    double pixels_per_unit)
+{
     QProgressDialog progress{
         QStringLiteral("Importing and validating Tiled tilemap..."),
         QStringLiteral("Cancel"), 0, 0, this};
@@ -1849,7 +1856,7 @@ void EditorWindow::import_tiled_tilemap()
         append_console(message, QStringLiteral("Error"), QStringLiteral("Tile Import"),
             source, {}, {}, result.operation_id);
         QMessageBox::warning(this, QStringLiteral("Tiled tilemap import failed"), message);
-        return;
+        return false;
     }
 
     rebuild_assets();
@@ -1860,7 +1867,7 @@ void EditorWindow::import_tiled_tilemap()
             {}, {}, result.operation_id, {}, result.tilemap_asset_id, result.tilemap_path);
         QMessageBox::warning(this, QStringLiteral("Tile Palette"),
             QStringLiteral("The imported assets are in the Project Explorer, but the Tile Palette could not open them."));
-        return;
+        return false;
     }
     tile_palette_dock_->show();
     tile_palette_dock_->raise();
@@ -1873,6 +1880,7 @@ void EditorWindow::import_tiled_tilemap()
         QStringLiteral("Info"), QStringLiteral("Tile Import"), result.tilemap_path,
         {}, {}, result.operation_id, {}, result.tilemap_asset_id, result.tilemap_path);
     statusBar()->showMessage(QStringLiteral("Tiled tilemap imported into the Tile Palette"), 5000);
+    return true;
 }
 
 void EditorWindow::create_project_component(ProjectComponentLanguage language)
