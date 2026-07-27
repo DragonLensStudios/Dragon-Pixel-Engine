@@ -14,7 +14,7 @@ env:
   DPE_CI_MINIMUM_TESTS: "56"
 
 concurrency:
-  group: slice1-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: slice1-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
