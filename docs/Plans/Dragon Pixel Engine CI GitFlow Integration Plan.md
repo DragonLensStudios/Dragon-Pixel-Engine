@@ -1,6 +1,6 @@
 # Dragon Pixel Engine CI GitFlow Integration Plan
 
-> **Status:** In progress
+> **Status:** Ready for review — draft PR #4 open and unmerged
 > **Branch:** `feature/ci-gitflow-integration`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers with Codex implementation support
@@ -185,7 +185,32 @@ The feature is fully done only after human review, merge into `develop`, post-me
 - Observed duplicate push and pull-request matrices for the same branch. Commit `c562276` gives same-repository push/PR events one concurrency identity while including the head repository for fork isolation. The next PR event automatically cancelled its redundant push run; two older superseded runs created under the previous key were cancelled manually.
 - Hosted run `30297746866` passed the policy gate and PowerShell probe, then failed closed at all six real build boundaries. Windows exposed the hosted runner's shallow `C:\vcpkg` checkout, which could not resolve the pinned `40f3c709...` baseline. Ubuntu advanced past the original autotools failure and explicitly required `libltdl-dev`. AppleClang advanced past production Metadata and found two partial component aggregates in `command_validation_tests.cpp`. No job produced JUnit, so missing-evidence upload also failed as intended; none is counted as passing evidence.
 - Commits `999696f` and `9f44ef6` clone/bootstrap the exact pinned vcpkg baseline on Windows, add `libltdl-dev` to hosted/container Ubuntu, and replace the two test aggregates with named assignments. actionlint, all 10 Python tests, and the PowerShell exit-state test pass. Focused `s2.command_validation` passes 1 of 1 in Release (0.03 seconds) and MSVC AddressSanitizer (0.05 seconds), and both JUnit files pass validation. Docker remains unavailable locally; hosted rerun is required.
+- Hosted run `30298336106` reached real Windows tests and failed closed on the same 13 headless graphics/editor/POC J tests in Release and ASan. Release passed 44 of 57 in 808.11 seconds; ASan passed 44 of 57 in 1120.46 seconds. Ubuntu and macOS both stopped on the same unused `read_json_object` helper in `ProjectLifecycleService.cpp`. Commit `24184d7` removed only that dead helper; focused lifecycle/recovery aliases pass 2 of 2 in Release (0.85 seconds) and ASan (2.33 seconds).
+- Hosted run `30300832347` advanced Ubuntu and macOS to additional strict diagnostics in component-generation staging and `EditorWindow`. During aggregate workflow review, the registered inventories were also reconciled: Unix has 55 tests because it excludes the Windows launcher probes, while Windows requires at least 56 and registers 57 when PowerShell 7 is present. Commit `8338807` applies platform-correct 55/56 evidence floors without deleting, filtering, or weakening any test. Commit `aaf24d1` replaces partial staging/request aggregates with named assignments and makes empty `QPersistentModelIndex` state explicit. The affected component-module/editor-interaction set passes 3 of 3 in Release (166.92 seconds) and ASan (209.78 seconds), with valid JUnit.
+- Hosted run `30302403882` found the final partial `ComponentCreationRequest` aggregate in the component-module test fixture. Commit `34bb95f` initializes that fixture explicitly; both component-module aliases pass 2 of 2 in Release (43.28 seconds) and ASan (41.70 seconds).
+- Repeated the complete local Windows matrix after the lifecycle repair. Release passes 56 of 56 in 415.61 seconds and ASan passes 56 of 56 in 533.20 seconds; both JUnit files validate with zero failures/errors. The first Release validator invocation used a relative path while CTest wrote beneath the preset build directory; validating the produced file at its actual path passed. This harness invocation error did not alter or rerun the successful test result and is not counted as evidence until the corrected validation.
+- Final code-bearing hosted run `30303135271` passes `CI policy / GitFlow contracts`, builds on all six platform/configuration jobs, registers the platform-correct suites, runs every test, and uploads JUnit/failure evidence. Exact outcomes are recorded below. No timeout, threshold, warning policy, platform, or test selection changed.
+- Final handoff review covers 21 repository paths containing only the planned workflow, CI scripts/tests, runner prerequisites, warning-clean initialization repairs, and current documentation. actionlint 1.7.12 passes; all 10 Python policy/evidence tests pass; the Windows native-command test passes; both aggregate and working-tree `git diff --check` pass; and the recursive documentation validator passes all 60 UTF-8/LF mirrored pairs at unchanged DPE-ARCH-0014.
+
+## Final verification evidence
+
+| Environment | Configuration | Result | Evidence |
+| --- | --- | --- | --- |
+| Local Windows 11 x64 | Strict Release | Pass | 56/56 in 415.61 seconds; JUnit valid with zero failures/errors. |
+| Local Windows 11 x64 | MSVC AddressSanitizer | Pass | 56/56 in 533.20 seconds; JUnit valid with zero failures/errors. |
+| GitHub Windows 11 x64 | Strict Release | Product failures | 44/57 passed in 804.80 seconds. |
+| GitHub Windows 11 x64 | MSVC AddressSanitizer | Product failures | 44/57 passed in 1093.28 seconds. |
+| GitHub Ubuntu 24.04 x64 | Strict Release | Pass | 55/55 in 155.34 seconds; JUnit valid with zero failures/errors. |
+| GitHub Ubuntu 24.04 x64 | Clang AddressSanitizer | Product failures | 50/55 passed in 544.81 seconds. |
+| GitHub macOS 15 arm64 | Strict Release | Product failures | 44/55 passed in 329.75 seconds. |
+| GitHub macOS 15 arm64 | Clang AddressSanitizer | Product failures | 41/55 passed in 97.19 seconds. |
+
+The Windows Release and ASan jobs fail the same 13 aliases: `poc_b.worker_viewport`, both POC E rendering aliases, both graphics probes, both Qt viewer probes, the three editor lifecycle aliases, both interaction aliases, and `poc_j.qt_input_latency`. Release reports both interaction aliases as timeouts; ASan reports the same aliases as failures.
+
+Ubuntu ASan fails `s2.worker_physics`, both worker-only component-runtime aliases, and both interaction aliases. macOS Release fails both worker-physics aliases, the three POC B/E rendering aliases, project-index and both source-authoring aliases, both interaction aliases, and POC J. macOS ASan fails those paths plus both worker-only component-runtime aliases and editor crash recovery; its runtime reports AddressSanitizer interceptor/signal-stack failures. These are product/platform results for the dedicated Ubuntu, macOS, rendering, and POC J work items, not CI harness failures.
+
+The local Docker CLI still cannot reach the Docker Desktop Linux daemon, so no container result is claimed. GitHub also emits its current Node.js 20 deprecation warning for the pinned v4 first-party actions while forcing them onto Node.js 24; all action setup/upload steps used here complete, and a major-version action upgrade remains separate maintenance.
 
 ## Handoff notes
 
-Implementation, local verification, branch publication, and draft-PR creation are complete. Hosted matrix evidence and final handoff review remain. Do not merge this branch. Branch protection remains intentionally unmodified until the draft PR demonstrates stable, truthful check names and a maintainer approves the post-merge repository-setting change.
+Implementation, local and hosted verification, branch publication, and draft-PR preparation are complete. Draft PR [#4](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/4) remains open and unmerged for human review. Branch protection is intentionally unmodified. After merge and explicit maintainer authorization, `CI policy / GitFlow contracts` is the only current candidate required check; the platform jobs are truthful but must not become required until their separately owned product failures are repaired and their complete matrices pass. No POC, ADR, slice, release, macOS, Windows-hosted, Ubuntu-sanitizer, or KNI claim is promoted by this feature.
