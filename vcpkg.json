@@ -5,7 +5,8 @@
   "dependencies": [
     "box2d",
     "joltphysics",
-    "nlohmann-json"
+    "nlohmann-json",
+    "sdl3"
   ],
   "overrides": [
     {

@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/dragonpixel/icons">
+    <file alias="inspector-check.xpm">resources/inspector-check.xpm</file>
+    <file alias="inspector-partial.xpm">resources/inspector-partial.xpm</file>
+  </qresource>
+</RCC>

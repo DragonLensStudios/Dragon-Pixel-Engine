@@ -1,10 +1,13 @@
 [CmdletBinding()]
 param(
-    [string]$RepositoryDocsRoot = (Join-Path $PSScriptRoot '..\..\docs'),
+    [string]$RepositoryDocsRoot,
     [string]$ExternalDocsRoot = 'C:\Projects\Documentation\Engines\Dragon Pixel Engine'
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryDocsRoot)) {
+    $RepositoryDocsRoot = Join-Path $PSScriptRoot '..\..\docs'
+}
 $RepositoryDocsRoot = [System.IO.Path]::GetFullPath($RepositoryDocsRoot)
 $ExternalDocsRoot = [System.IO.Path]::GetFullPath($ExternalDocsRoot)
 $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)

@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -35,6 +35,6 @@ The design gains crash isolation, deterministic edit/play separation, revision-s
 
 POC B must prove play/pause/resume/stop, forced crash/restart, responsive Qt viewing, resource cleanup, correlated input-to-present evidence, and the specified frame targets on Windows, macOS, and Linux. POC E must prove that real MonoGame and KNI renderers consume scene snapshots, reload revisions in place, produce scene-dependent pixels and picking IDs, resize safely, and survive a worker restart. Play-mode isolation tests must show that Stop and crash recovery leave authoritative bytes unchanged. The ADR remains `Proposed` until all corresponding three-platform evidence is reviewed.
 
-Current evidence (2026-07-25): Windows and Ubuntu now pass separate preview/play process-ID checks, immutable snapshot loading, real scene-driven MonoGame/KNI device rendering and readback, graphics-thread single-pixel ID-buffer picking, persistent shared-memory frame consumption, pause/stop, and forced play-worker crash/restart while preview remains alive. The full matrices pass on Windows Release (36/36 in 118.39 seconds), Windows MSVC AddressSanitizer (36/36 in 134.93 seconds), Ubuntu Release (36/36 in 102.20 seconds), and Ubuntu Clang AddressSanitizer (36/36 in 101.97 seconds).
+Current evidence (2026-07-25): Windows and historical Ubuntu coverage passes separate preview/play process-ID checks, immutable snapshot loading, real scene-driven MonoGame/KNI device rendering and readback, graphics-thread retained-ID picking, persistent shared-memory frame consumption, pause/stop, and forced play-worker crash/restart while preview remains alive. Windows additionally supervises distinct Scene-preview, Game-preview, and Play sessions, rejects stale/cross-generation frame correlations, and fails closed through neutral restart after malformed runtime input. The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45**; Ubuntu's latest pre-DPE-ARCH-0008 Release/Clang-ASan matrices pass 36/36 but do not cover the expansion.
 
-The available macOS arm64 Release and AddressSanitizer matrices remain the earlier 14-of-15 results. Both fail `poc_b.worker_viewport` at 1280x720 because presented throughput is below the unchanged 30 FPS gate; the two recorded failing runs are approximately 14.2 FPS and 20.8 FPS. macOS has not yet rerun the corrected absolute pacing, input-to-present correlation, real renderer, picking, and persistent-reader implementation. That missing current platform evidence keeps this ADR `Proposed` without reducing resolution, frame rate, latency targets, or platform scope.
+The available macOS arm64 Release and AddressSanitizer matrices remain the earlier 14-of-15 results. Both fail `poc_b.worker_viewport` at 1280x720 because presented throughput is below the unchanged 30 FPS gate; the two recorded failing runs are approximately 14.2 FPS and 20.8 FPS. macOS has not yet rerun the current 64 Hz absolute pacing, real renderer, picking, full-state input, and persistent-reader implementation. Aggregate Qt action-to-paint timing and current Ubuntu/macOS evidence remain open. That keeps this ADR `Proposed` without reducing resolution, frame rate, latency targets, or platform scope.

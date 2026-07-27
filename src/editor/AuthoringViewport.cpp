@@ -2,6 +2,7 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
@@ -637,13 +638,19 @@ void AuthoringViewport::dropEvent(QDropEvent* event)
 {
     const auto payload = event->mimeData()->data(QString::fromLatin1(project_item_mime));
     const auto object = QJsonDocument::fromJson(payload).object();
-    if (!object.isEmpty())
+    const auto items = object.value(QStringLiteral("items")).toArray();
+    if (object.value(QStringLiteral("format")).toString() == QStringLiteral("dpe.drag")
+        && object.value(QStringLiteral("formatVersion")).toInt() == 1
+        && items.size() == 1 && items.at(0).isObject())
     {
+        const auto item = items.at(0).toObject();
         emit project_item_dropped(
-            object.value(QStringLiteral("path")).toString(),
-            object.value(QStringLiteral("kind")).toString(),
-            object.value(QStringLiteral("assetType")).toString(),
-            object.value(QStringLiteral("assetId")).toString());
+            object.value(QStringLiteral("projectId")).toString(),
+            object.value(QStringLiteral("sourceRevision")).toInteger(),
+            item.value(QStringLiteral("path")).toString(),
+            item.value(QStringLiteral("kind")).toString(),
+            item.value(QStringLiteral("assetType")).toString(),
+            item.value(QStringLiteral("assetId")).toString());
         event->acceptProposedAction();
         return;
     }

@@ -2,18 +2,7 @@ add_executable(dpe_poc_c_native_manifest
     src/component_manifest.cpp
 )
 
-if(MSVC)
-    target_compile_options(dpe_poc_c_native_manifest PRIVATE /W4 /WX /permissive- /EHsc)
-    if(DPE_ENABLE_ASAN)
-        target_compile_options(dpe_poc_c_native_manifest PRIVATE /fsanitize=address /Zi)
-    endif()
-else()
-    target_compile_options(dpe_poc_c_native_manifest PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    if(DPE_ENABLE_ASAN)
-        target_compile_options(dpe_poc_c_native_manifest PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-        target_link_options(dpe_poc_c_native_manifest PRIVATE -fsanitize=address)
-    endif()
-endif()
+dpe_configure_native_target(dpe_poc_c_native_manifest)
 
 find_program(DPE_DOTNET_EXECUTABLE dotnet REQUIRED)
 add_test(

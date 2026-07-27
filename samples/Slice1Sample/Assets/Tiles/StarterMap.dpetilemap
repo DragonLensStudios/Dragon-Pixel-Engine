@@ -1,0 +1,32 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v1/tilemap.schema.json",
+  "format": "dpe.tilemap",
+  "formatVersion": 1,
+  "engineVersion": "0.3.0-slice2",
+  "assetId": "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
+  "name": "Starter Map",
+  "chunkSize": 32,
+  "tileSetDependencies": [
+    "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6"
+  ],
+  "layers": [
+    {
+      "layerId": "59737391-9417-45bf-a8af-cb6e24e7aa38",
+      "name": "Ground",
+      "visible": true,
+      "order": 0,
+      "chunks": [
+        {
+          "x": 0,
+          "y": 0,
+          "cells": [
+            { "index": 0, "tileId": "b4a8bd46-f46a-4490-be95-f8a149187deb" },
+            { "index": 1, "tileId": "2aeac758-bc7b-4515-a171-aed7ab4cc89e" },
+            { "index": 32, "tileId": "50d5c89c-17f3-4da4-b184-371465147c38" },
+            { "index": 33, "tileId": "a47263f2-b9d9-4b23-acb9-b13917b4f0ee" }
+          ]
+        }
+      ]
+    }
+  ]
+}

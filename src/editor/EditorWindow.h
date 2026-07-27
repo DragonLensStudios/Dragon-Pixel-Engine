@@ -1,14 +1,26 @@
 #pragma once
 
 #include "AutomationBroker.h"
+#include "AssetService.h"
+#include "ComponentModuleService.h"
 #include "AssetPreviewService.h"
 #include "AuthoringViewport.h"
 #include "EditorModels.h"
+#include "GameViewport.h"
+#include "InputMapService.h"
+#include "MetadataManifestService.h"
 #include "PrefabService.h"
+#include "ProjectLifecycleService.h"
+#include "ScriptEditorService.h"
+#include "SelectionService.h"
+#include "TileDocumentService.h"
+#include "TilePaletteWidget.h"
+#include "TileSetWizard.h"
 #include "WorkerClient.h"
 
 #include <dragonpixel/metadata/registry.h>
 #include <dragonpixel/scene/scene.h>
+#include <dragonpixel/serialization/atomic_file.h>
 
 #include <QComboBox>
 #include <QDockWidget>
@@ -22,14 +34,24 @@
 
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 class QAction;
+class QCheckBox;
 class QCloseEvent;
 class QFileSystemWatcher;
+class QLabel;
 class QLineEdit;
+class QListWidget;
+class QMenu;
+class QMimeData;
 class QProcess;
+class QPushButton;
+class QStackedWidget;
+class QToolButton;
+class EditorInteractionTests;
 
 class EditorWindow final : public QMainWindow
 {
@@ -47,6 +69,7 @@ public:
     using DeletePrompt = std::function<bool(const QString& root_name, int entity_count)>;
     using PrefabPathPrompt = std::function<QString(const QString& suggested_path)>;
     using PrefabLevelPrompt = std::function<int(const QStringList& levels)>;
+    using ComponentNamePrompt = std::function<std::optional<QString>(ProjectComponentLanguage language)>;
 
     explicit EditorWindow(QString initial_document, QWidget* parent = nullptr);
 
@@ -61,6 +84,7 @@ public:
     void set_delete_prompt(DeletePrompt prompt) { delete_prompt_ = std::move(prompt); }
     void set_prefab_path_prompt(PrefabPathPrompt prompt) { prefab_path_prompt_ = std::move(prompt); }
     void set_prefab_level_prompt(PrefabLevelPrompt prompt) { prefab_level_prompt_ = std::move(prompt); }
+    void set_component_name_prompt(ComponentNamePrompt prompt) { component_name_prompt_ = std::move(prompt); }
 
 signals:
     void gizmo_preview_scene_changed(
@@ -73,7 +97,15 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    friend class EditorInteractionTests;
+
     void build_interface();
+    void show_project_hub();
+    void rebuild_project_hub();
+    void open_project_dialog();
+    void create_project_dialog();
+    void create_clean_scene_dialog();
+    bool save_scene_as();
     bool load_project(const QString& path);
     bool close_project(bool ask_to_save = true);
     bool load_scene(const QString& path);
@@ -88,36 +120,77 @@ private:
     void rebuild_hierarchy();
     void rebuild_scene_summary();
     void rebuild_assets();
+    void update_project_browser_folder(const QModelIndex& folder_index);
+    [[nodiscard]] QString current_project_folder_relative() const;
+    void import_asset_paths(const QStringList& paths);
+    bool handle_project_browser_drop(const QMimeData* data, const QModelIndex& destination_source);
+    void show_project_browser_context_menu(const QPoint& point);
+    void apply_project_index(ProjectIndexBuildResult candidate);
+    void apply_component_module_manifest(QString manifest);
     void schedule_project_refresh();
     void copy_console_selection();
     void export_console_selection();
     void navigate_console_entry(const QModelIndex& proxy_index);
     void inspect_selected_entities();
+    void publish_global_selection(SelectionOrigin origin);
+    void update_global_selection_presentation();
+    [[nodiscard]] QList<dragonpixel::core::uuid> primary_inspector_targets() const;
+    void set_primary_inspector_locked(bool locked);
+    void create_additional_inspector();
+    void refresh_additional_inspectors();
+    void clear_inspector_locks();
     bool edit_hierarchy_entity(
         const dragonpixel::core::uuid& id,
         const QString& name,
         bool enabled);
-    bool drag_reparent_entity(
-        const dragonpixel::core::uuid& id,
+    bool drag_reparent_entities(
+        const std::vector<dragonpixel::core::uuid>& ids,
         const std::optional<dragonpixel::core::uuid>& parent,
         std::optional<std::size_t> sibling_index);
     void edit_inspector_item(QStandardItem* item);
-    void create_preset(dragonpixel::scene::entity_preset preset, const QString& asset_override = {});
+    void create_preset(
+        dragonpixel::scene::entity_preset preset,
+        const QString& asset_override = {},
+        bool force_scene_root = false,
+        const std::optional<dragonpixel::core::uuid>& explicit_parent = {});
     void duplicate_selected();
     void delete_selected_subtree();
     void reparent_entity();
+    void group_selected();
     void add_component();
+    void add_component_to_targets(const QList<dragonpixel::core::uuid>& targets);
     void remove_component();
+    void show_inspector_context_menu(const QPoint& point);
+    void show_inspector_context_menu_for(QTreeView* view, const QPoint& point);
+    bool assign_inspector_asset_drop(
+        QTreeView* view,
+        const QModelIndex& index,
+        const QMimeData* mime);
+    [[nodiscard]] bool show_collection_context_menu(const QModelIndex& index, const QPoint& point);
     void undo();
     void redo();
     void assign_selected_asset(const QModelIndex& source_index);
-    void instantiate_prefab(const QString& source_path);
+    void instantiate_prefab(
+        const QString& source_path,
+        bool force_scene_root = false,
+        const std::optional<dragonpixel::core::uuid>& explicit_parent = {});
     void create_prefab_from_selection();
     void apply_prefab();
     void revert_selected_prefab();
     void revert_all_prefab();
     void repair_prefab();
     void unpack_prefab(bool completely);
+    void create_tile_set_from_png();
+    void create_project_component(ProjectComponentLanguage language);
+    void build_project_components();
+    void edit_project_source(const QString& source_path);
+    void edit_input_map();
+    void refresh_project_input_map();
+    bool reload_project_component_metadata();
+    [[nodiscard]] bool attach_component_type(
+        const QString& type_id,
+        const QList<dragonpixel::core::uuid>& entity_ids,
+        const QString& transaction_description);
     void report_prefab_result(PrefabOperationResult result);
     [[nodiscard]] bool apply_authoring_transaction(
         std::vector<dragonpixel::scene::command> commands,
@@ -140,6 +213,7 @@ private:
         AuthoringViewport::GizmoTool tool,
         const QVector3D& delta) const;
     [[nodiscard]] bool reload_gizmo_preview(const dragonpixel::scene::scene& preview_scene);
+    [[nodiscard]] std::string runtime_snapshot_json(const dragonpixel::scene::scene& source_scene) const;
     void refresh_preview();
     void start_automation_self_test();
     [[nodiscard]] AutomationResponse handle_automation_request(
@@ -171,13 +245,18 @@ private:
     QString project_root_;
     QTemporaryDir runtime_directory_;
     AuthoringViewport* viewport_{};
+    GameViewport* game_viewport_{};
     WorkerClient* preview_worker_{};
+    WorkerClient* game_preview_worker_{};
     WorkerClient* play_worker_{};
     AutomationBroker* automation_broker_{};
     QProcess* automation_test_process_{};
     AssetPreviewService* asset_preview_service_{};
     QFileSystemWatcher* project_watcher_{};
     ProjectIndexBuildResult project_index_;
+    InputMapService input_map_service_;
+    std::optional<InputMapDocument> project_input_map_;
+    QString input_map_source_path_;
     quint64 project_generation_{};
     bool project_refresh_pending_{};
 
@@ -188,12 +267,26 @@ private:
     QTreeView* inspector_{};
     QStandardItemModel* inspector_model_{};
     InspectorDelegate* inspector_delegate_{};
+    QWidget* inspector_panel_{};
+    QCheckBox* inspector_enabled_{};
+    QLineEdit* inspector_name_{};
+    QLabel* inspector_identity_{};
+    QLineEdit* inspector_search_{};
+    QPushButton* inspector_add_component_{};
+    QToolButton* inspector_lock_{};
     QTreeView* project_explorer_{};
     ProjectModel* project_model_{};
     ProjectFilterProxyModel* project_filter_{};
+    ProjectFolderProxyModel* project_folder_filter_{};
     QLineEdit* project_search_{};
     QComboBox* project_type_filter_{};
     QComboBox* project_status_filter_{};
+    QTreeView* project_folder_tree_{};
+    QListView* project_thumbnail_view_{};
+    QStackedWidget* project_content_stack_{};
+    QLabel* project_breadcrumb_{};
+    QLabel* project_details_{};
+    QPersistentModelIndex project_current_folder_;
     QListView* scene_summary_{};
     QStandardItemModel* scene_summary_model_{};
     QTableView* console_{};
@@ -202,12 +295,32 @@ private:
     QLineEdit* console_search_{};
     QComboBox* adapter_{};
     QDockWidget* scene_dock_{};
+    QDockWidget* scene_view_dock_{};
+    QDockWidget* game_view_dock_{};
     QDockWidget* hierarchy_dock_{};
     QDockWidget* assets_dock_{};
     QDockWidget* inspector_dock_{};
+    QDockWidget* tile_palette_dock_{};
     QDockWidget* console_dock_{};
+    QDockWidget* onboarding_dock_{};
+    QDockWidget* project_hub_dock_{};
+    QMenu* view_menu_{};
+    QListWidget* project_hub_recent_{};
+    QPushButton* project_hub_new_{};
+    QPushButton* project_hub_open_{};
+    QPushButton* onboarding_add_square_{};
+    QPushButton* onboarding_add_circle_{};
+    QPushButton* onboarding_add_component_{};
+    QPushButton* onboarding_create_csharp_{};
+    QPushButton* onboarding_create_cpp_{};
+    QPushButton* onboarding_play_{};
+
+    TileDocumentService* tile_document_service_{};
+    TilePaletteWidget* tile_palette_{};
 
     QAction* save_action_{};
+    QAction* new_scene_action_{};
+    QAction* save_scene_as_action_{};
     QAction* undo_action_{};
     QAction* redo_action_{};
     QAction* duplicate_action_{};
@@ -228,12 +341,19 @@ private:
     QAction* repair_prefab_action_{};
     QAction* unpack_prefab_action_{};
     QAction* unpack_completely_prefab_action_{};
+    QAction* input_map_action_{};
+    QAction* input_settings_action_{};
 
     UnsavedPrompt unsaved_prompt_;
     DeletePrompt delete_prompt_;
     PrefabPathPrompt prefab_path_prompt_;
     PrefabLevelPrompt prefab_level_prompt_;
+    ComponentNamePrompt component_name_prompt_;
+    SelectionService selection_service_;
+    ProjectLifecycleService project_lifecycle_service_;
+    AssetService asset_service_;
     PrefabService prefab_service_;
+    ScriptEditorService script_editor_service_;
     struct GizmoTransformSnapshot final
     {
         dragonpixel::core::uuid entity_id;
@@ -248,9 +368,40 @@ private:
     AuthoringViewport::GizmoOrientation gizmo_preview_orientation_{AuthoringViewport::GizmoOrientation::global};
     bool gizmo_preview_active_{};
     bool rebuilding_inspector_{};
+    bool primary_inspector_locked_{};
+    QString primary_inspector_locked_project_id_;
+    QString primary_inspector_locked_scene_id_;
+    QList<dragonpixel::core::uuid> primary_inspector_locked_targets_;
+    bool inspector_target_override_active_{};
+    QList<dragonpixel::core::uuid> inspector_target_override_;
+    struct AdditionalInspector final
+    {
+        int ordinal{};
+        QDockWidget* dock{};
+        QWidget* panel{};
+        QTreeView* view{};
+        QStandardItemModel* model{};
+        InspectorDelegate* delegate{};
+        QCheckBox* enabled{};
+        QLineEdit* name{};
+        QLabel* identity{};
+        QLineEdit* search{};
+        QPushButton* add_component{};
+        QToolButton* lock{};
+        bool locked{};
+        QString locked_project_id;
+        QString locked_scene_id;
+        QList<dragonpixel::core::uuid> locked_targets;
+    };
+    std::vector<std::unique_ptr<AdditionalInspector>> additional_inspectors_;
     bool play_running_{};
     bool play_paused_{};
     bool preview_simulating_{};
+    bool component_modules_available_{};
+    bool auto_build_project_scripts_{true};
+    dragonpixel::serialization::transaction_save_fault save_fault_for_test_{
+        dragonpixel::serialization::transaction_save_fault::none};
+    QString component_module_manifest_;
     QJsonObject editor_camera_;
     std::uint64_t camera_revision_{};
     std::uint64_t command_revision_{};

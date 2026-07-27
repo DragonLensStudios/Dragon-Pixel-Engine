@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -81,7 +81,7 @@ POC G must pass on Windows 11 x64, macOS 14+ arm64, and Ubuntu 24.04 x64 before 
 
 Current Windows and Ubuntu evidence (2026-07-25): the private Box2D 3.1.1/Jolt 5.6.0 facade, fixed-step accumulator, C ABI minor-1 extension, managed `SafeHandle` wrapper, scene-v3 snapshot parsing, worker lifecycle, and isolated Simulate Preview/Play integration are implemented. Tests cover native/ABI/managed ownership, invalid and stale handles, candidate rebuild rollback, fixed stepping and catch-up, 2D/3D transforms, contacts and queries, pause/resume/Stop cleanup, unchanged source bytes, and atomic rejection of multiple 3D colliders until SubShapeID-aware attribution exists. The real adapter renderer also proves device-pixel collider overlays for Box/Circle 2D and Box/Sphere 3D.
 
-The complete Windows Release matrix passed **36/36 tests in 118.39 seconds**, and the complete MSVC AddressSanitizer matrix passed **36/36 tests in 134.93 seconds**. Ubuntu Release passed **36/36 tests in 102.20 seconds**, and Ubuntu Clang AddressSanitizer passed **36/36 tests in 101.97 seconds**. `CMAKE_POSITION_INDEPENDENT_CODE` is enabled, and sanitizer runtime settings propagate through managed workers and native-host child workers. Manual Qt QA used only the disposable writable `out/dev/Slice1Sample` copy and confirmed Simulate Preview remained isolated from authoring state while KNI preview/play pause and Stop stayed functional.
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices remain 36/36. `CMAKE_POSITION_INDEPENDENT_CODE` is enabled, sanitizer settings propagate through managed/native child workers, and Windows deploys the MSVC ASan runtime beside every instrumented native target. Manual Qt QA used only the disposable writable `out/dev/Slice1Sample` copy and confirmed Simulate Preview remained isolated from authoring state while KNI preview/play pause and Stop stayed functional.
 
 No current POC G Release/sanitizer evidence exists for macOS arm64. Complete three-platform tolerance comparison, packaged-notice enumeration, and the full Qt Inspector designer workflow for adding and configuring all baseline bodies/colliders remain open. Implementation evidence does not promote this decision: ADR-0012 remains `Proposed` until the macOS POC G and designer gates pass.
 

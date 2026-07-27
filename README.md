@@ -1,6 +1,6 @@
 # Dragon Pixel Engine
 
-Dragon Pixel Engine is implementing the complete Slice 2 authoring workflow while Slice 1's final cross-platform performance gate remains open on macOS. The repository contains the architecture prototypes, portable native core, managed contracts and C ABI interop, distinct preview/play MonoGame and experimental KNI workers, deterministic scene-v3 persistence, linked-prefab and physics foundations, external Python automation, a writable sample project, and the Qt 6.11 editor.
+Dragon Pixel Engine is pursuing the complete four-slice roadmap and design-defined `1.0.0` under the active mirrored master plan. Slice 1 remains open on the unchanged macOS viewport gate, current Ubuntu/macOS matrices, and aggregate POC J Qt-event-to-paint timing; Slice 2 remains open on its complete cross-platform designer/accessibility evidence; and the activated Slice 3/4 lifecycle and release paths are not yet accepted. The last complete Windows baseline passes 45/45 strict Release and 45/45 MSVC AddressSanitizer tests; focused DPE-ARCH-0010 lifecycle, DPE-ARCH-0011 external Rider source-authoring, DPE-ARCH-0012 managed GameObject-controller/runtime-transform, and DPE-ARCH-0013 configurable input-map/rebinding Release/ASan evidence is green. The DPE-ARCH-0013 production-style bundle passes the packaged MonoGame self-test with all 183 manifest records verified. DPE-ARCH-0014 now authorizes implementation of the Project Hub/minimal templates, clean scenes, asset-v3 and a two-pane Project Browser, linked-prefab drag paths, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors; it has no implementation evidence yet. Physical-gamepad and current cross-platform evidence remain open, an intermittent atomic-publication recovery defect blocks a new full-matrix claim, and KNI remains experimental. The repository contains the architecture prototypes, portable native core, managed contracts and C ABI interop, distinct preview/play MonoGame and KNI workers, deterministic scene-v3 persistence, linked-prefab and physics foundations, external Python automation, a writable sample project, and the Qt 6.11 editor.
 
 ## Windows development quick start
 
@@ -44,7 +44,27 @@ Use `-SkipBuild` for a fast edit/run cycle after a successful build. Use `-Reset
 & '.\scripts\dev\Launch-Editor.ps1' -SkipBuild -ResetSample
 ```
 
-The editor opens the 2D/3D sample in authoring mode. The Hierarchy, typed Inspector, Project Explorer, Scene View, and structured Console are model-backed. GameObject presets, multi-selection, component editing, asset drag/drop, Undo/Redo, workspaces, picking, camera controls, and Move/Rotate/Scale gizmos route authoritative edits through validated scene transactions.
+For the fastest production-style editor iteration on Windows, build only the Release editor and its required runtime dependencies, deploy a stable runnable bundle, run its packaged smoke test, and launch it:
+
+```powershell
+& '.\scripts\dev\Build-Production-Editor.ps1' -Launch
+```
+
+After the first validated bundle, close the running editor and use the fast incremental path while editing:
+
+```powershell
+& '.\scripts\dev\Build-Production-Editor.ps1' -Fast -Launch
+```
+
+Relaunch the current bundle without building:
+
+```powershell
+& '.\scripts\dev\Launch-Editor.ps1' -Production -SkipBuild
+```
+
+The directly runnable executable is `out\product\windows-x64\DragonPixelEditor\DragonPixelEditor.exe`. Its adjacent bundle includes Qt plugins, native runtime libraries, MonoGame/KNI workers, contracts, Python tools, schemas, a sample, and a SHA-256 file manifest. This is a production-style developer bundle for rapid local testing; it is not yet the signed, clean-machine-validated POC R release package.
+
+The editor opens the 2D/3D sample in authoring mode. The Hierarchy, typed Inspector, Project Explorer, Scene View, and structured Console are model-backed full-grid docks: there is no reserved center obstruction, and panels can split, tab, float, move to any dock area, reset deterministically, and restore versioned per-user layouts. GameObject presets, multi-selection, component editing, direct New C# Script/New C++ Component attachment, asset drag/drop, Undo/Redo, workspaces, picking, camera controls, and Move/Rotate/Scale gizmos route authoritative edits through validated scene transactions. Contained C#/C++ component sources appear in Project Explorer; double-clicking one or choosing the Inspector component-card Rider edit action regenerates a disposable `.dragonpixel/Ide/Rider` solution and opens the selected source in JetBrains Rider without loading project code into the editor process.
 
 A dedicated preview worker consumes the editor-owned mirror and reloads revisions in place. Play launches a separate MonoGame or experimental KNI worker from an immutable snapshot. Simulate Preview runs an isolated native Box2D/Jolt world; Play always owns a disposable runtime world. Stop destroys runtime state without writing simulated transforms into the authoring scene. Both framework adapters use real graphics-device render targets, revisioned local IPC, ID-buffer picking, and BGRA8 shared frames.
 

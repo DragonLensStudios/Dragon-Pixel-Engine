@@ -1,4 +1,7 @@
 #include "EditorWindow.h"
+
+#include "EditorRuntimePaths.h"
+#include "InputMapEditorDialog.h"
 #include "ProjectIndexService.h"
 
 #include <dragonpixel/scene/commands.h>
@@ -11,27 +14,41 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QBrush>
 #include <QClipboard>
+#include <QCheckBox>
 #include <QCloseEvent>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QDesktopServices>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
+#include <QFormLayout>
+#include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QListWidget>
 #include <QMenuBar>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QMimeData>
 #include <QPushButton>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -41,12 +58,15 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStandardPaths>
+#include <QStackedWidget>
 #include <QStatusBar>
+#include <QSplitter>
 #include <QTableView>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeView>
+#include <QUuid>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -63,6 +83,207 @@
 
 namespace
 {
+constexpr int workspace_state_version = 6;
+
+class ProjectDropTreeView final : public QTreeView
+{
+public:
+    using DropHandler = std::function<void(const QStringList&, const QModelIndex&)>;
+    using DomainDropHandler = std::function<bool(const QMimeData*, const QModelIndex&)>;
+    using QTreeView::QTreeView;
+    void set_external_drop_handler(DropHandler handler) { handler_ = std::move(handler); }
+    void set_domain_drop_handler(DomainDropHandler handler) { domain_handler_ = std::move(handler); }
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override
+    {
+        if (event->mimeData()->hasUrls()
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dragEnterEvent(event);
+    }
+    void dragMoveEvent(QDragMoveEvent* event) override
+    {
+        if (event->mimeData()->hasUrls()
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dragMoveEvent(event);
+    }
+    void dropEvent(QDropEvent* event) override
+    {
+        const auto destination = indexAt(event->position().toPoint());
+        if (event->mimeData()->hasUrls() && handler_)
+        {
+            QStringList paths;
+            for (const auto& url : event->mimeData()->urls())
+            {
+                if (url.isLocalFile()) paths.push_back(url.toLocalFile());
+            }
+            if (!paths.isEmpty())
+            {
+                handler_(paths, destination);
+                event->acceptProposedAction();
+                return;
+            }
+        }
+        if (domain_handler_ && domain_handler_(event->mimeData(), destination))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dropEvent(event);
+    }
+
+private:
+    DropHandler handler_;
+    DomainDropHandler domain_handler_;
+};
+
+class ProjectDropListView final : public QListView
+{
+public:
+    using DropHandler = std::function<void(const QStringList&, const QModelIndex&)>;
+    using DomainDropHandler = std::function<bool(const QMimeData*, const QModelIndex&)>;
+    using QListView::QListView;
+    void set_external_drop_handler(DropHandler handler) { handler_ = std::move(handler); }
+    void set_domain_drop_handler(DomainDropHandler handler) { domain_handler_ = std::move(handler); }
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override
+    {
+        if (event->mimeData()->hasUrls()
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QListView::dragEnterEvent(event);
+    }
+    void dragMoveEvent(QDragMoveEvent* event) override
+    {
+        if (event->mimeData()->hasUrls()
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QListView::dragMoveEvent(event);
+    }
+    void dropEvent(QDropEvent* event) override
+    {
+        const auto destination = indexAt(event->position().toPoint());
+        if (event->mimeData()->hasUrls() && handler_)
+        {
+            QStringList paths;
+            for (const auto& url : event->mimeData()->urls())
+            {
+                if (url.isLocalFile()) paths.push_back(url.toLocalFile());
+            }
+            if (!paths.isEmpty())
+            {
+                handler_(paths, destination);
+                event->acceptProposedAction();
+                return;
+            }
+        }
+        if (domain_handler_ && domain_handler_(event->mimeData(), destination))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QListView::dropEvent(event);
+    }
+
+private:
+    DropHandler handler_;
+    DomainDropHandler domain_handler_;
+};
+
+class InspectorDropTreeView final : public QTreeView
+{
+public:
+    using DropHandler = std::function<bool(const QModelIndex&, const QMimeData*)>;
+    using QTreeView::QTreeView;
+    void set_asset_drop_handler(DropHandler handler) { handler_ = std::move(handler); }
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override
+    {
+        if (event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dragEnterEvent(event);
+    }
+    void dragMoveEvent(QDragMoveEvent* event) override
+    {
+        if (event->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dragMoveEvent(event);
+    }
+    void dropEvent(QDropEvent* event) override
+    {
+        if (handler_ && handler_(indexAt(event->position().toPoint()), event->mimeData()))
+        {
+            event->acceptProposedAction();
+            return;
+        }
+        QTreeView::dropEvent(event);
+    }
+
+private:
+    DropHandler handler_;
+};
+
+QString high_contrast_indicator_style(const QString& selector)
+{
+    return QStringLiteral(R"QSS(
+%1::indicator {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #9fb2c8;
+    border-radius: 4px;
+    background-color: #263442;
+}
+%1::indicator:hover {
+    border-color: #d8ecff;
+    background-color: #34495e;
+}
+%1::indicator:checked {
+    border-color: #bde5ff;
+    background-color: #147dcc;
+    image: url(:/dragonpixel/icons/inspector-check.xpm);
+}
+%1::indicator:checked:hover {
+    border-color: #ffffff;
+    background-color: #2495eb;
+}
+%1::indicator:indeterminate {
+    border-color: #ffe3a1;
+    background-color: #b87509;
+    image: url(:/dragonpixel/icons/inspector-partial.xpm);
+}
+%1::indicator:disabled {
+    border-color: #667483;
+    background-color: #303942;
+}
+)QSS").arg(selector);
+}
+
 nlohmann::ordered_json vector_json(const QVector3D& value)
 {
     return {{"x", value.x()}, {"y", value.y()}, {"z", value.z()}};
@@ -131,15 +352,55 @@ nlohmann::ordered_json default_value(dragonpixel::metadata::value_type type)
         case value_type::vector3: return {{"x", 0.0}, {"y", 0.0}, {"z", 0.0}};
         case value_type::quaternion: return {{"w", 1.0}, {"x", 0.0}, {"y", 0.0}, {"z", 0.0}};
         case value_type::color: return {{"a", 1.0}, {"b", 1.0}, {"g", 1.0}, {"r", 1.0}};
-        default: return "";
+        case value_type::component_reference: return nullptr;
+        case value_type::object:
+        case value_type::dictionary: return nlohmann::ordered_json::object();
+        case value_type::list: return nlohmann::ordered_json::array();
+        case value_type::polymorphic_object: return nullptr;
+        case value_type::string:
+        case value_type::entity_reference:
+        case value_type::asset_reference: return "";
     }
+    return nullptr;
+}
+
+nlohmann::ordered_json property_default(const dragonpixel::metadata::property_descriptor& property)
+{
+    if (!property.default_json.empty())
+    {
+        auto parsed = nlohmann::ordered_json::parse(property.default_json, nullptr, false);
+        if (!parsed.is_discarded())
+        {
+            return parsed;
+        }
+    }
+    return property.nullable ? nlohmann::ordered_json{nullptr} : default_value(property.type);
+}
+
+nlohmann::ordered_json object_envelope_default(
+    const dragonpixel::metadata::object_type_descriptor& descriptor)
+{
+    nlohmann::ordered_json properties = nlohmann::ordered_json::object();
+    for (const auto& property : descriptor.properties)
+    {
+        properties[property.property_id] = property_default(property);
+    }
+    return {
+        {"typeId", descriptor.type_id},
+        {"schemaVersion", descriptor.schema_version},
+        {"properties", std::move(properties)},
+    };
 }
 
 QString owner_text(dragonpixel::metadata::runtime_owner owner)
 {
-    return owner == dragonpixel::metadata::runtime_owner::managed
-        ? QStringLiteral("managed")
-        : QStringLiteral("native");
+    switch (owner)
+    {
+        case dragonpixel::metadata::runtime_owner::managed: return QStringLiteral("C#");
+        case dragonpixel::metadata::runtime_owner::data_only: return QStringLiteral("data");
+        case dragonpixel::metadata::runtime_owner::native: return QStringLiteral("C++");
+    }
+    return QStringLiteral("unknown");
 }
 
 std::filesystem::path filesystem_path(const QString& value)
@@ -157,6 +418,18 @@ QString editor_settings_path()
     QDir{}.mkpath(directory);
     return QDir{directory}.filePath(QStringLiteral("editor-state.ini"));
 }
+
+std::string stable_runtime_uuid(const QByteArray& seed)
+{
+    auto bytes = QCryptographicHash::hash(seed, QCryptographicHash::Sha256).left(16);
+    bytes[6] = static_cast<char>((static_cast<unsigned char>(bytes[6]) & 0x0fU) | 0x50U);
+    bytes[8] = static_cast<char>((static_cast<unsigned char>(bytes[8]) & 0x3fU) | 0x80U);
+    const auto hex = bytes.toHex();
+    return QStringLiteral("%1-%2-%3-%4-%5")
+        .arg(QString::fromLatin1(hex.mid(0, 8)), QString::fromLatin1(hex.mid(8, 4)),
+             QString::fromLatin1(hex.mid(12, 4)), QString::fromLatin1(hex.mid(16, 4)),
+             QString::fromLatin1(hex.mid(20, 12))).toStdString();
+}
 }
 
 EditorWindow::EditorWindow(QString initial_document, QWidget* parent)
@@ -168,26 +441,83 @@ EditorWindow::EditorWindow(QString initial_document, QWidget* parent)
     setWindowTitle(QStringLiteral("Dragon Pixel Engine Editor \u2014 Slice 2"));
     resize(1440, 900);
     build_interface();
-    if (QFileInfo(initial_document).fileName().compare(
+    if (!initial_document.isEmpty() && QFileInfo(initial_document).fileName().compare(
             QStringLiteral("DragonPixelProject.json"), Qt::CaseInsensitive) == 0)
     {
         load_project(initial_document);
     }
-    else
+    else if (!initial_document.isEmpty())
     {
         load_scene(initial_document);
+    }
+    else
+    {
+        show_project_hub();
     }
 }
 
 void EditorWindow::build_interface()
 {
+    setDockOptions(
+        QMainWindow::AnimatedDocks
+        | QMainWindow::AllowNestedDocks
+        | QMainWindow::AllowTabbedDocks
+        | QMainWindow::GroupedDragging);
+    setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
     viewport_ = new AuthoringViewport(this);
     viewport_->setObjectName(QStringLiteral("SceneViewport"));
-    setCentralWidget(viewport_);
+    game_viewport_ = new GameViewport(this);
+    auto* game_panel = new QWidget(this);
+    game_panel->setObjectName(QStringLiteral("GameViewPanel"));
+    auto* game_layout = new QVBoxLayout(game_panel);
+    game_layout->setContentsMargins(0, 0, 0, 0);
+    game_layout->setSpacing(0);
+    auto* game_toolbar = new QWidget(game_panel);
+    game_toolbar->setObjectName(QStringLiteral("GameViewToolbar"));
+    auto* game_toolbar_layout = new QHBoxLayout(game_toolbar);
+    game_toolbar_layout->setContentsMargins(6, 3, 6, 3);
+    auto* aspect_label = new QLabel(QStringLiteral("Aspect"), game_toolbar);
+    auto* aspect = new QComboBox(game_toolbar);
+    aspect->setObjectName(QStringLiteral("GameViewAspect"));
+    aspect->setAccessibleName(QStringLiteral("Game view aspect ratio"));
+    aspect->addItem(QStringLiteral("Free Aspect"), 0.0);
+    aspect->addItem(QStringLiteral("16:9"), 16.0 / 9.0);
+    aspect->addItem(QStringLiteral("16:10"), 16.0 / 10.0);
+    aspect->addItem(QStringLiteral("4:3"), 4.0 / 3.0);
+    connect(aspect, &QComboBox::currentIndexChanged, this, [this, aspect](int) {
+        game_viewport_->set_aspect_ratio(aspect->currentData().toDouble());
+    });
+    auto* game_status = new QLabel(QStringLiteral("Preview · Primary Camera · Fit"), game_toolbar);
+    game_status->setObjectName(QStringLiteral("GameViewStatus"));
+    game_status->setAccessibleName(QStringLiteral("Game view adapter and frame status"));
+    game_toolbar_layout->addWidget(aspect_label);
+    game_toolbar_layout->addWidget(aspect);
+    game_toolbar_layout->addStretch();
+    game_toolbar_layout->addWidget(game_status);
+    game_layout->addWidget(game_toolbar);
+    game_layout->addWidget(game_viewport_, 1);
     preview_worker_ = new WorkerClient(QStringLiteral("preview"), this);
+    game_preview_worker_ = new WorkerClient(QStringLiteral("game-preview"), this);
     play_worker_ = new WorkerClient(QStringLiteral("play"), this);
     connect(preview_worker_, &WorkerClient::frame_ready, viewport_, &AuthoringViewport::set_preview_frame);
-    connect(play_worker_, &WorkerClient::frame_ready, viewport_, &AuthoringViewport::set_play_frame);
+    connect(game_preview_worker_, &WorkerClient::frame_ready, game_viewport_, &GameViewport::set_preview_frame);
+    connect(play_worker_, &WorkerClient::frame_ready_correlated, this,
+        [this](const QImage& image, quint64 input_revision, quint64 frame_revision) {
+            game_viewport_->set_play_frame(image, input_revision, frame_revision);
+        });
+    connect(play_worker_, &WorkerClient::runtime_input_reset, this, [this] {
+        game_viewport_->set_runtime_input_ready(false);
+        game_viewport_->set_input_enabled(false);
+        game_viewport_->retire_play_frame();
+    });
+    connect(play_worker_, &WorkerClient::runtime_input_ready, this, [this] {
+        game_viewport_->set_runtime_input_ready(true);
+        game_viewport_->set_input_enabled(play_running_ && !play_paused_);
+    });
     connect(preview_worker_, &WorkerClient::status_message, this, [this](const QString& message) {
         append_console(
             message,
@@ -208,7 +538,12 @@ void EditorWindow::build_interface()
             QStringLiteral("play"));
         statusBar()->showMessage(message, 5000);
     });
+    connect(game_preview_worker_, &WorkerClient::status_message, this, [this](const QString& message) {
+        append_console(message, QStringLiteral("Info"), QStringLiteral("Runtime"), {},
+            game_preview_worker_->adapter_name(), QStringLiteral("game-preview"));
+    });
     connect(preview_worker_, &WorkerClient::runtime_stopped, viewport_, &AuthoringViewport::clear_preview_frame);
+    connect(game_preview_worker_, &WorkerClient::runtime_stopped, game_viewport_, &GameViewport::clear_preview_frame);
     connect(preview_worker_, &WorkerClient::preview_simulation_changed, this, [this](bool enabled) {
         preview_simulating_ = enabled;
         if (simulate_action_ != nullptr)
@@ -218,8 +553,9 @@ void EditorWindow::build_interface()
         }
         update_action_states();
     });
-    connect(play_worker_, &WorkerClient::runtime_stopped, this, [this] {
-        viewport_->set_play_mode(false);
+    connect(play_worker_, &WorkerClient::runtime_stopped, this, [this, game_status] {
+        game_viewport_->set_play_mode(false);
+        game_status->setText(QStringLiteral("Preview · Primary Camera · Fit"));
         play_running_ = false;
         play_paused_ = false;
         update_action_states();
@@ -234,8 +570,22 @@ void EditorWindow::build_interface()
     };
     connect(viewport_, &AuthoringViewport::viewport_resized, this, [this](const QSize& size) {
         preview_worker_->resize_viewport(size);
-        play_worker_->resize_viewport(size);
+        if (!play_running_)
+        {
+            play_worker_->resize_viewport(size);
+        }
     });
+    connect(game_viewport_, &GameViewport::viewport_resized, this, [this](const QSize& size) {
+        game_preview_worker_->resize_viewport(size);
+        if (play_running_)
+        {
+            play_worker_->resize_viewport(size);
+        }
+    });
+    connect(game_viewport_, &GameViewport::correlated_input_actions_changed, this,
+        [this](const QJsonObject& actions, quint64 input_revision) {
+            play_worker_->send_correlated_input_actions(actions, input_revision);
+        });
     connect(viewport_, &AuthoringViewport::camera_changed, this,
         [this](bool orthographic, const QVector3D& position, const QVector3D& target, float fov, float size) {
             editor_camera_ = {
@@ -277,16 +627,24 @@ void EditorWindow::build_interface()
     connect(viewport_, &AuthoringViewport::gizmo_committed, this, &EditorWindow::apply_gizmo_delta);
     connect(viewport_, &AuthoringViewport::gizmo_cancelled, this, &EditorWindow::cancel_gizmo_preview);
     connect(viewport_, &AuthoringViewport::project_item_dropped, this,
-        [this](const QString& path, const QString& kind, const QString& asset_type, const QString& asset_id) {
+        [this](const QString& project_id, qint64 source_revision, const QString& path,
+            const QString& kind, const QString& asset_type, const QString& asset_id) {
+            if (project_id != project_model_->drag_project_id()
+                || source_revision != static_cast<qint64>(project_model_->drag_revision()))
+            {
+                append_console(QStringLiteral("Rejected stale or cross-project drag payload"),
+                    QStringLiteral("Warning"), QStringLiteral("Drag Drop"));
+                return;
+            }
             if (kind == QStringLiteral("asset"))
             {
                 if (asset_type.contains(QStringLiteral("sprite"), Qt::CaseInsensitive))
                 {
-                    create_preset(dragonpixel::scene::entity_preset::sprite, asset_id);
+                    create_preset(dragonpixel::scene::entity_preset::sprite, asset_id, true);
                 }
                 else if (asset_type.contains(QStringLiteral("mesh"), Qt::CaseInsensitive))
                 {
-                    create_preset(dragonpixel::scene::entity_preset::cube, asset_id);
+                    create_preset(dragonpixel::scene::entity_preset::cube, asset_id, true);
                 }
                 else
                 {
@@ -300,7 +658,7 @@ void EditorWindow::build_interface()
             }
             else if (kind == QStringLiteral("prefab"))
             {
-                instantiate_prefab(path);
+                instantiate_prefab(path, true);
             }
         });
 
@@ -315,8 +673,26 @@ void EditorWindow::build_interface()
         [this](const auto& id, const auto& name, bool enabled) {
             return edit_hierarchy_entity(id, name, enabled);
         },
-        [this](const auto& id, const auto& parent, auto sibling) {
-            return drag_reparent_entity(id, parent, sibling);
+        [this](const auto& ids, const auto& parent, auto sibling) {
+            return drag_reparent_entities(ids, parent, sibling);
+        });
+    hierarchy_model_->set_project_drop_handler(
+        [this](const QString& path, const QString& kind, const QString& asset_type,
+            const QString& asset_id, const std::optional<dragonpixel::core::uuid>& parent) {
+            if (!scene_) return false;
+            const auto before = scene_->entities().size();
+            if (kind == QStringLiteral("asset")
+                && asset_type.contains(QStringLiteral("sprite"), Qt::CaseInsensitive))
+            {
+                create_preset(dragonpixel::scene::entity_preset::sprite,
+                    asset_id, !parent.has_value(), parent);
+            }
+            else if (kind == QStringLiteral("prefab"))
+            {
+                instantiate_prefab(path, !parent.has_value(), parent);
+            }
+            else return false;
+            return scene_ && scene_->entities().size() > before;
         });
     hierarchy_filter_ = new RecursiveFilterProxyModel(this);
     hierarchy_filter_->setSourceModel(hierarchy_model_);
@@ -331,31 +707,196 @@ void EditorWindow::build_interface()
     hierarchy_->setModel(hierarchy_filter_);
     hierarchy_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     hierarchy_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    hierarchy_->setDragDropMode(QAbstractItemView::InternalMove);
+    hierarchy_->setAcceptDrops(true);
+    hierarchy_->setDragDropMode(QAbstractItemView::DragDrop);
     hierarchy_->setDefaultDropAction(Qt::MoveAction);
     hierarchy_->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
     hierarchy_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(hierarchy_->selectionModel(), &QItemSelectionModel::selectionChanged, this, [this] {
-        inspect_selected_entities();
+        publish_global_selection(SelectionOrigin::hierarchy);
+        if (!primary_inspector_locked_) inspect_selected_entities();
+        update_global_selection_presentation();
+        refresh_additional_inspectors();
         update_action_states();
     });
     auto* hierarchy_panel = new QWidget(this);
     hierarchy_panel->setObjectName(QStringLiteral("HierarchyPanel"));
     auto* hierarchy_layout = new QVBoxLayout(hierarchy_panel);
     hierarchy_layout->setContentsMargins(4, 4, 4, 4);
+    auto* hierarchy_toolbar = new QWidget(hierarchy_panel);
+    hierarchy_toolbar->setObjectName(QStringLiteral("HierarchyToolbar"));
+    auto* hierarchy_toolbar_layout = new QHBoxLayout(hierarchy_toolbar);
+    hierarchy_toolbar_layout->setContentsMargins(0, 0, 0, 0);
+    auto* hierarchy_add = new QToolButton(hierarchy_toolbar);
+    hierarchy_add->setObjectName(QStringLiteral("HierarchyAddMenu"));
+    hierarchy_add->setText(QStringLiteral("Add"));
+    hierarchy_add->setAccessibleName(QStringLiteral("Add GameObject"));
+    hierarchy_add->setPopupMode(QToolButton::InstantPopup);
+    auto* hierarchy_add_menu = new QMenu(hierarchy_add);
+    const auto add_preset = [this, hierarchy_add_menu](
+        const QString& label, dragonpixel::scene::entity_preset preset, const QString& asset = {}) {
+        hierarchy_add_menu->addAction(label, this, [this, preset, asset] {
+            create_preset(preset, asset);
+        });
+    };
+    add_preset(QStringLiteral("Empty GameObject"), dragonpixel::scene::entity_preset::empty);
+    add_preset(QStringLiteral("Square Sprite"), dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://square"));
+    add_preset(QStringLiteral("Circle Sprite"), dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://circle"));
+    add_preset(QStringLiteral("Cube"), dragonpixel::scene::entity_preset::cube);
+    add_preset(QStringLiteral("Camera"), dragonpixel::scene::entity_preset::camera);
+    add_preset(QStringLiteral("Light"), dragonpixel::scene::entity_preset::light);
+    hierarchy_add_menu->addSeparator();
+    hierarchy_add_menu->addAction(QStringLiteral("Empty Child"), this, [this] {
+        const auto parent = selected_entity_id();
+        if (parent) create_preset(dragonpixel::scene::entity_preset::empty, {}, false, parent);
+    });
+    hierarchy_add_menu->addAction(QStringLiteral("Empty Parent / Group Selection"), this, &EditorWindow::group_selected);
+    hierarchy_add->setMenu(hierarchy_add_menu);
+    auto* hierarchy_expand = new QToolButton(hierarchy_toolbar);
+    hierarchy_expand->setObjectName(QStringLiteral("HierarchyExpandAll"));
+    hierarchy_expand->setText(QStringLiteral("Expand"));
+    hierarchy_expand->setAccessibleName(QStringLiteral("Expand all Hierarchy GameObjects"));
+    connect(hierarchy_expand, &QToolButton::clicked, hierarchy_, &QTreeView::expandAll);
+    auto* hierarchy_collapse = new QToolButton(hierarchy_toolbar);
+    hierarchy_collapse->setObjectName(QStringLiteral("HierarchyCollapseAll"));
+    hierarchy_collapse->setText(QStringLiteral("Collapse"));
+    hierarchy_collapse->setAccessibleName(QStringLiteral("Collapse all Hierarchy GameObjects"));
+    connect(hierarchy_collapse, &QToolButton::clicked, hierarchy_, &QTreeView::collapseAll);
+    auto* hierarchy_focus = new QToolButton(hierarchy_toolbar);
+    hierarchy_focus->setObjectName(QStringLiteral("HierarchyFocusSelection"));
+    hierarchy_focus->setText(QStringLiteral("Focus"));
+    hierarchy_focus->setAccessibleName(QStringLiteral("Focus Scene View on selected GameObjects"));
+    connect(hierarchy_focus, &QToolButton::clicked, viewport_, &AuthoringViewport::focus_on_selection);
+    hierarchy_toolbar_layout->addWidget(hierarchy_add);
+    hierarchy_toolbar_layout->addWidget(hierarchy_expand);
+    hierarchy_toolbar_layout->addWidget(hierarchy_collapse);
+    hierarchy_toolbar_layout->addWidget(hierarchy_focus);
+    hierarchy_toolbar_layout->addStretch();
+    hierarchy_layout->addWidget(hierarchy_toolbar);
     hierarchy_layout->addWidget(hierarchy_search_);
     hierarchy_layout->addWidget(hierarchy_);
 
     inspector_model_ = new QStandardItemModel(this);
     inspector_model_->setHorizontalHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
     inspector_delegate_ = new InspectorDelegate(this);
-    inspector_ = new QTreeView(this);
+    auto* primary_inspector_view = new InspectorDropTreeView(this);
+    inspector_ = primary_inspector_view;
     inspector_->setObjectName(QStringLiteral("InspectorView"));
     inspector_->setAccessibleName(QStringLiteral("Typed component Inspector"));
     inspector_->setModel(inspector_model_);
     inspector_->setItemDelegateForColumn(1, inspector_delegate_);
     inspector_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    inspector_->setAlternatingRowColors(false);
+    inspector_->setRootIsDecorated(true);
+    inspector_->setIndentation(14);
+    inspector_->setContextMenuPolicy(Qt::CustomContextMenu);
+    inspector_->setAcceptDrops(true);
+    inspector_->setDragDropMode(QAbstractItemView::DropOnly);
+    primary_inspector_view->set_asset_drop_handler([this, primary_inspector_view](
+        const QModelIndex& index, const QMimeData* mime) {
+        return assign_inspector_asset_drop(primary_inspector_view, index, mime);
+    });
+    inspector_->setStyleSheet(QStringLiteral(
+        "QTreeView { border: 0; background: palette(base); }"
+        "QTreeView::item { min-height: 26px; padding: 2px; }"
+        "QTreeView::item:selected { background: palette(highlight); color: palette(highlighted-text); }")
+        + high_contrast_indicator_style(QStringLiteral("QTreeView")));
     connect(inspector_model_, &QStandardItemModel::itemChanged, this, &EditorWindow::edit_inspector_item);
+    connect(inspector_, &QWidget::customContextMenuRequested, this, &EditorWindow::show_inspector_context_menu);
+
+    inspector_panel_ = new QWidget(this);
+    inspector_panel_->setObjectName(QStringLiteral("InspectorPanel"));
+    inspector_panel_->setAccessibleName(QStringLiteral("GameObject Inspector"));
+    auto* inspector_layout = new QVBoxLayout(inspector_panel_);
+    inspector_layout->setContentsMargins(6, 6, 6, 6);
+    inspector_layout->setSpacing(6);
+    auto* game_object_header = new QFrame(inspector_panel_);
+    game_object_header->setObjectName(QStringLiteral("InspectorGameObjectHeader"));
+    game_object_header->setFrameShape(QFrame::StyledPanel);
+    auto* game_object_layout = new QVBoxLayout(game_object_header);
+    game_object_layout->setContentsMargins(8, 8, 8, 8);
+    auto* name_row = new QHBoxLayout;
+    inspector_enabled_ = new QCheckBox(game_object_header);
+    inspector_enabled_->setObjectName(QStringLiteral("InspectorGameObjectEnabled"));
+    inspector_enabled_->setAccessibleName(QStringLiteral("GameObject enabled"));
+    inspector_enabled_->setToolTip(QStringLiteral("Enable or disable the selected GameObject(s)"));
+    inspector_enabled_->setStyleSheet(high_contrast_indicator_style(QStringLiteral("QCheckBox")));
+    inspector_enabled_->setMinimumSize(24, 24);
+    inspector_name_ = new QLineEdit(game_object_header);
+    inspector_name_->setObjectName(QStringLiteral("InspectorGameObjectName"));
+    inspector_name_->setAccessibleName(QStringLiteral("GameObject name"));
+    inspector_name_->setPlaceholderText(QStringLiteral("Select a GameObject"));
+    name_row->addWidget(inspector_enabled_);
+    name_row->addWidget(inspector_name_, 1);
+    inspector_lock_ = new QToolButton(game_object_header);
+    inspector_lock_->setObjectName(QStringLiteral("InspectorLock"));
+    inspector_lock_->setText(QStringLiteral("Lock"));
+    inspector_lock_->setCheckable(true);
+    inspector_lock_->setAccessibleName(QStringLiteral("Lock Inspector targets"));
+    inspector_lock_->setToolTip(QStringLiteral("Keep this Inspector on its current GameObjects while global selection changes"));
+    connect(inspector_lock_, &QToolButton::toggled, this, &EditorWindow::set_primary_inspector_locked);
+    name_row->addWidget(inspector_lock_);
+    game_object_layout->addLayout(name_row);
+    inspector_identity_ = new QLabel(QStringLiteral("No GameObject selected"), game_object_header);
+    inspector_identity_->setObjectName(QStringLiteral("InspectorGameObjectIdentity"));
+    inspector_identity_->setAccessibleName(QStringLiteral("GameObject identity and prefab state"));
+    inspector_identity_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    game_object_layout->addWidget(inspector_identity_);
+    inspector_layout->addWidget(game_object_header);
+
+    inspector_search_ = new QLineEdit(inspector_panel_);
+    inspector_search_->setObjectName(QStringLiteral("InspectorSearch"));
+    inspector_search_->setAccessibleName(QStringLiteral("Search Inspector components and properties"));
+    inspector_search_->setPlaceholderText(QStringLiteral("Search components and properties..."));
+    connect(inspector_search_, &QLineEdit::textChanged, this, [this](const QString& text) {
+        for (int row = 0; row < inspector_model_->rowCount(); ++row)
+        {
+            const auto* component = inspector_model_->item(row, 0);
+            auto matches = text.trimmed().isEmpty()
+                || component->text().contains(text, Qt::CaseInsensitive);
+            for (int child = 0; !matches && child < component->rowCount(); ++child)
+            {
+                matches = component->child(child, 0)->text().contains(text, Qt::CaseInsensitive);
+            }
+            inspector_->setRowHidden(row, {}, !matches);
+        }
+    });
+    inspector_layout->addWidget(inspector_search_);
+    inspector_layout->addWidget(inspector_, 1);
+    inspector_add_component_ = new QPushButton(QStringLiteral("Add Component"), inspector_panel_);
+    inspector_add_component_->setObjectName(QStringLiteral("InspectorAddComponent"));
+    inspector_add_component_->setAccessibleName(QStringLiteral("Search and add a component"));
+    connect(inspector_add_component_, &QPushButton::clicked, this, &EditorWindow::add_component);
+    inspector_layout->addWidget(inspector_add_component_);
+
+    connect(inspector_name_, &QLineEdit::editingFinished, this, [this] {
+        if (rebuilding_inspector_ || !scene_)
+        {
+            return;
+        }
+        const auto targets = primary_inspector_targets();
+        const auto* entity = targets.size() == 1 ? scene_->find_entity(targets.front()) : nullptr;
+        if (entity != nullptr && inspector_name_->text().trimmed() != QString::fromStdString(entity->name))
+        {
+            static_cast<void>(edit_hierarchy_entity(targets.front(), inspector_name_->text(), entity->enabled));
+        }
+    });
+    connect(inspector_enabled_, &QCheckBox::checkStateChanged, this, [this](Qt::CheckState state) {
+        if (rebuilding_inspector_ || !scene_ || state == Qt::PartiallyChecked)
+        {
+            return;
+        }
+        std::vector<dragonpixel::scene::command> commands;
+        const auto ids = primary_inspector_targets();
+        for (const auto& id : ids)
+        {
+            commands.emplace_back(dragonpixel::scene::set_entity_enabled_command{id, state == Qt::Checked});
+        }
+        if (!commands.empty() && apply_authoring_transaction(std::move(commands), "Set GameObject enabled"))
+        {
+            after_scene_mutation(QStringLiteral("GameObject enabled state changed through command validation"), ids);
+        }
+    });
 
     project_model_ = new ProjectModel(this);
     project_filter_ = new ProjectFilterProxyModel(this);
@@ -363,7 +904,7 @@ void EditorWindow::build_interface()
     project_search_ = new QLineEdit(this);
     project_search_->setObjectName(QStringLiteral("ProjectSearch"));
     project_search_->setAccessibleName(QStringLiteral("Search project"));
-    project_search_->setPlaceholderText(QStringLiteral("Search scenes, prefabs, and assets..."));
+    project_search_->setPlaceholderText(QStringLiteral("Search scenes, prefabs, assets, and scripts..."));
     connect(project_search_, &QLineEdit::textChanged, project_filter_, &ProjectFilterProxyModel::set_search_text);
     project_type_filter_ = new QComboBox(this);
     project_type_filter_->setObjectName(QStringLiteral("ProjectTypeFilter"));
@@ -372,6 +913,7 @@ void EditorWindow::build_interface()
     project_type_filter_->addItem(QStringLiteral("Scenes"), QStringLiteral("scene"));
     project_type_filter_->addItem(QStringLiteral("Prefabs"), QStringLiteral("prefab"));
     project_type_filter_->addItem(QStringLiteral("Assets"), QStringLiteral("asset"));
+    project_type_filter_->addItem(QStringLiteral("Scripts / Components"), QStringLiteral("component"));
     connect(project_type_filter_, &QComboBox::currentIndexChanged, this, [this](int) {
         project_filter_->set_type_filter(project_type_filter_->currentData().toString());
     });
@@ -386,23 +928,124 @@ void EditorWindow::build_interface()
     connect(project_status_filter_, &QComboBox::currentIndexChanged, this, [this](int) {
         project_filter_->set_status_filter(project_status_filter_->currentData().toString());
     });
-    project_explorer_ = new QTreeView(this);
+    project_folder_filter_ = new ProjectFolderProxyModel(this);
+    project_folder_filter_->setSourceModel(project_model_);
+    auto* project_folders = new ProjectDropTreeView(this);
+    project_folder_tree_ = project_folders;
+    project_folder_tree_->setObjectName(QStringLiteral("ProjectFolderTree"));
+    project_folder_tree_->setAccessibleName(QStringLiteral("Project folder tree"));
+    project_folder_tree_->setModel(project_folder_filter_);
+    project_folder_tree_->setHeaderHidden(true);
+    project_folder_tree_->setAcceptDrops(true);
+    project_folder_tree_->setDropIndicatorShown(true);
+    project_folder_tree_->setDragDropMode(QAbstractItemView::DropOnly);
+    project_folder_tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    project_folder_tree_->setUniformRowHeights(true);
+    for (int column = 1; column < static_cast<int>(ProjectColumn::count); ++column)
+    {
+        project_folder_tree_->setColumnHidden(column, true);
+    }
+    connect(project_folder_tree_->selectionModel(), &QItemSelectionModel::currentChanged,
+        this, [this](const QModelIndex& current) { update_project_browser_folder(current); });
+
+    auto* project_list = new ProjectDropTreeView(this);
+    project_explorer_ = project_list;
     project_explorer_->setObjectName(QStringLiteral("ProjectExplorerView"));
-    project_explorer_->setAccessibleName(QStringLiteral("Project Explorer"));
+    project_explorer_->setAccessibleName(QStringLiteral("Project asset list"));
     project_explorer_->setModel(project_filter_);
     project_explorer_->setDragEnabled(true);
-    project_explorer_->setDragDropMode(QAbstractItemView::DragOnly);
+    project_explorer_->setAcceptDrops(true);
+    project_explorer_->setDragDropMode(QAbstractItemView::DragDrop);
     project_explorer_->setDefaultDropAction(Qt::CopyAction);
     project_explorer_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     project_explorer_->setUniformRowHeights(true);
     project_explorer_->setAlternatingRowColors(true);
+    project_explorer_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(project_explorer_, &QWidget::customContextMenuRequested,
+        this, &EditorWindow::show_project_browser_context_menu);
     connect(project_explorer_, &QTreeView::doubleClicked, this, &EditorWindow::activate_project_item);
     connect(project_explorer_, &QTreeView::activated, this, &EditorWindow::activate_project_item);
+    const auto select_drop_folder = [this](QModelIndex source) {
+        if (source.isValid() && ProjectModel::item_kind(source) != ProjectItemKind::folder)
+            source = source.parent();
+        if (!source.isValid()) return;
+        const auto folder_proxy = project_folder_filter_->mapFromSource(source.siblingAtColumn(0));
+        if (folder_proxy.isValid())
+        {
+            project_folder_tree_->setCurrentIndex(folder_proxy);
+            update_project_browser_folder(folder_proxy);
+        }
+    };
+    project_list->set_external_drop_handler([this, select_drop_folder](const QStringList& paths, const QModelIndex& destination) {
+        select_drop_folder(project_filter_->mapToSource(destination.siblingAtColumn(0)));
+        import_asset_paths(paths);
+    });
+    project_list->set_domain_drop_handler([this](const QMimeData* mime, const QModelIndex& destination) {
+        return handle_project_browser_drop(mime, project_filter_->mapToSource(destination.siblingAtColumn(0)));
+    });
+
+    auto* project_thumbnails = new ProjectDropListView(this);
+    project_thumbnail_view_ = project_thumbnails;
+    project_thumbnail_view_->setObjectName(QStringLiteral("ProjectThumbnailView"));
+    project_thumbnail_view_->setAccessibleName(QStringLiteral("Project asset thumbnails"));
+    project_thumbnail_view_->setModel(project_filter_);
+    project_thumbnail_view_->setViewMode(QListView::IconMode);
+    project_thumbnail_view_->setResizeMode(QListView::Adjust);
+    project_thumbnail_view_->setMovement(QListView::Static);
+    project_thumbnail_view_->setIconSize(QSize{72, 72});
+    project_thumbnail_view_->setGridSize(QSize{132, 112});
+    project_thumbnail_view_->setWordWrap(true);
+    project_thumbnail_view_->setDragEnabled(true);
+    project_thumbnail_view_->setAcceptDrops(true);
+    project_thumbnail_view_->setDragDropMode(QAbstractItemView::DragDrop);
+    project_thumbnail_view_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(project_thumbnail_view_, &QWidget::customContextMenuRequested,
+        this, &EditorWindow::show_project_browser_context_menu);
+    connect(project_thumbnail_view_, &QListView::doubleClicked, this, &EditorWindow::activate_project_item);
+    connect(project_thumbnail_view_, &QListView::activated, this, &EditorWindow::activate_project_item);
+    project_thumbnails->set_external_drop_handler([this, select_drop_folder](const QStringList& paths, const QModelIndex& destination) {
+        select_drop_folder(project_filter_->mapToSource(destination.siblingAtColumn(0)));
+        import_asset_paths(paths);
+    });
+    project_thumbnails->set_domain_drop_handler([this](const QMimeData* mime, const QModelIndex& destination) {
+        return handle_project_browser_drop(mime, project_filter_->mapToSource(destination.siblingAtColumn(0)));
+    });
+    project_folders->set_external_drop_handler([this](const QStringList& paths, const QModelIndex& destination) {
+        if (destination.isValid()) update_project_browser_folder(destination);
+        import_asset_paths(paths);
+    });
+    project_folders->set_domain_drop_handler([this](const QMimeData* mime, const QModelIndex& destination) {
+        return handle_project_browser_drop(mime,
+            project_folder_filter_->mapToSource(destination.siblingAtColumn(0)));
+    });
+
+    project_content_stack_ = new QStackedWidget(this);
+    project_content_stack_->setObjectName(QStringLiteral("ProjectContentStack"));
+    project_content_stack_->addWidget(project_explorer_);
+    project_content_stack_->addWidget(project_thumbnail_view_);
     auto* project_panel = new QWidget(this);
     project_panel->setObjectName(QStringLiteral("ProjectExplorerPanel"));
     auto* project_layout = new QVBoxLayout(project_panel);
     project_layout->setContentsMargins(4, 4, 4, 4);
     project_layout->addWidget(project_search_);
+    auto* breadcrumb_row = new QHBoxLayout;
+    project_breadcrumb_ = new QLabel(QStringLiteral("Project"), project_panel);
+    project_breadcrumb_->setObjectName(QStringLiteral("ProjectBreadcrumb"));
+    project_breadcrumb_->setAccessibleName(QStringLiteral("Current project folder breadcrumb"));
+    breadcrumb_row->addWidget(project_breadcrumb_, 1);
+    auto* list_mode = new QToolButton(project_panel);
+    list_mode->setObjectName(QStringLiteral("ProjectListMode"));
+    list_mode->setText(QStringLiteral("List"));
+    list_mode->setAccessibleName(QStringLiteral("Show project assets as a list"));
+    auto* thumbnail_mode = new QToolButton(project_panel);
+    thumbnail_mode->setObjectName(QStringLiteral("ProjectThumbnailMode"));
+    thumbnail_mode->setText(QStringLiteral("Tiles"));
+    thumbnail_mode->setAccessibleName(QStringLiteral("Show project assets as thumbnails"));
+    connect(list_mode, &QToolButton::clicked, this, [this] { project_content_stack_->setCurrentIndex(0); });
+    connect(thumbnail_mode, &QToolButton::clicked, this, [this] { project_content_stack_->setCurrentIndex(1); });
+    breadcrumb_row->addWidget(list_mode);
+    breadcrumb_row->addWidget(thumbnail_mode);
+    project_layout->addLayout(breadcrumb_row);
     auto* project_filter_row = new QHBoxLayout;
     project_filter_row->addWidget(project_type_filter_);
     project_filter_row->addWidget(project_status_filter_);
@@ -412,7 +1055,38 @@ void EditorWindow::build_interface()
     connect(project_refresh, &QPushButton::clicked, this, &EditorWindow::rebuild_assets);
     project_filter_row->addWidget(project_refresh);
     project_layout->addLayout(project_filter_row);
-    project_layout->addWidget(project_explorer_);
+    auto* project_splitter = new QSplitter(Qt::Horizontal, project_panel);
+    project_splitter->setObjectName(QStringLiteral("ProjectBrowserSplitter"));
+    project_splitter->setAccessibleName(QStringLiteral("Project folders and asset content"));
+    project_splitter->addWidget(project_folder_tree_);
+    project_splitter->addWidget(project_content_stack_);
+    project_splitter->setStretchFactor(0, 0);
+    project_splitter->setStretchFactor(1, 1);
+    project_splitter->setSizes({190, 520});
+    project_layout->addWidget(project_splitter, 1);
+    project_details_ = new QLabel(QStringLiteral("Select an asset to see details."), project_panel);
+    project_details_->setObjectName(QStringLiteral("ProjectDetailsPane"));
+    project_details_->setAccessibleName(QStringLiteral("Selected project asset details"));
+    project_details_->setWordWrap(true);
+    project_details_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    project_details_->setMinimumHeight(48);
+    project_layout->addWidget(project_details_);
+    const auto update_details = [this](const QModelIndex& current) {
+        if (!current.isValid())
+        {
+            project_details_->setText(QStringLiteral("Select an asset to see details."));
+            return;
+        }
+        const auto path = current.siblingAtColumn(0).data(EditorRoles::project_path).toString();
+        const auto kind = current.siblingAtColumn(static_cast<int>(ProjectColumn::kind_type)).data().toString();
+        const auto status = current.siblingAtColumn(static_cast<int>(ProjectColumn::overall_status)).data().toString();
+        project_details_->setText(QStringLiteral("%1  •  %2  •  %3")
+            .arg(kind, status, QDir::toNativeSeparators(path)));
+    };
+    connect(project_explorer_->selectionModel(), &QItemSelectionModel::currentChanged,
+        this, [update_details](const QModelIndex& current) { update_details(current); });
+    connect(project_thumbnail_view_->selectionModel(), &QItemSelectionModel::currentChanged,
+        this, [update_details](const QModelIndex& current) { update_details(current); });
 
     console_model_ = new ConsoleModel(this);
     console_filter_ = new RecursiveFilterProxyModel(this);
@@ -505,21 +1179,174 @@ void EditorWindow::build_interface()
     connect(project_watcher_, &QFileSystemWatcher::directoryChanged, this,
         [this](const QString&) { schedule_project_refresh(); });
 
+    tile_document_service_ = new TileDocumentService(this);
+    tile_palette_ = new TilePaletteWidget(tile_document_service_, this);
+    connect(tile_document_service_, &TileDocumentService::diagnostic, this, [this](const QString& message) {
+        append_console(message, QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+    });
+    connect(tile_document_service_, &TileDocumentService::dirtyChanged, this, [this](bool) {
+        update_window_title();
+        update_action_states();
+    });
+
+    auto* project_hub_panel = new QWidget(this);
+    project_hub_panel->setObjectName(QStringLiteral("ProjectHubPanel"));
+    project_hub_panel->setAccessibleName(QStringLiteral("Dragon Pixel Project Hub"));
+    auto* project_hub_layout = new QVBoxLayout(project_hub_panel);
+    project_hub_layout->setContentsMargins(28, 28, 28, 28);
+    project_hub_layout->setSpacing(12);
+    auto* project_hub_title = new QLabel(QStringLiteral("Dragon Pixel Project Hub"), project_hub_panel);
+    project_hub_title->setObjectName(QStringLiteral("ProjectHubTitle"));
+    auto hub_title_font = project_hub_title->font();
+    hub_title_font.setPointSize(hub_title_font.pointSize() + 7);
+    hub_title_font.setBold(true);
+    project_hub_title->setFont(hub_title_font);
+    project_hub_layout->addWidget(project_hub_title);
+    auto* project_hub_copy = new QLabel(
+        QStringLiteral("Create a clean 2D or 3D project, open an existing project, or continue from a recent project."),
+        project_hub_panel);
+    project_hub_copy->setWordWrap(true);
+    project_hub_copy->setAccessibleName(QStringLiteral("Project Hub instructions"));
+    project_hub_layout->addWidget(project_hub_copy);
+    auto* project_hub_buttons = new QWidget(project_hub_panel);
+    auto* project_hub_buttons_layout = new QHBoxLayout(project_hub_buttons);
+    project_hub_buttons_layout->setContentsMargins(0, 0, 0, 0);
+    project_hub_new_ = new QPushButton(QStringLiteral("New Project..."), project_hub_buttons);
+    project_hub_new_->setObjectName(QStringLiteral("ProjectHubNewProject"));
+    project_hub_new_->setAccessibleName(QStringLiteral("Create a new Dragon Pixel project"));
+    project_hub_open_ = new QPushButton(QStringLiteral("Open Project..."), project_hub_buttons);
+    project_hub_open_->setObjectName(QStringLiteral("ProjectHubOpenProject"));
+    project_hub_open_->setAccessibleName(QStringLiteral("Open an existing Dragon Pixel project"));
+    project_hub_buttons_layout->addWidget(project_hub_new_);
+    project_hub_buttons_layout->addWidget(project_hub_open_);
+    project_hub_buttons_layout->addStretch();
+    project_hub_layout->addWidget(project_hub_buttons);
+    auto* recent_label = new QLabel(QStringLiteral("Recent Projects"), project_hub_panel);
+    recent_label->setObjectName(QStringLiteral("ProjectHubRecentLabel"));
+    project_hub_layout->addWidget(recent_label);
+    project_hub_recent_ = new QListWidget(project_hub_panel);
+    project_hub_recent_->setObjectName(QStringLiteral("ProjectHubRecentProjects"));
+    project_hub_recent_->setAccessibleName(QStringLiteral("Recent Dragon Pixel projects"));
+    project_hub_layout->addWidget(project_hub_recent_, 1);
+    connect(project_hub_new_, &QPushButton::clicked, this, &EditorWindow::create_project_dialog);
+    connect(project_hub_open_, &QPushButton::clicked, this, &EditorWindow::open_project_dialog);
+    connect(project_hub_recent_, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
+        if (item != nullptr)
+        {
+            load_project(item->data(Qt::UserRole).toString());
+        }
+    });
+
+    auto* onboarding_panel = new QWidget(this);
+    onboarding_panel->setObjectName(QStringLiteral("GettingStartedPanel"));
+    onboarding_panel->setAccessibleName(QStringLiteral("Dragon Pixel getting started guide"));
+    auto* onboarding_layout = new QVBoxLayout(onboarding_panel);
+    onboarding_layout->setContentsMargins(18, 18, 18, 18);
+    onboarding_layout->setSpacing(10);
+    auto* onboarding_title = new QLabel(QStringLiteral("Build your first playable object"), onboarding_panel);
+    onboarding_title->setObjectName(QStringLiteral("GettingStartedTitle"));
+    auto title_font = onboarding_title->font();
+    title_font.setPointSize(title_font.pointSize() + 4);
+    title_font.setBold(true);
+    onboarding_title->setFont(title_font);
+    onboarding_layout->addWidget(onboarding_title);
+    auto* onboarding_copy = new QLabel(
+        QStringLiteral("Create a visible sprite, select it in the Hierarchy, edit its Transform and component fields in the Inspector, then add a script and press Play. Use W, E, and R in Scene View for Move, Rotate, and Scale."),
+        onboarding_panel);
+    onboarding_copy->setObjectName(QStringLiteral("GettingStartedDescription"));
+    onboarding_copy->setWordWrap(true);
+    onboarding_copy->setAccessibleName(QStringLiteral("Getting started instructions"));
+    onboarding_layout->addWidget(onboarding_copy);
+    onboarding_add_square_ = new QPushButton(QStringLiteral("1. Add Square Sprite"), onboarding_panel);
+    onboarding_add_square_->setObjectName(QStringLiteral("OnboardingAddSquare"));
+    onboarding_add_square_->setAccessibleName(QStringLiteral("Add a square sprite GameObject"));
+    connect(onboarding_add_square_, &QPushButton::clicked, this, [this] {
+        create_preset(dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://square"));
+    });
+    onboarding_layout->addWidget(onboarding_add_square_);
+    onboarding_add_circle_ = new QPushButton(QStringLiteral("2. Add Circle Sprite"), onboarding_panel);
+    onboarding_add_circle_->setObjectName(QStringLiteral("OnboardingAddCircle"));
+    onboarding_add_circle_->setAccessibleName(QStringLiteral("Add a circle sprite GameObject"));
+    connect(onboarding_add_circle_, &QPushButton::clicked, this, [this] {
+        create_preset(dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://circle"));
+    });
+    onboarding_layout->addWidget(onboarding_add_circle_);
+    onboarding_add_component_ = new QPushButton(QStringLiteral("3. Add Component to Selection"), onboarding_panel);
+    onboarding_add_component_->setObjectName(QStringLiteral("OnboardingAddComponent"));
+    onboarding_add_component_->setAccessibleName(QStringLiteral("Add a component to the selected GameObject"));
+    connect(onboarding_add_component_, &QPushButton::clicked, this, &EditorWindow::add_component);
+    onboarding_layout->addWidget(onboarding_add_component_);
+    onboarding_create_csharp_ = new QPushButton(QStringLiteral("4. Create and Attach C# Script"), onboarding_panel);
+    onboarding_create_csharp_->setObjectName(QStringLiteral("OnboardingCreateCSharpScript"));
+    onboarding_create_csharp_->setAccessibleName(QStringLiteral("Create a C sharp script component and attach it to the selection"));
+    connect(onboarding_create_csharp_, &QPushButton::clicked, this,
+        [this] { create_project_component(ProjectComponentLanguage::csharp); });
+    onboarding_layout->addWidget(onboarding_create_csharp_);
+    onboarding_create_cpp_ = new QPushButton(QStringLiteral("5. Create and Attach C++ Component"), onboarding_panel);
+    onboarding_create_cpp_->setObjectName(QStringLiteral("OnboardingCreateCppComponent"));
+    onboarding_create_cpp_->setAccessibleName(QStringLiteral("Create a C plus plus component and attach it to the selection"));
+    connect(onboarding_create_cpp_, &QPushButton::clicked, this,
+        [this] { create_project_component(ProjectComponentLanguage::cpp); });
+    onboarding_layout->addWidget(onboarding_create_cpp_);
+    onboarding_play_ = new QPushButton(QStringLiteral("6. Play"), onboarding_panel);
+    onboarding_play_->setObjectName(QStringLiteral("OnboardingPlay"));
+    onboarding_play_->setAccessibleName(QStringLiteral("Play the current scene"));
+    connect(onboarding_play_, &QPushButton::clicked, this, [this] {
+        if (play_action_ != nullptr && play_action_->isEnabled()) start_play();
+    });
+    onboarding_layout->addWidget(onboarding_play_);
+    auto* onboarding_hint = new QLabel(
+        QStringLiteral("Script fields such as Speed are saved authoring data and stay editable in the Inspector even before Build Components succeeds. Script code runs only in isolated Preview and Play workers."),
+        onboarding_panel);
+    onboarding_hint->setObjectName(QStringLiteral("GettingStartedScriptHint"));
+    onboarding_hint->setWordWrap(true);
+    onboarding_hint->setAccessibleName(QStringLiteral("Script authoring safety guidance"));
+    onboarding_layout->addWidget(onboarding_hint);
+    onboarding_layout->addStretch();
+    auto* dismiss_onboarding = new QPushButton(QStringLiteral("Open Scene View"), onboarding_panel);
+    dismiss_onboarding->setObjectName(QStringLiteral("OnboardingDismiss"));
+    dismiss_onboarding->setAccessibleName(QStringLiteral("Close getting started and open Scene View"));
+    connect(dismiss_onboarding, &QPushButton::clicked, this, [this] {
+        onboarding_dock_->hide();
+        scene_view_dock_->show();
+        scene_view_dock_->raise();
+        QSettings settings{editor_settings_path(), QSettings::IniFormat};
+        settings.setValue(QStringLiteral("onboarding/seen"), true);
+    });
+    onboarding_layout->addWidget(dismiss_onboarding);
+
     auto make_dock = [this](const QString& title, const QString& id, QWidget* widget, Qt::DockWidgetArea area) {
         auto* dock = new QDockWidget(title, this);
         dock->setObjectName(QStringLiteral("Dock.%1").arg(id));
         dock->setWidget(widget);
         dock->setAccessibleName(title);
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        dock->setFeatures(
+            QDockWidget::DockWidgetClosable
+            | QDockWidget::DockWidgetMovable
+            | QDockWidget::DockWidgetFloatable);
         addDockWidget(area, dock);
         return dock;
     };
     scene_dock_ = make_dock(QStringLiteral("Scene"), QStringLiteral("Scene"), scene_summary_, Qt::LeftDockWidgetArea);
+    scene_view_dock_ = make_dock(QStringLiteral("Scene View"), QStringLiteral("SceneView"), viewport_, Qt::RightDockWidgetArea);
+    game_view_dock_ = make_dock(QStringLiteral("Game"), QStringLiteral("GameView"), game_panel, Qt::RightDockWidgetArea);
     hierarchy_dock_ = make_dock(QStringLiteral("Hierarchy"), QStringLiteral("Hierarchy"), hierarchy_panel, Qt::LeftDockWidgetArea);
     assets_dock_ = make_dock(QStringLiteral("Project Explorer"), QStringLiteral("ProjectExplorer"), project_panel, Qt::LeftDockWidgetArea);
-    inspector_dock_ = make_dock(QStringLiteral("Inspector"), QStringLiteral("Inspector"), inspector_, Qt::RightDockWidgetArea);
+    inspector_dock_ = make_dock(QStringLiteral("Inspector"), QStringLiteral("Inspector"), inspector_panel_, Qt::RightDockWidgetArea);
+    tile_palette_dock_ = make_dock(QStringLiteral("Tile Palette"), QStringLiteral("TilePalette"), tile_palette_, Qt::BottomDockWidgetArea);
     console_dock_ = make_dock(QStringLiteral("Console"), QStringLiteral("Console"), console_panel, Qt::BottomDockWidgetArea);
+    onboarding_dock_ = make_dock(QStringLiteral("Getting Started"), QStringLiteral("GettingStarted"), onboarding_panel, Qt::RightDockWidgetArea);
+    project_hub_dock_ = make_dock(QStringLiteral("Project Hub"), QStringLiteral("ProjectHub"), project_hub_panel, Qt::RightDockWidgetArea);
     tabifyDockWidget(scene_dock_, hierarchy_dock_);
+    tabifyDockWidget(scene_view_dock_, game_view_dock_);
+    tabifyDockWidget(scene_view_dock_, onboarding_dock_);
+    tabifyDockWidget(scene_view_dock_, project_hub_dock_);
+    tabifyDockWidget(console_dock_, tile_palette_dock_);
     hierarchy_dock_->raise();
+    scene_view_dock_->raise();
+    tile_palette_dock_->hide();
+    project_hub_dock_->hide();
 
     auto* runtime_bar = addToolBar(QStringLiteral("Runtime"));
     runtime_bar->setObjectName(QStringLiteral("RuntimeToolbar"));
@@ -550,6 +1377,7 @@ void EditorWindow::build_interface()
     simulate_action_->setToolTip(
         QStringLiteral("Run disposable 2D/3D physics in the Edit preview; stopping restores authoring transforms"));
     pause_action_ = add_runtime_action(QStringLiteral("Pause"), QStringLiteral("PauseAction"), [this] {
+        game_viewport_->set_input_enabled(false);
         play_worker_->pause();
         play_paused_ = true;
         update_action_states();
@@ -576,17 +1404,27 @@ void EditorWindow::build_interface()
     preset_button->setText(QStringLiteral("Add GameObject"));
     preset_button->setPopupMode(QToolButton::InstantPopup);
     auto* preset_menu = new QMenu(preset_button);
-    auto add_preset = [this, preset_menu](const QString& text, const QString& name, auto preset) {
+    auto add_toolbar_preset = [this, preset_menu](const QString& text, const QString& name, auto preset) {
         auto* action = preset_menu->addAction(text);
         action->setObjectName(name);
         connect(action, &QAction::triggered, this, [this, preset] { create_preset(preset); });
         return action;
     };
-    add_preset(QStringLiteral("Empty"), QStringLiteral("AddEmptyGameObjectAction"), dragonpixel::scene::entity_preset::empty);
-    add_preset(QStringLiteral("Sprite"), QStringLiteral("AddSpriteGameObjectAction"), dragonpixel::scene::entity_preset::sprite);
-    add_preset(QStringLiteral("Cube"), QStringLiteral("AddCubeGameObjectAction"), dragonpixel::scene::entity_preset::cube);
-    add_preset(QStringLiteral("Camera"), QStringLiteral("AddCameraGameObjectAction"), dragonpixel::scene::entity_preset::camera);
-    add_preset(QStringLiteral("Light"), QStringLiteral("AddLightGameObjectAction"), dragonpixel::scene::entity_preset::light);
+    add_toolbar_preset(QStringLiteral("Empty"), QStringLiteral("AddEmptyGameObjectAction"), dragonpixel::scene::entity_preset::empty);
+    add_toolbar_preset(QStringLiteral("Sprite"), QStringLiteral("AddSpriteGameObjectAction"), dragonpixel::scene::entity_preset::sprite);
+    auto* square_sprite = preset_menu->addAction(QStringLiteral("Square Sprite"));
+    square_sprite->setObjectName(QStringLiteral("AddSquareSpriteAction"));
+    connect(square_sprite, &QAction::triggered, this, [this] {
+        create_preset(dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://square"));
+    });
+    auto* circle_sprite = preset_menu->addAction(QStringLiteral("Circle Sprite"));
+    circle_sprite->setObjectName(QStringLiteral("AddCircleSpriteAction"));
+    connect(circle_sprite, &QAction::triggered, this, [this] {
+        create_preset(dragonpixel::scene::entity_preset::sprite, QStringLiteral("builtin://circle"));
+    });
+    add_toolbar_preset(QStringLiteral("Cube"), QStringLiteral("AddCubeGameObjectAction"), dragonpixel::scene::entity_preset::cube);
+    add_toolbar_preset(QStringLiteral("Camera"), QStringLiteral("AddCameraGameObjectAction"), dragonpixel::scene::entity_preset::camera);
+    add_toolbar_preset(QStringLiteral("Light"), QStringLiteral("AddLightGameObjectAction"), dragonpixel::scene::entity_preset::light);
     preset_button->setMenu(preset_menu);
     edit_bar->addWidget(preset_button);
     duplicate_action_ = add_edit_action(QStringLiteral("Duplicate"), QStringLiteral("DuplicateGameObjectAction"), [this] { duplicate_selected(); });
@@ -624,19 +1462,18 @@ void EditorWindow::build_interface()
     snapping->setCheckable(true);
 
     auto* file_menu = menuBar()->addMenu(QStringLiteral("&File"));
+    auto* new_project = file_menu->addAction(QStringLiteral("&New Project..."));
+    new_project->setObjectName(QStringLiteral("NewProjectAction"));
+    new_project->setShortcut(QKeySequence{Qt::CTRL | Qt::SHIFT | Qt::Key_N});
+    connect(new_project, &QAction::triggered, this, &EditorWindow::create_project_dialog);
+    new_scene_action_ = file_menu->addAction(QStringLiteral("New &Scene..."));
+    new_scene_action_->setObjectName(QStringLiteral("NewSceneAction"));
+    new_scene_action_->setShortcut(QKeySequence::New);
+    connect(new_scene_action_, &QAction::triggered, this, &EditorWindow::create_clean_scene_dialog);
+    file_menu->addSeparator();
     auto* open_project = file_menu->addAction(QStringLiteral("Open &Project..."));
     open_project->setObjectName(QStringLiteral("OpenProjectAction"));
-    connect(open_project, &QAction::triggered, this, [this] {
-        const auto path = QFileDialog::getOpenFileName(
-            this,
-            QStringLiteral("Open Dragon Pixel project"),
-            project_root_,
-            QStringLiteral("Dragon Pixel Project (DragonPixelProject.json);;JSON (*.json)"));
-        if (!path.isEmpty())
-        {
-            load_project(path);
-        }
-    });
+    connect(open_project, &QAction::triggered, this, &EditorWindow::open_project_dialog);
     auto* open = file_menu->addAction(QStringLiteral("&Open Scene..."));
     open->setObjectName(QStringLiteral("OpenSceneAction"));
     connect(open, &QAction::triggered, this, [this] {
@@ -653,6 +1490,10 @@ void EditorWindow::build_interface()
     save_action_->setObjectName(QStringLiteral("SaveSceneAction"));
     save_action_->setShortcut(QKeySequence::Save);
     connect(save_action_, &QAction::triggered, this, [this] { save_scene(); });
+    save_scene_as_action_ = file_menu->addAction(QStringLiteral("Save Scene &As..."));
+    save_scene_as_action_->setObjectName(QStringLiteral("SaveSceneAsAction"));
+    save_scene_as_action_->setShortcut(QKeySequence::SaveAs);
+    connect(save_scene_as_action_, &QAction::triggered, this, &EditorWindow::save_scene_as);
     file_menu->addSeparator();
     file_menu->addAction(QStringLiteral("E&xit"), this, &QWidget::close);
 
@@ -668,6 +1509,13 @@ void EditorWindow::build_interface()
     edit_menu->addSeparator();
     edit_menu->addAction(duplicate_action_);
     edit_menu->addAction(delete_action_);
+    edit_menu->addSeparator();
+    auto* project_settings_menu = edit_menu->addMenu(QStringLiteral("Project Settings"));
+    project_settings_menu->setObjectName(QStringLiteral("ProjectSettingsMenu"));
+    input_settings_action_ = project_settings_menu->addAction(QStringLiteral("Input..."));
+    input_settings_action_->setObjectName(QStringLiteral("InputSettingsAction"));
+    input_settings_action_->setToolTip(QStringLiteral("Configure control maps, actions, keyboard, mouse, and gamepad bindings"));
+    connect(input_settings_action_, &QAction::triggered, this, &EditorWindow::edit_input_map);
 
     auto* game_object_menu = menuBar()->addMenu(QStringLiteral("&GameObject"));
     for (auto* action : preset_menu->actions())
@@ -726,14 +1574,73 @@ void EditorWindow::build_interface()
     unpack_completely_prefab_action_->setObjectName(QStringLiteral("UnpackCompletelyPrefabAction"));
     connect(unpack_completely_prefab_action_, &QAction::triggered, this, [this] { unpack_prefab(true); });
 
-    auto* view_menu = menuBar()->addMenu(QStringLiteral("&View"));
-    view_menu->setObjectName(QStringLiteral("ViewMenu"));
-    for (auto* dock : {scene_dock_, hierarchy_dock_, assets_dock_, inspector_dock_, console_dock_})
+    auto* assets_menu = menuBar()->addMenu(QStringLiteral("&Assets"));
+    assets_menu->setObjectName(QStringLiteral("AssetsMenu"));
+    auto* import_assets = assets_menu->addAction(QStringLiteral("Import..."));
+    import_assets->setObjectName(QStringLiteral("ImportAssetsAction"));
+    connect(import_assets, &QAction::triggered, this, [this] {
+        import_asset_paths(QFileDialog::getOpenFileNames(this, QStringLiteral("Import Assets"),
+            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+            QStringLiteral("All Files (*.*)")));
+    });
+    auto* create_asset_folder = assets_menu->addAction(QStringLiteral("Create Folder..."));
+    create_asset_folder->setObjectName(QStringLiteral("CreateAssetFolderAction"));
+    connect(create_asset_folder, &QAction::triggered, this, [this] {
+        if (project_manifest_path_.isEmpty()) return;
+        bool accepted = false;
+        const auto name = QInputDialog::getText(this, QStringLiteral("Create Folder"),
+            QStringLiteral("Folder name"), QLineEdit::Normal,
+            QStringLiteral("New Folder"), &accepted).trimmed();
+        if (!accepted || name.isEmpty()) return;
+        const auto result = asset_service_.create_folder(project_manifest_path_,
+            QDir::fromNativeSeparators(QDir{current_project_folder_relative()}.filePath(name)));
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Create Folder"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Folder creation failed.")
+                                             : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    });
+    assets_menu->addAction(QStringLiteral("Refresh"), this, &EditorWindow::rebuild_assets);
+    assets_menu->addSeparator();
+    auto* create_tile_set = assets_menu->addAction(QStringLiteral("Create TileSet from PNG..."));
+    create_tile_set->setObjectName(QStringLiteral("CreateTileSetFromPngAction"));
+    connect(create_tile_set, &QAction::triggered, this, &EditorWindow::create_tile_set_from_png);
+    input_map_action_ = assets_menu->addAction(QStringLiteral("Input Map..."));
+    input_map_action_->setObjectName(QStringLiteral("InputMapAction"));
+    connect(input_map_action_, &QAction::triggered, this, &EditorWindow::edit_input_map);
+
+    auto* components_menu = menuBar()->addMenu(QStringLiteral("&Components"));
+    components_menu->setObjectName(QStringLiteral("ComponentsMenu"));
+    auto* create_csharp_component = components_menu->addAction(QStringLiteral("Create C# Script..."));
+    create_csharp_component->setObjectName(QStringLiteral("CreateCSharpComponentAction"));
+    connect(create_csharp_component, &QAction::triggered, this,
+        [this] { create_project_component(ProjectComponentLanguage::csharp); });
+    auto* create_cpp_component = components_menu->addAction(QStringLiteral("Create C++ Component..."));
+    create_cpp_component->setObjectName(QStringLiteral("CreateCppComponentAction"));
+    connect(create_cpp_component, &QAction::triggered, this,
+        [this] { create_project_component(ProjectComponentLanguage::cpp); });
+    components_menu->addSeparator();
+    auto* build_components = components_menu->addAction(QStringLiteral("Build Components"));
+    build_components->setObjectName(QStringLiteral("BuildComponentsAction"));
+    build_components->setShortcut(QKeySequence{QStringLiteral("Ctrl+Shift+B")});
+    connect(build_components, &QAction::triggered, this, &EditorWindow::build_project_components);
+
+    view_menu_ = menuBar()->addMenu(QStringLiteral("&View"));
+    view_menu_->setObjectName(QStringLiteral("ViewMenu"));
+    for (auto* dock : {scene_view_dock_, game_view_dock_, scene_dock_, hierarchy_dock_, assets_dock_, inspector_dock_, tile_palette_dock_, console_dock_, onboarding_dock_, project_hub_dock_})
     {
-        view_menu->addAction(dock->toggleViewAction());
+        view_menu_->addAction(dock->toggleViewAction());
     }
-    view_menu->addSeparator();
-    auto* workspace_menu = view_menu->addMenu(QStringLiteral("Workspaces"));
+    view_menu_->addSeparator();
+    auto* new_inspector = view_menu_->addAction(QStringLiteral("New Inspector"));
+    new_inspector->setObjectName(QStringLiteral("NewInspectorAction"));
+    connect(new_inspector, &QAction::triggered, this, &EditorWindow::create_additional_inspector);
+    QSettings inspector_settings{editor_settings_path(), QSettings::IniFormat};
+    const auto saved_inspector_count = std::clamp(
+        inspector_settings.value(QStringLiteral("inspector/count"), 1).toInt(), 1, 8);
+    for (int index = 1; index < saved_inspector_count; ++index) create_additional_inspector();
+    view_menu_->addSeparator();
+    auto* workspace_menu = view_menu_->addMenu(QStringLiteral("Workspaces"));
     auto add_workspace = [this, workspace_menu](const QString& label, const QString& id) {
         auto* action = workspace_menu->addAction(label);
         action->setObjectName(QStringLiteral("Workspace%1Action").arg(id));
@@ -742,15 +1649,15 @@ void EditorWindow::build_interface()
     add_workspace(QStringLiteral("2D"), QStringLiteral("2D"));
     add_workspace(QStringLiteral("3D"), QStringLiteral("3D"));
     add_workspace(QStringLiteral("Debug"), QStringLiteral("Debug"));
-    auto* reset_layout = view_menu->addAction(QStringLiteral("Reset Layout"));
+    auto* reset_layout = view_menu_->addAction(QStringLiteral("Reset Layout"));
     reset_layout->setObjectName(QStringLiteral("ResetLayoutAction"));
     connect(reset_layout, &QAction::triggered, this, &EditorWindow::reset_workspace);
-    auto* save_layout = view_menu->addAction(QStringLiteral("Save Layout"));
+    auto* save_layout = view_menu_->addAction(QStringLiteral("Save Layout"));
     save_layout->setObjectName(QStringLiteral("SaveLayoutAction"));
     connect(save_layout, &QAction::triggered, this, [this] {
         QSettings settings{editor_settings_path(), QSettings::IniFormat};
         settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
-        settings.setValue(QStringLiteral("window/state"), saveState(2));
+        settings.setValue(QStringLiteral("window/state"), saveState(workspace_state_version));
         settings.sync();
         statusBar()->showMessage(QStringLiteral("Workspace layout saved for this user"), 3000);
     });
@@ -821,12 +1728,606 @@ void EditorWindow::build_interface()
     reset_workspace();
     QSettings settings{editor_settings_path(), QSettings::IniFormat};
     restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
-    restoreState(settings.value(QStringLiteral("window/state")).toByteArray(), 2);
+    const auto saved_workspace = settings.value(QStringLiteral("window/state")).toByteArray();
+    if (!saved_workspace.isEmpty()
+        && !restoreState(saved_workspace, workspace_state_version))
+    {
+        settings.remove(QStringLiteral("window/state"));
+        reset_workspace();
+    }
+    if (!settings.value(QStringLiteral("onboarding/seen"), false).toBool())
+    {
+        onboarding_dock_->show();
+        onboarding_dock_->raise();
+    }
     viewport_->set_view_mode(settings.value(QStringLiteral("workspace/current"), QStringLiteral("3D")).toString()
             == QStringLiteral("2D")
         ? AuthoringViewport::ViewMode::two_d
         : AuthoringViewport::ViewMode::three_d);
     update_action_states();
+}
+
+void EditorWindow::create_tile_set_from_png()
+{
+    if (project_root_.isEmpty())
+    {
+        append_console(QStringLiteral("Open a project before creating a TileSet."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        return;
+    }
+    TileSetWizard wizard{project_root_, this};
+    if (wizard.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    const auto& created = wizard.result();
+    append_console(QStringLiteral("Created TileSet %1 with %2 tile(s) and contained texture %3")
+        .arg(QFileInfo{created.tile_set_path}.completeBaseName())
+        .arg(created.tile_count)
+        .arg(QFileInfo{created.texture_path}.fileName()),
+        QStringLiteral("Info"), QStringLiteral("Tile Authoring"), created.tile_set_path,
+        {}, {}, {}, {}, created.tile_set_asset_id, created.tile_set_path);
+    rebuild_assets();
+}
+
+void EditorWindow::create_project_component(ProjectComponentLanguage language)
+{
+    if (project_root_.isEmpty())
+    {
+        append_console(QStringLiteral("Open a project before creating a component."),
+            QStringLiteral("Warning"), QStringLiteral("Components"));
+        return;
+    }
+    std::optional<QString> prompted_name;
+    if (component_name_prompt_)
+    {
+        prompted_name = component_name_prompt_(language);
+    }
+    else
+    {
+        bool accepted{};
+        const auto label = language == ProjectComponentLanguage::csharp
+            ? QStringLiteral("C# script name") : QStringLiteral("C++ component name");
+        const auto name = QInputDialog::getText(
+            this,
+            QStringLiteral("Create Project Script or Component"),
+            label,
+            QLineEdit::Normal,
+            QStringLiteral("NewComponent"),
+            &accepted).trimmed();
+        if (accepted)
+        {
+            prompted_name = name;
+        }
+    }
+    if (!prompted_name || prompted_name->trimmed().isEmpty()) return;
+    const auto name = prompted_name->trimmed();
+    QStringList component_roots;
+    if (project_index_.candidate)
+    {
+        for (const auto& root : project_index_.candidate->roots)
+        {
+            if (root.kind == ProjectIndexRootKind::components)
+                component_roots.push_back(root.declared_path);
+        }
+    }
+    QString selected_component_root;
+    if (component_roots.size() == 1)
+    {
+        selected_component_root = component_roots.front();
+    }
+    else if (component_roots.size() > 1)
+    {
+        bool root_accepted{};
+        selected_component_root = QInputDialog::getItem(
+            this,
+            QStringLiteral("Select Component Root"),
+            QStringLiteral("Component root"),
+            component_roots,
+            0,
+            false,
+            &root_accepted);
+        if (!root_accepted) return;
+    }
+    ComponentCreationRequest request{
+        project_root_, component_roots, name, QStringLiteral("Scripts"), language};
+    request.selected_component_root = selected_component_root;
+    append_console(
+        QStringLiteral("Generating contained %1 source and metadata for %2...")
+            .arg(language == ProjectComponentLanguage::csharp
+                    ? QStringLiteral("C# script")
+                    : QStringLiteral("C++ component"),
+                name),
+        QStringLiteral("Info"),
+        QStringLiteral("Components"));
+    const auto created = ComponentModuleService::create(request);
+    if (!created.succeeded)
+    {
+        append_console(created.error, QStringLiteral("Error"), QStringLiteral("Components"));
+        statusBar()->showMessage(QStringLiteral("Component creation failed; see Console"), 5000);
+        return;
+    }
+    if (!reload_project_component_metadata())
+    {
+        append_console(QStringLiteral("The source was created, but its metadata could not be activated. Fix the reported metadata diagnostic before using it."),
+            QStringLiteral("Error"), QStringLiteral("Components"), created.manifest_path);
+        return;
+    }
+    apply_component_module_manifest({});
+    const auto targets = selected_entity_ids();
+    const auto attached = !targets.isEmpty()
+        && attach_component_type(
+            created.type_id,
+            targets,
+            QStringLiteral("Attach newly created project component"));
+    append_console(QStringLiteral("Created %1 %2 (%3)%4.%5")
+        .arg(language == ProjectComponentLanguage::csharp ? QStringLiteral("C# script") : QStringLiteral("C++ component"),
+             name,
+             created.type_id,
+             attached ? QStringLiteral(" and attached it to %1 selected GameObject(s)").arg(targets.size()) : QString{},
+             language == ProjectComponentLanguage::csharp
+                 ? QStringLiteral(" Building scripts now so it can run in Preview and Play")
+                 : QStringLiteral(" Build Components to make it executable in workers")),
+        QStringLiteral("Info"), QStringLiteral("Components"), created.source_path,
+        {}, {}, {}, {}, {}, created.source_path);
+    rebuild_assets();
+    if (language == ProjectComponentLanguage::csharp && auto_build_project_scripts_)
+    {
+        QTimer::singleShot(0, this, [this] {
+            if (!project_root_.isEmpty()) build_project_components();
+        });
+    }
+}
+
+bool EditorWindow::reload_project_component_metadata()
+{
+    if (project_root_.isEmpty() || !project_index_.candidate) return false;
+    QStringList component_roots;
+    for (const auto& root : project_index_.candidate->roots)
+    {
+        if (root.kind == ProjectIndexRootKind::components) component_roots.push_back(root.declared_path);
+    }
+    auto candidate = dragonpixel::metadata::registry::slice_one_defaults();
+    const auto loaded = MetadataManifestService{}.load_project(project_root_, component_roots, candidate);
+    for (const auto& diagnostic : loaded.diagnostics)
+        append_console(diagnostic, loaded.succeeded ? QStringLiteral("Warning") : QStringLiteral("Error"),
+            QStringLiteral("Metadata"));
+    if (!loaded.succeeded) return false;
+    metadata_ = std::move(candidate);
+    prefab_service_.set_metadata(&metadata_);
+    inspect_selected_entities();
+    update_action_states();
+    return true;
+}
+
+void EditorWindow::build_project_components()
+{
+    if (project_root_.isEmpty())
+    {
+        append_console(QStringLiteral("Open a project before building components."),
+            QStringLiteral("Warning"), QStringLiteral("Components"));
+        return;
+    }
+    QStringList component_roots;
+    if (project_index_.candidate)
+    {
+        for (const auto& root : project_index_.candidate->roots)
+        {
+            if (root.kind == ProjectIndexRootKind::components)
+                component_roots.push_back(root.declared_path);
+        }
+    }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const auto result = ComponentModuleService::build(
+        project_root_, component_roots, dragonpixel::editor::runtime_paths::file(
+            "DPE_CONTRACTS_ASSEMBLY",
+            QStringLiteral("runtime/contracts/DragonPixel.Contracts.dll"),
+            QString::fromUtf8(DPE_CONTRACTS_ASSEMBLY)));
+    QApplication::restoreOverrideCursor();
+    for (const auto& diagnostic : result.diagnostics)
+    {
+        const auto compact = diagnostic.trimmed();
+        if (!compact.isEmpty()) append_console(compact, result.succeeded ? QStringLiteral("Info") : QStringLiteral("Error"),
+            QStringLiteral("Component Build"));
+    }
+    if (!result.succeeded)
+    {
+        apply_component_module_manifest({});
+        if (play_running_) stop_play();
+        preview_worker_->stop_and_discard();
+        game_preview_worker_->stop_and_discard();
+        refresh_preview();
+        append_console(result.error, QStringLiteral("Error"), QStringLiteral("Component Build"));
+        QMessageBox::warning(this, QStringLiteral("Component build failed"), result.error);
+        return;
+    }
+    apply_component_module_manifest(result.runtime_manifest_path);
+    if (play_running_) stop_play();
+    preview_worker_->stop_and_discard();
+    game_preview_worker_->stop_and_discard();
+    refresh_preview();
+    append_console(QStringLiteral("Component build %1: %2 managed and %3 native type(s). Workers restarted from cache %4.")
+        .arg(result.reused_cache ? QStringLiteral("reused") : QStringLiteral("completed"))
+        .arg(result.managed_component_count)
+        .arg(result.native_component_count)
+        .arg(result.build_hash.left(12)),
+        QStringLiteral("Info"), QStringLiteral("Component Build"), result.runtime_manifest_path);
+}
+
+void EditorWindow::edit_project_source(const QString& source_path)
+{
+    if (project_root_.isEmpty() || !project_index_.candidate)
+    {
+        append_console(
+            QStringLiteral("Open a valid project before editing component source."),
+            QStringLiteral("Warning"),
+            QStringLiteral("Script Editor"));
+        return;
+    }
+
+    ScriptEditorRequest request;
+    request.project_root = project_root_;
+    request.selected_source_path = QDir::isAbsolutePath(source_path)
+        ? source_path
+        : QDir{project_root_}.filePath(source_path);
+    request.contracts_assembly_path = dragonpixel::editor::runtime_paths::file(
+        "DPE_CONTRACTS_ASSEMBLY",
+        QStringLiteral("runtime/contracts/DragonPixel.Contracts.dll"),
+        QString::fromUtf8(DPE_CONTRACTS_ASSEMBLY));
+    for (const auto& entry : project_index_.candidate->entries)
+    {
+        if (entry.kind == ProjectIndexEntryKind::component_source)
+        {
+            request.component_source_paths.push_back(entry.absolute_path);
+        }
+        else if (entry.kind == ProjectIndexEntryKind::component_manifest)
+        {
+            request.component_manifest_paths.push_back(entry.absolute_path);
+        }
+    }
+
+    const auto result = script_editor_service_.open_in_rider(request);
+    if (!result.succeeded)
+    {
+        append_console(
+            result.error,
+            QStringLiteral("Error"),
+            QStringLiteral("Script Editor"),
+            request.selected_source_path,
+            {}, {}, {}, {}, {}, request.selected_source_path);
+        statusBar()->showMessage(QStringLiteral("Could not open Rider; see Console"), 5000);
+        return;
+    }
+    append_console(
+        QStringLiteral("Opened %1 in Rider solution %2")
+            .arg(QFileInfo{result.selected_source_path}.fileName(), result.solution_path),
+        QStringLiteral("Info"),
+        QStringLiteral("Script Editor"),
+        result.workspace_directory,
+        {}, {}, {}, {}, {}, result.selected_source_path);
+    statusBar()->showMessage(
+        QStringLiteral("Editing %1 in Rider").arg(QFileInfo{result.selected_source_path}.fileName()),
+        5000);
+}
+
+void EditorWindow::rebuild_project_hub()
+{
+    if (project_hub_recent_ == nullptr)
+    {
+        return;
+    }
+    project_hub_recent_->clear();
+    for (const auto& manifest_path : project_lifecycle_service_.recent_projects())
+    {
+        auto label = QFileInfo{manifest_path}.absoluteDir().dirName();
+        const auto indexed = ProjectIndexService{}.build_candidate(manifest_path);
+        if (indexed.candidate && !indexed.candidate->name.isEmpty())
+        {
+            label = indexed.candidate->name;
+        }
+        auto* item = new QListWidgetItem{
+            QStringLiteral("%1\n%2").arg(label, QDir::toNativeSeparators(manifest_path)),
+            project_hub_recent_};
+        item->setData(Qt::UserRole, manifest_path);
+        item->setToolTip(QDir::toNativeSeparators(manifest_path));
+    }
+    if (project_hub_recent_->count() == 0)
+    {
+        auto* empty = new QListWidgetItem{
+            QStringLiteral("No recent projects yet"), project_hub_recent_};
+        empty->setFlags(Qt::NoItemFlags);
+    }
+}
+
+void EditorWindow::show_project_hub()
+{
+    if (project_hub_dock_ == nullptr)
+    {
+        return;
+    }
+    rebuild_project_hub();
+    project_hub_dock_->show();
+    project_hub_dock_->raise();
+}
+
+void EditorWindow::open_project_dialog()
+{
+    const auto path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Open Dragon Pixel project"),
+        project_root_.isEmpty()
+            ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)
+            : project_root_,
+        QStringLiteral("Dragon Pixel Project (DragonPixelProject.json);;JSON (*.json)"));
+    if (!path.isEmpty())
+    {
+        load_project(path);
+    }
+}
+
+void EditorWindow::create_project_dialog()
+{
+    QVector<ProjectLifecycleDiagnostic> discovery_diagnostics;
+    const auto templates_root = dragonpixel::editor::runtime_paths::directory(
+        "DPE_PROJECT_TEMPLATES_ROOT",
+        QStringLiteral("templates"),
+        QString::fromUtf8(DPE_PROJECT_TEMPLATES_ROOT));
+    const auto templates = project_lifecycle_service_.discover_templates(
+        templates_root, &discovery_diagnostics);
+    if (templates.isEmpty())
+    {
+        const auto message = discovery_diagnostics.isEmpty()
+            ? QStringLiteral("No installed project templates were found.")
+            : discovery_diagnostics.constFirst().message;
+        QMessageBox::critical(this, QStringLiteral("New Project unavailable"), message);
+        append_console(message, QStringLiteral("Error"), QStringLiteral("Project Lifecycle"));
+        return;
+    }
+
+    QDialog dialog{this};
+    dialog.setObjectName(QStringLiteral("NewProjectDialog"));
+    dialog.setWindowTitle(QStringLiteral("New Dragon Pixel Project"));
+    dialog.setAccessibleName(QStringLiteral("Create a new Dragon Pixel project"));
+    dialog.resize(620, 250);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    auto* name = new QLineEdit(QStringLiteral("New Dragon Pixel Project"), &dialog);
+    name->setObjectName(QStringLiteral("NewProjectName"));
+    name->setAccessibleName(QStringLiteral("New project name"));
+    auto* template_combo = new QComboBox(&dialog);
+    template_combo->setObjectName(QStringLiteral("NewProjectTemplate"));
+    template_combo->setAccessibleName(QStringLiteral("New project template"));
+    for (const auto& descriptor : templates)
+    {
+        template_combo->addItem(descriptor.name, descriptor.manifest_path);
+    }
+    auto* location_row = new QWidget(&dialog);
+    auto* location_layout = new QHBoxLayout(location_row);
+    location_layout->setContentsMargins(0, 0, 0, 0);
+    auto* location = new QLineEdit(
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation), location_row);
+    location->setObjectName(QStringLiteral("NewProjectLocation"));
+    location->setAccessibleName(QStringLiteral("New project parent folder"));
+    auto* browse = new QPushButton(QStringLiteral("Browse..."), location_row);
+    browse->setObjectName(QStringLiteral("NewProjectBrowse"));
+    browse->setAccessibleName(QStringLiteral("Browse for new project parent folder"));
+    location_layout->addWidget(location, 1);
+    location_layout->addWidget(browse);
+    connect(browse, &QPushButton::clicked, &dialog, [this, location] {
+        const auto selected = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("Choose project parent folder"), location->text());
+        if (!selected.isEmpty())
+        {
+            location->setText(selected);
+        }
+    });
+    form->addRow(QStringLiteral("Name"), name);
+    form->addRow(QStringLiteral("Template"), template_combo);
+    form->addRow(QStringLiteral("Location"), location_row);
+    layout->addLayout(form);
+    auto* destination_preview = new QLabel(&dialog);
+    destination_preview->setObjectName(QStringLiteral("NewProjectDestinationPreview"));
+    destination_preview->setWordWrap(true);
+    destination_preview->setAccessibleName(QStringLiteral("New project destination"));
+    layout->addWidget(destination_preview);
+    const auto refresh_destination = [name, location, destination_preview] {
+        destination_preview->setText(QStringLiteral("Project folder: %1")
+            .arg(QDir::toNativeSeparators(QDir{location->text()}.filePath(name->text().trimmed()))));
+    };
+    connect(name, &QLineEdit::textChanged, &dialog, refresh_destination);
+    connect(location, &QLineEdit::textChanged, &dialog, refresh_destination);
+    refresh_destination();
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->setObjectName(QStringLiteral("NewProjectButtons"));
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Create"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    const auto request = ProjectCreationRequest{
+        template_combo->currentData().toString(),
+        name->text().trimmed(),
+        QDir{location->text()}.filePath(name->text().trimmed()),
+    };
+    const auto dry_run = project_lifecycle_service_.dry_run(request);
+    if (!dry_run.succeeded)
+    {
+        const auto message = dry_run.diagnostics.isEmpty()
+            ? QStringLiteral("The project request was rejected.")
+            : dry_run.diagnostics.constFirst().message;
+        QMessageBox::warning(this, QStringLiteral("Cannot create project"), message);
+        append_console(message, QStringLiteral("Warning"), QStringLiteral("Project Lifecycle"));
+        return;
+    }
+    const auto result = project_lifecycle_service_.create_project(request);
+    if (!result.succeeded)
+    {
+        const auto message = result.diagnostics.isEmpty()
+            ? QStringLiteral("Project creation failed.")
+            : result.diagnostics.constFirst().message;
+        QMessageBox::critical(this, QStringLiteral("Project creation failed"), message);
+        append_console(message, QStringLiteral("Error"), QStringLiteral("Project Lifecycle"),
+            result.staging_path, {}, {}, result.operation_id);
+        return;
+    }
+    append_console(
+        QStringLiteral("Created project %1 from %2")
+            .arg(result.project_manifest_path, template_combo->currentText()),
+        QStringLiteral("Info"), QStringLiteral("Project Lifecycle"),
+        result.project_manifest_path, {}, {}, result.operation_id);
+    load_project(result.project_manifest_path);
+}
+
+void EditorWindow::create_clean_scene_dialog()
+{
+    if (!scene_ || project_manifest_path_.isEmpty())
+    {
+        QMessageBox::information(this, QStringLiteral("New Scene"),
+            QStringLiteral("Open or create a project before creating a scene."));
+        return;
+    }
+    QDialog dialog{this};
+    dialog.setObjectName(QStringLiteral("NewSceneDialog"));
+    dialog.setWindowTitle(QStringLiteral("New Clean Scene"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    auto* name = new QLineEdit(QStringLiteral("New Scene"), &dialog);
+    name->setObjectName(QStringLiteral("NewSceneName"));
+    name->setAccessibleName(QStringLiteral("New scene name"));
+    auto* kind = new QComboBox(&dialog);
+    kind->setObjectName(QStringLiteral("NewSceneKind"));
+    kind->setAccessibleName(QStringLiteral("New scene dimension"));
+    kind->addItem(QStringLiteral("2D (orthographic camera)"), QStringLiteral("2d"));
+    kind->addItem(QStringLiteral("3D (camera and directional light)"), QStringLiteral("3d"));
+    auto* path = new QLineEdit(QStringLiteral("Scenes/NewScene.dpescene"), &dialog);
+    path->setObjectName(QStringLiteral("NewScenePath"));
+    path->setAccessibleName(QStringLiteral("New scene project-relative path"));
+    form->addRow(QStringLiteral("Name"), name);
+    form->addRow(QStringLiteral("Type"), kind);
+    form->addRow(QStringLiteral("Path"), path);
+    layout->addLayout(form);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Create"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    if (!confirm_discard_or_save())
+    {
+        return;
+    }
+    if (scene_->is_dirty())
+    {
+        // Discard was explicitly chosen. The next scene replaces this in-memory
+        // state, so prevent the load path from prompting a second time.
+        scene_->mark_savepoint();
+    }
+    const auto request = CleanSceneRequest{
+        project_manifest_path_,
+        name->text().trimmed(),
+        QDir::fromNativeSeparators(path->text().trimmed()),
+        kind->currentData().toString() == QStringLiteral("3d")
+            ? ProjectTemplateKind::three_d
+            : ProjectTemplateKind::two_d,
+    };
+    const auto result = project_lifecycle_service_.create_clean_scene(request);
+    if (!result.succeeded)
+    {
+        const auto message = result.diagnostics.isEmpty()
+            ? QStringLiteral("Scene creation failed.")
+            : result.diagnostics.constFirst().message;
+        QMessageBox::warning(this, QStringLiteral("Cannot create scene"), message);
+        append_console(message, QStringLiteral("Warning"), QStringLiteral("Project Lifecycle"),
+            result.staging_path, {}, {}, result.operation_id);
+        return;
+    }
+    rebuild_assets();
+    load_scene(result.scene_path);
+}
+
+bool EditorWindow::save_scene_as()
+{
+    if (!scene_ || project_manifest_path_.isEmpty())
+    {
+        return false;
+    }
+    const auto default_path = QDir{QFileInfo{scene_path_}.absolutePath()}
+                                  .filePath(QStringLiteral("%1 Copy.dpescene")
+                                      .arg(QFileInfo{scene_path_}.completeBaseName()));
+    const auto path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save Dragon Pixel scene as"), default_path,
+        QStringLiteral("Dragon Pixel Scene (*.dpescene)"));
+    if (path.isEmpty())
+    {
+        return false;
+    }
+    const auto destination = QFileInfo{path}.absoluteFilePath();
+    const auto indexed = ProjectIndexService{}.build_candidate(project_manifest_path_);
+    bool beneath_scene_root = false;
+    if (indexed.candidate)
+    {
+        for (const auto& root : indexed.candidate->roots)
+        {
+            if (root.kind != ProjectIndexRootKind::scenes)
+            {
+                continue;
+            }
+            const auto prefix = QDir::fromNativeSeparators(root.absolute_path) + QLatin1Char{'/'};
+            if (QDir::fromNativeSeparators(destination).startsWith(prefix, Qt::CaseInsensitive))
+            {
+                beneath_scene_root = true;
+                break;
+            }
+        }
+    }
+    if (!beneath_scene_root)
+    {
+        QMessageBox::warning(this, QStringLiteral("Save Scene As"),
+            QStringLiteral("Scenes must be saved beneath a declared project scene root."));
+        return false;
+    }
+    if (tile_document_service_->is_dirty() && !tile_document_service_->save())
+    {
+        return false;
+    }
+    prefab_service_.synchronize(*scene_);
+    auto document = nlohmann::ordered_json::parse(
+        dragonpixel::serialization::write_scene_json(prefab_service_.persistent_copy(*scene_)));
+    document["sceneId"] = QUuid::createUuid().toString(QUuid::WithoutBraces).toLower().toStdString();
+    document["name"] = QFileInfo{destination}.completeBaseName().toStdString();
+    const auto bytes = document.dump(2) + "\n";
+    const auto saved = dragonpixel::serialization::save_utf8_atomic(
+        filesystem_path(destination), bytes);
+    if (!saved.succeeded)
+    {
+        QMessageBox::critical(this, QStringLiteral("Save Scene As failed"),
+            QString::fromStdString(saved.error));
+        return false;
+    }
+    auto loaded = dragonpixel::serialization::read_scene_json(bytes, metadata_);
+    if (!loaded.value)
+    {
+        QMessageBox::critical(this, QStringLiteral("Save Scene As failed"),
+            QStringLiteral("The newly written scene did not pass scene validation."));
+        return false;
+    }
+    scene_->mark_savepoint();
+    if (!commit_scene(std::move(*loaded.value), destination,
+            project_manifest_path_, project_root_, loaded.migrations.size()))
+    {
+        return false;
+    }
+    rebuild_assets();
+    return true;
 }
 
 bool EditorWindow::close_project(bool ask_to_save)
@@ -840,14 +2341,22 @@ bool EditorWindow::close_project(bool ask_to_save)
     {
         preview_worker_->stop_and_discard();
     }
+    if (game_preview_worker_ != nullptr)
+    {
+        game_preview_worker_->stop_and_discard();
+    }
     gizmo_preview_active_ = false;
     gizmo_preview_scene_.reset();
     gizmo_transform_snapshots_.clear();
+    clear_inspector_locks();
+    selection_service_.clear(SelectionOrigin::project_lifecycle);
     scene_.reset();
     scene_path_.clear();
     project_manifest_path_.clear();
     project_root_.clear();
+    apply_component_module_manifest({});
     prefab_service_.clear();
+    tile_document_service_->clear();
     hierarchy_model_->rebuild(nullptr);
     inspector_model_->clear();
     inspector_model_->setHorizontalHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
@@ -872,15 +2381,55 @@ bool EditorWindow::close_project(bool ask_to_save)
     scene_summary_model_->clear();
     viewport_->clear_preview_frame();
     viewport_->set_selected_name({});
+    refresh_additional_inspectors();
     update_window_title();
     update_action_states();
     append_console(QStringLiteral("Project closed; no authoritative scene remains loaded"));
+    show_project_hub();
     return true;
 }
 
 bool EditorWindow::load_project(const QString& path)
 {
-    const auto indexed = ProjectIndexService{}.build_candidate(path);
+    const ProjectIndexService index_service;
+    const auto location = index_service.validate_location(path);
+    for (const auto& diagnostic : location.diagnostics)
+    {
+        const auto severity = diagnostic.severity == ProjectIndexDiagnosticSeverity::error
+            ? QStringLiteral("Error")
+            : diagnostic.severity == ProjectIndexDiagnosticSeverity::warning
+                ? QStringLiteral("Warning")
+                : QStringLiteral("Info");
+        append_console(
+            QStringLiteral("%1: %2")
+                .arg(project_index_diagnostic_code_name(diagnostic.code), diagnostic.message),
+            severity,
+            QStringLiteral("Project Index"),
+            diagnostic.document_path);
+    }
+    if (!location.succeeded())
+    {
+        append_console(
+            QStringLiteral("Project location validation failed before recovery; the current project/session was preserved."),
+            QStringLiteral("Error"),
+            QStringLiteral("Project Index"));
+        return false;
+    }
+    auto canonical_manifest = location.location->manifest_path;
+    auto canonical_root = location.location->project_root;
+    const auto recovered = dragonpixel::serialization::recover_utf8_transactions(
+        filesystem_path(canonical_root));
+    if (!recovered.succeeded)
+    {
+        append_console(
+            QStringLiteral("Project document recovery failed; the current project/session was preserved: %1")
+                .arg(QString::fromStdString(recovered.error)),
+            QStringLiteral("Error"),
+            QStringLiteral("Documents"));
+        return false;
+    }
+
+    auto indexed = index_service.build_candidate(canonical_manifest);
     for (const auto& diagnostic : indexed.diagnostics)
     {
         const auto severity = diagnostic.severity == ProjectIndexDiagnosticSeverity::error
@@ -903,20 +2452,10 @@ bool EditorWindow::load_project(const QString& path)
             QStringLiteral("Project Index"));
         return false;
     }
-    QFile file{path};
-    if (!file.open(QIODevice::ReadOnly))
-    {
-        append_console(QStringLiteral("Could not open project manifest: %1").arg(path));
-        return false;
-    }
-    QJsonParseError parse_error;
-    const auto document = QJsonDocument::fromJson(file.readAll(), &parse_error);
-    if (!document.isObject())
-    {
-        append_console(QStringLiteral("Project manifest JSON was invalid: %1").arg(parse_error.errorString()));
-        return false;
-    }
-    const auto root = document.object();
+    canonical_manifest = indexed.candidate->manifest_path;
+    canonical_root = indexed.candidate->project_root;
+    const QFileInfo manifest_info{canonical_manifest};
+    const auto root = indexed.candidate->manifest;
     const auto project_id = dragonpixel::core::uuid::parse(
         root.value(QStringLiteral("projectId")).toString().toStdString());
     const auto format_version = root.value(QStringLiteral("formatVersion")).toInt();
@@ -930,19 +2469,17 @@ bool EditorWindow::load_project(const QString& path)
     }
     if (root.value(QStringLiteral("$schema")).toString() != expected_schema
         || root.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.project")
-        || (format_version != 1 && format_version != 2)
+        || (format_version < 1 || format_version > 4)
         || root.value(QStringLiteral("engineVersion")).toString().isEmpty()
         || !project_id || startup_scene.isEmpty() || QDir::isAbsolutePath(startup_scene)
-        || (format_version == 2 && scene_roots.isEmpty()))
+        || (format_version >= 2 && scene_roots.isEmpty())
+        || (format_version >= 3 && !root.value(QStringLiteral("componentRoots")).isArray()))
     {
         append_console(QStringLiteral("Project manifest format, identity, or startup scene was invalid"));
         return false;
     }
 
-    const auto manifest_info = QFileInfo(path);
-    const auto canonical_root = manifest_info.absoluteDir().canonicalPath();
-    const auto canonical_scene = QFileInfo(
-        manifest_info.absoluteDir().filePath(startup_scene)).canonicalFilePath();
+    const auto canonical_scene = indexed.candidate->startup_scene_path;
 #if defined(Q_OS_WIN)
     constexpr auto path_case = Qt::CaseInsensitive;
 #else
@@ -958,6 +2495,32 @@ bool EditorWindow::load_project(const QString& path)
         return false;
     }
 
+    auto candidate_metadata = dragonpixel::metadata::registry::slice_one_defaults();
+    QStringList component_roots;
+    for (const auto& value : root.value(QStringLiteral("componentRoots")).toArray())
+    {
+        component_roots.push_back(value.toString());
+    }
+    const auto metadata_result = MetadataManifestService{}.load_project(
+        canonical_root, component_roots, candidate_metadata);
+    for (const auto& diagnostic : metadata_result.diagnostics)
+    {
+        append_console(diagnostic, metadata_result.succeeded ? QStringLiteral("Warning") : QStringLiteral("Error"),
+            QStringLiteral("Metadata"));
+    }
+    if (!metadata_result.succeeded)
+    {
+        append_console(QStringLiteral("Project component metadata was rejected; current project remains open."),
+            QStringLiteral("Error"), QStringLiteral("Metadata"));
+        return false;
+    }
+
+    const auto runtime_modules = ComponentModuleService::active_runtime_manifest(
+        canonical_root, component_roots, dragonpixel::editor::runtime_paths::file(
+            "DPE_CONTRACTS_ASSEMBLY",
+            QStringLiteral("runtime/contracts/DragonPixel.Contracts.dll"),
+            QString::fromUtf8(DPE_CONTRACTS_ASSEMBLY)));
+
     std::ifstream stream{filesystem_path(canonical_scene), std::ios::binary};
     if (!stream)
     {
@@ -965,7 +2528,7 @@ bool EditorWindow::load_project(const QString& path)
         return false;
     }
     const std::string json{std::istreambuf_iterator<char>{stream}, std::istreambuf_iterator<char>{}};
-    auto loaded = dragonpixel::serialization::read_scene_json(json, metadata_);
+    auto loaded = dragonpixel::serialization::read_scene_json(json, candidate_metadata);
     if (!loaded.value)
     {
         const auto message = loaded.diagnostics.empty()
@@ -974,26 +2537,114 @@ bool EditorWindow::load_project(const QString& path)
         append_console(QStringLiteral("Project startup scene failed validation: %1").arg(message), QStringLiteral("Error"));
         return false;
     }
-    if (!commit_scene(
-            std::move(*loaded.value),
-            canonical_scene,
-            QDir::toNativeSeparators(manifest_info.absoluteFilePath()),
-            canonical_root,
-            loaded.migrations.size()))
+    PrefabService candidate_prefabs;
+    candidate_prefabs.set_metadata(&candidate_metadata);
+    candidate_prefabs.set_project_root(canonical_root);
+    auto hydration = candidate_prefabs.hydrate(*loaded.value);
+    if (!hydration.scene)
+    {
+        for (const auto& diagnostic : hydration.diagnostics)
+        {
+            append_console(diagnostic, QStringLiteral("Error"), QStringLiteral("Prefabs"));
+        }
+        return false;
+    }
+    if (!confirm_discard_or_save())
     {
         return false;
     }
+
+    stop_play();
+    preview_worker_->stop_and_discard();
+    game_preview_worker_->stop_and_discard();
+    gizmo_preview_active_ = false;
+    gizmo_preview_scene_.reset();
+    gizmo_transform_snapshots_.clear();
+    clear_inspector_locks();
+    tile_document_service_->clear();
+
+    metadata_ = std::move(candidate_metadata);
+    candidate_prefabs.set_metadata(&metadata_);
+    prefab_service_ = std::move(candidate_prefabs);
+    scene_ = std::move(*hydration.scene);
+    scene_->mark_savepoint();
+    scene_path_ = QDir::toNativeSeparators(QFileInfo(canonical_scene).absoluteFilePath());
+    project_manifest_path_ = QDir::toNativeSeparators(manifest_info.absoluteFilePath());
+    project_root_ = canonical_root;
+    apply_component_module_manifest(runtime_modules);
+    apply_project_index(std::move(indexed));
+    rebuild_hierarchy();
+    publish_global_selection(SelectionOrigin::project_lifecycle);
+    inspect_selected_entities();
+    update_global_selection_presentation();
+    refresh_additional_inspectors();
+    rebuild_scene_summary();
+    update_window_title();
+    update_action_states();
+    append_console(QStringLiteral("Loaded %1 (%2 entities, %3 migration records)")
+        .arg(scene_path_)
+        .arg(scene_->entities().size())
+        .arg(loaded.migrations.size()));
+    for (const auto& diagnostic : hydration.diagnostics)
+    {
+        append_console(diagnostic, QStringLiteral("Warning"), QStringLiteral("Prefabs"));
+    }
+    refresh_preview();
+    append_console(QStringLiteral("Loaded %1 project component manifest(s), %2 component(s), and %3 object type(s)")
+        .arg(metadata_result.manifest_count).arg(metadata_result.component_count).arg(metadata_result.object_type_count),
+        QStringLiteral("Info"), QStringLiteral("Metadata"));
     if (scene_)
     {
         append_console(QStringLiteral("Opened project %1 (%2)")
             .arg(root.value(QStringLiteral("name")).toString(),
                  QString::fromStdString(project_id->to_string())));
+        project_lifecycle_service_.record_recent_project(project_manifest_path_);
+        if (project_hub_dock_ != nullptr)
+        {
+            project_hub_dock_->hide();
+        }
+        scene_view_dock_->show();
+        scene_view_dock_->raise();
     }
     return scene_.has_value();
 }
 
 bool EditorWindow::load_scene(const QString& path)
 {
+    auto directory = QFileInfo(path).absoluteDir();
+    if (directory.dirName().compare(QStringLiteral("Scenes"), Qt::CaseInsensitive) == 0)
+    {
+        directory.cdUp();
+    }
+    auto manifest = QString{};
+    auto root = directory.absolutePath();
+    if (!project_root_.isEmpty())
+    {
+        const auto candidate_path = QDir::fromNativeSeparators(QFileInfo{path}.absoluteFilePath());
+        const auto root_prefix = QDir::fromNativeSeparators(project_root_) + QLatin1Char{'/'};
+#if defined(Q_OS_WIN)
+        constexpr auto scene_path_case = Qt::CaseInsensitive;
+#else
+        constexpr auto scene_path_case = Qt::CaseSensitive;
+#endif
+        if (candidate_path.startsWith(root_prefix, scene_path_case))
+        {
+            manifest = project_manifest_path_;
+            root = project_root_;
+        }
+    }
+    const auto recovered = dragonpixel::serialization::recover_utf8_transactions(
+        filesystem_path(root));
+    if (!recovered.succeeded)
+    {
+        append_console(
+            QStringLiteral("Scene document recovery failed; the current scene was preserved: %1")
+                .arg(QString::fromStdString(recovered.error)),
+            QStringLiteral("Error"),
+            QStringLiteral("Documents"));
+        return false;
+    }
+
     std::ifstream stream{filesystem_path(path), std::ios::binary};
     if (!stream)
     {
@@ -1012,23 +2663,6 @@ bool EditorWindow::load_scene(const QString& path)
         return false;
     }
 
-    auto directory = QFileInfo(path).absoluteDir();
-    if (directory.dirName().compare(QStringLiteral("Scenes"), Qt::CaseInsensitive) == 0)
-    {
-        directory.cdUp();
-    }
-    auto manifest = QString{};
-    auto root = directory.absolutePath();
-    if (!project_root_.isEmpty())
-    {
-        const auto candidate_path = QDir::fromNativeSeparators(QFileInfo{path}.absoluteFilePath());
-        const auto root_prefix = QDir::fromNativeSeparators(project_root_) + QLatin1Char{'/'};
-        if (candidate_path.startsWith(root_prefix, Qt::CaseInsensitive))
-        {
-            manifest = project_manifest_path_;
-            root = project_root_;
-        }
-    }
     return commit_scene(
         std::move(*loaded.value),
         path,
@@ -1064,6 +2698,7 @@ bool EditorWindow::commit_scene(
     gizmo_preview_active_ = false;
     gizmo_preview_scene_.reset();
     gizmo_transform_snapshots_.clear();
+    clear_inspector_locks();
     prefab_service_ = std::move(candidate_prefabs);
     scene_ = std::move(*hydration.scene);
     scene_->mark_savepoint();
@@ -1071,6 +2706,10 @@ bool EditorWindow::commit_scene(
     project_manifest_path_ = project_manifest;
     project_root_ = project_root;
     rebuild_hierarchy();
+    publish_global_selection(SelectionOrigin::project_lifecycle);
+    inspect_selected_entities();
+    update_global_selection_presentation();
+    refresh_additional_inspectors();
     rebuild_scene_summary();
     rebuild_assets();
     update_window_title();
@@ -1096,36 +2735,60 @@ bool EditorWindow::save_scene()
     prefab_service_.synchronize(*scene_);
     const auto persistent_scene = prefab_service_.persistent_copy(*scene_);
     const auto json = dragonpixel::serialization::write_scene_json(persistent_scene);
-    const auto result = dragonpixel::serialization::save_utf8_atomic(
-        filesystem_path(scene_path_), json);
+    std::vector<dragonpixel::serialization::utf8_transaction_write> writes{
+        {filesystem_path(scene_path_), json},
+    };
+    std::optional<std::string> tile_json;
+    if (tile_document_service_->is_dirty())
+    {
+        tile_json = tile_document_service_->prepare_save();
+        if (!tile_json)
+        {
+            QMessageBox::critical(this, QStringLiteral("Save failed"), tile_document_service_->error());
+            return false;
+        }
+        writes.push_back({filesystem_path(tile_document_service_->tilemap_path()), *tile_json});
+    }
+    const auto result = dragonpixel::serialization::save_utf8_transaction(
+        writes, filesystem_path(project_root_), save_fault_for_test_);
+    save_fault_for_test_ = dragonpixel::serialization::transaction_save_fault::none;
     if (result.succeeded)
     {
-        append_console(QStringLiteral("Atomically saved scene: %1").arg(scene_path_));
-        statusBar()->showMessage(QStringLiteral("Scene saved"), 3000);
+        if (tile_json)
+        {
+            tile_document_service_->accept_save(*tile_json);
+        }
+        append_console(QStringLiteral("Transactionally saved scene: %1").arg(scene_path_));
+        statusBar()->showMessage(QStringLiteral("Scene and dirty tile documents saved"), 3000);
         scene_->mark_savepoint();
         update_window_title();
         update_action_states();
         return true;
     }
-    else
-    {
-        QMessageBox::critical(this, QStringLiteral("Save failed"), QString::fromStdString(result.error));
-        return false;
-    }
+    append_console(QStringLiteral("Save transaction failed without advancing any document: %1")
+        .arg(QString::fromStdString(result.error)), QStringLiteral("Error"), QStringLiteral("Documents"));
+    QMessageBox::critical(this, QStringLiteral("Save failed"), QString::fromStdString(result.error));
+    return false;
 }
 
 bool EditorWindow::confirm_discard_or_save()
 {
-    if (!scene_ || !scene_->is_dirty())
+    const auto scene_dirty = scene_ && scene_->is_dirty();
+    const auto tile_dirty = tile_document_service_ && tile_document_service_->is_dirty();
+    if (!scene_dirty && !tile_dirty)
     {
         return true;
     }
     const auto decision = unsaved_prompt_
-        ? unsaved_prompt_(QString::fromStdString(scene_->name()))
+        ? unsaved_prompt_(scene_dirty && tile_dirty
+            ? QStringLiteral("%1 and %2").arg(QString::fromStdString(scene_->name()),
+                QFileInfo{tile_document_service_->tilemap_path()}.fileName())
+            : scene_dirty ? QString::fromStdString(scene_->name())
+                : QFileInfo{tile_document_service_->tilemap_path()}.fileName())
         : UnsavedDecision::cancel;
     if (decision == UnsavedDecision::save)
     {
-        return save_scene();
+        return scene_dirty ? save_scene() : tile_document_service_->save();
     }
     return decision == UnsavedDecision::discard;
 }
@@ -1133,6 +2796,11 @@ bool EditorWindow::confirm_discard_or_save()
 void EditorWindow::rebuild_hierarchy()
 {
     const auto selected = selected_entity_ids();
+    hierarchy_model_->set_drag_context(
+        project_index_.candidate ? project_index_.candidate->project_id : QString{},
+        scene_ ? QString::fromStdString(scene_->id().to_string()) : QString{},
+        command_revision_,
+        project_model_ ? project_model_->drag_revision() : 0);
     hierarchy_model_->rebuild(scene_ ? &*scene_ : nullptr);
     hierarchy_->expandAll();
     bool restored = false;
@@ -1181,8 +2849,387 @@ void EditorWindow::rebuild_scene_summary()
     }
 }
 
+void EditorWindow::update_project_browser_folder(const QModelIndex& folder_index)
+{
+    if (!folder_index.isValid() || project_folder_filter_ == nullptr)
+    {
+        return;
+    }
+    const auto source = project_folder_filter_->mapToSource(folder_index.siblingAtColumn(0));
+    if (!source.isValid())
+    {
+        return;
+    }
+    project_current_folder_ = QPersistentModelIndex{source};
+    const auto content_root = project_filter_->mapFromSource(source);
+    project_explorer_->setRootIndex(content_root);
+    project_thumbnail_view_->setRootIndex(content_root);
+    auto logical = source.data(EditorRoles::project_logical_path).toString();
+    if (logical.isEmpty()) logical = QStringLiteral("Project");
+    project_breadcrumb_->setText(QStringLiteral("Project / %1")
+        .arg(logical == QStringLiteral("Project") ? QString{} : logical));
+}
+
+QString EditorWindow::current_project_folder_relative() const
+{
+    if (project_current_folder_.isValid())
+    {
+        const auto logical = project_current_folder_.data(
+            EditorRoles::project_logical_path).toString();
+        if (!logical.isEmpty()) return QDir::fromNativeSeparators(logical);
+    }
+    if (project_index_.candidate)
+    {
+        for (const auto& root : project_index_.candidate->roots)
+        {
+            if (root.kind == ProjectIndexRootKind::assets)
+                return QDir::fromNativeSeparators(root.declared_path);
+        }
+    }
+    return QStringLiteral("Assets");
+}
+
+void EditorWindow::import_asset_paths(const QStringList& paths)
+{
+    if (project_manifest_path_.isEmpty() || paths.isEmpty())
+    {
+        return;
+    }
+    QDialog dialog{this};
+    dialog.setObjectName(QStringLiteral("AssetImportSummaryDialog"));
+    dialog.setWindowTitle(QStringLiteral("Import Assets"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary = new QLabel(
+        QStringLiteral("Import %1 file(s) into Project / %2.")
+            .arg(paths.size()).arg(current_project_folder_relative()), &dialog);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto* ownership = new QComboBox(&dialog);
+    ownership->setObjectName(QStringLiteral("AssetImportOwnership"));
+    ownership->setAccessibleName(QStringLiteral("Asset import ownership"));
+    ownership->addItem(QStringLiteral("Copy into project (recommended)"), QStringLiteral("copy"));
+    ownership->addItem(QStringLiteral("Link external source (read-only)"), QStringLiteral("link"));
+    layout->addWidget(ownership);
+    auto* note = new QLabel(
+        QStringLiteral("PNG and JPEG files become sprite assets. Other files are retained with a no-compatible-importer diagnostic."),
+        &dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Import"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+    const auto result = asset_service_.import_files({
+        project_manifest_path_,
+        paths,
+        current_project_folder_relative(),
+        ownership->currentData().toString() == QStringLiteral("link")
+            ? AssetImportOwnership::link_external_read_only
+            : AssetImportOwnership::copy_into_project,
+    });
+    if (!result.succeeded)
+    {
+        const auto message = result.diagnostics.isEmpty()
+            ? QStringLiteral("Asset import failed.")
+            : result.diagnostics.constFirst().message;
+        QMessageBox::warning(this, QStringLiteral("Asset import failed"), message);
+        append_console(message, QStringLiteral("Warning"), QStringLiteral("Asset Service"),
+            {}, {}, {}, result.operation_id);
+        return;
+    }
+    append_console(QStringLiteral("Imported %1 asset(s) into %2")
+        .arg(result.asset_ids.size()).arg(current_project_folder_relative()),
+        QStringLiteral("Info"), QStringLiteral("Asset Service"),
+        {}, {}, {}, result.operation_id);
+    rebuild_assets();
+}
+
+bool EditorWindow::handle_project_browser_drop(
+    const QMimeData* mime,
+    const QModelIndex& destination_source)
+{
+    if (mime == nullptr || !scene_ || !project_index_.candidate) return false;
+    auto destination = destination_source;
+    if (destination.isValid() && ProjectModel::item_kind(destination) != ProjectItemKind::folder)
+        destination = destination.parent();
+    auto destination_folder = destination.isValid()
+        ? destination.data(EditorRoles::project_logical_path).toString()
+        : current_project_folder_relative();
+    if (destination_folder.isEmpty()) destination_folder = QStringLiteral("Assets");
+    destination_folder = QDir::fromNativeSeparators(destination_folder);
+    const auto project_id = project_index_.candidate->project_id;
+
+    if (mime->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+    {
+        const auto payload = QJsonDocument::fromJson(mime->data(
+            QStringLiteral("application/x-dragonpixel-entity"))).object();
+        const auto items = payload.value(QStringLiteral("items")).toArray();
+        const auto current_scene = QString::fromStdString(scene_->id().to_string());
+        if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+            || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+            || payload.value(QStringLiteral("projectId")).toString() != project_id
+            || payload.value(QStringLiteral("sceneId")).toString() != current_scene
+            || payload.value(QStringLiteral("sourceRevision")).toInteger() != static_cast<qint64>(command_revision_)
+            || items.size() != 1 || !items.at(0).isObject())
+        {
+            append_console(QStringLiteral("Hierarchy-to-Project drop rejected: select one current, locally owned root from this project."),
+                QStringLiteral("Warning"), QStringLiteral("Drag and Drop"));
+            return false;
+        }
+        const auto id = dragonpixel::core::uuid::parse(
+            items.at(0).toObject().value(QStringLiteral("id")).toString().toStdString());
+        const auto* entity = id ? scene_->find_entity(*id) : nullptr;
+        if (!id || entity == nullptr || prefab_service_.has_instance_for_entity(*id))
+        {
+            append_console(QStringLiteral("Prefab drop rejected because the source is missing, linked, or not locally owned."),
+                QStringLiteral("Warning"), QStringLiteral("Prefabs"));
+            return false;
+        }
+        auto safe_name = QString::fromStdString(entity->name);
+        safe_name.replace(QRegularExpression{QStringLiteral("[^A-Za-z0-9_-]+")}, QStringLiteral("_"));
+        const auto path = QDir{project_root_}.filePath(
+            QDir{destination_folder}.filePath(safe_name + QStringLiteral(".dpeprefab")));
+        if (QFileInfo::exists(path))
+        {
+            append_console(QStringLiteral("Prefab drop rejected because %1 already exists.").arg(path),
+                QStringLiteral("Warning"), QStringLiteral("Prefabs"));
+            return false;
+        }
+        report_prefab_result(prefab_service_.create_from_selection(*scene_, *id, path));
+        return true;
+    }
+
+    if (!mime->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))) return false;
+    const auto payload = QJsonDocument::fromJson(mime->data(
+        QStringLiteral("application/x-dragonpixel-project-item"))).object();
+    const auto items = payload.value(QStringLiteral("items")).toArray();
+    if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+        || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+        || payload.value(QStringLiteral("projectId")).toString() != project_id
+        || payload.value(QStringLiteral("sourceRevision")).toInteger()
+            != static_cast<qint64>(project_model_->drag_revision())
+        || items.size() != 1 || !items.at(0).isObject())
+    {
+        append_console(QStringLiteral("Project move rejected because the drag is stale, cross-project, or ambiguous."),
+            QStringLiteral("Warning"), QStringLiteral("Drag and Drop"));
+        return false;
+    }
+    const auto item = items.at(0).toObject();
+    if (item.value(QStringLiteral("kind")).toString() == QStringLiteral("folder"))
+    {
+        const auto absolute_source = item.value(QStringLiteral("path")).toString();
+        const auto source_folder = QDir::fromNativeSeparators(
+            QDir{project_root_}.relativeFilePath(absolute_source));
+        const auto result = asset_service_.move_folder(
+            project_manifest_path_, source_folder, destination_folder);
+        for (const auto& diagnostic : result.diagnostics)
+            append_console(diagnostic.message,
+                result.succeeded ? QStringLiteral("Info") : QStringLiteral("Warning"),
+                QStringLiteral("Asset Service"), diagnostic.path, {}, {}, result.operation_id);
+        if (!result.succeeded) return false;
+        append_console(QStringLiteral("Moved Project folder to %1 in one atomic operation.")
+            .arg(destination_folder), QStringLiteral("Info"), QStringLiteral("Asset Service"),
+            {}, {}, {}, result.operation_id);
+        rebuild_assets();
+        return true;
+    }
+    if (item.value(QStringLiteral("kind")).toString() != QStringLiteral("asset")
+        || item.value(QStringLiteral("assetId")).toString().isEmpty())
+    {
+        append_console(QStringLiteral("Only Project folders and stable asset records can be moved by this Project drop path."),
+            QStringLiteral("Warning"), QStringLiteral("Asset Service"));
+        return false;
+    }
+    const auto result = asset_service_.move_asset(
+        project_manifest_path_, item.value(QStringLiteral("assetId")).toString(), destination_folder);
+    for (const auto& diagnostic : result.diagnostics)
+        append_console(diagnostic.message, result.succeeded ? QStringLiteral("Info") : QStringLiteral("Warning"),
+            QStringLiteral("Asset Service"), diagnostic.path, {}, {}, result.operation_id);
+    if (!result.succeeded) return false;
+    append_console(QStringLiteral("Moved asset to Project / %1 while preserving its stable asset ID.")
+        .arg(destination_folder), QStringLiteral("Info"), QStringLiteral("Asset Service"),
+        {}, {}, {}, result.operation_id);
+    rebuild_assets();
+    return true;
+}
+
+void EditorWindow::show_project_browser_context_menu(const QPoint& point)
+{
+    if (project_manifest_path_.isEmpty())
+    {
+        return;
+    }
+    auto* active_view = project_content_stack_->currentIndex() == 0
+        ? static_cast<QAbstractItemView*>(project_explorer_)
+        : static_cast<QAbstractItemView*>(project_thumbnail_view_);
+    const auto current = active_view->currentIndex();
+    const auto kind = current.isValid()
+        ? ProjectModel::item_kind(current) : ProjectItemKind::project;
+    const auto asset_id = current.isValid() ? ProjectModel::asset_id(current) : QString{};
+    const auto path = current.isValid() ? ProjectModel::item_path(current) : project_root_;
+
+    QMenu menu{active_view};
+    auto* create_folder = menu.addAction(QStringLiteral("Create Folder..."));
+    auto* new_scene = menu.addAction(QStringLiteral("New Scene..."));
+    auto* import = menu.addAction(QStringLiteral("Import..."));
+    menu.addSeparator();
+    auto* open_edit = menu.addAction(QStringLiteral("Open / Edit"));
+    auto* rename = menu.addAction(QStringLiteral("Rename..."));
+    rename->setShortcut(QKeySequence{Qt::Key_F2});
+    auto* move = menu.addAction(QStringLiteral("Move..."));
+    auto* duplicate = menu.addAction(QStringLiteral("Duplicate"));
+    auto* remove = menu.addAction(QStringLiteral("Remove to Project Trash..."));
+    remove->setShortcut(QKeySequence::Delete);
+    menu.addSeparator();
+    auto* restore = menu.addAction(QStringLiteral("Restore from Project Trash..."));
+    auto* reveal = menu.addAction(QStringLiteral("Reveal in File Browser"));
+    auto* refresh = menu.addAction(QStringLiteral("Refresh"));
+
+    const auto asset_selected = kind == ProjectItemKind::asset && !asset_id.isEmpty();
+    open_edit->setEnabled(current.isValid());
+    rename->setEnabled(asset_selected);
+    move->setEnabled(asset_selected);
+    duplicate->setEnabled(asset_selected);
+    remove->setEnabled(asset_selected);
+    reveal->setEnabled(!path.isEmpty());
+
+    const auto chosen = menu.exec(active_view->viewport()->mapToGlobal(point));
+    if (chosen == nullptr) return;
+    if (chosen == create_folder)
+    {
+        bool accepted = false;
+        const auto name = QInputDialog::getText(this, QStringLiteral("Create Folder"),
+            QStringLiteral("Folder name"), QLineEdit::Normal, QStringLiteral("New Folder"), &accepted).trimmed();
+        if (!accepted || name.isEmpty()) return;
+        const auto relative = QDir::fromNativeSeparators(
+            QDir{current_project_folder_relative()}.filePath(name));
+        const auto result = asset_service_.create_folder(project_manifest_path_, relative);
+        if (!result.succeeded)
+        {
+            QMessageBox::warning(this, QStringLiteral("Create Folder"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Folder creation failed.")
+                                             : result.diagnostics.constFirst().message);
+        }
+        else rebuild_assets();
+    }
+    else if (chosen == new_scene)
+    {
+        create_clean_scene_dialog();
+    }
+    else if (chosen == import)
+    {
+        const auto files = QFileDialog::getOpenFileNames(this, QStringLiteral("Import Assets"),
+            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+            QStringLiteral("All Files (*.*)"));
+        import_asset_paths(files);
+    }
+    else if (chosen == open_edit)
+    {
+        activate_project_item(current);
+    }
+    else if (chosen == rename)
+    {
+        bool accepted = false;
+        auto suggested = QFileInfo{path}.completeBaseName();
+        if (suggested.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)
+            || suggested.endsWith(QStringLiteral(".jpg"), Qt::CaseInsensitive)
+            || suggested.endsWith(QStringLiteral(".jpeg"), Qt::CaseInsensitive))
+            suggested = QFileInfo{suggested}.completeBaseName();
+        const auto name = QInputDialog::getText(this, QStringLiteral("Rename Asset"),
+            QStringLiteral("New name"), QLineEdit::Normal, suggested, &accepted);
+        if (!accepted) return;
+        const auto result = asset_service_.rename_asset(project_manifest_path_, asset_id, name);
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Rename Asset"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Rename failed.") : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    }
+    else if (chosen == move)
+    {
+        bool accepted = false;
+        const auto folder = QInputDialog::getText(this, QStringLiteral("Move Asset"),
+            QStringLiteral("Project-relative asset folder"), QLineEdit::Normal,
+            current_project_folder_relative(), &accepted);
+        if (!accepted) return;
+        const auto result = asset_service_.move_asset(project_manifest_path_, asset_id,
+            QDir::fromNativeSeparators(folder));
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Move Asset"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Move failed.") : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    }
+    else if (chosen == duplicate)
+    {
+        const auto result = asset_service_.duplicate_asset(project_manifest_path_, asset_id,
+            current_project_folder_relative());
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Duplicate Asset"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Duplication failed.") : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    }
+    else if (chosen == remove)
+    {
+        const auto impact = asset_service_.dependency_impact(project_manifest_path_, asset_id);
+        const auto message = impact.dependent_paths.isEmpty()
+            ? QStringLiteral("Move this asset into recoverable Project Trash?")
+            : QStringLiteral("Move this asset into recoverable Project Trash? %1 indexed document(s) reference it and will report missing dependencies until restored.")
+                  .arg(impact.dependent_paths.size());
+        if (QMessageBox::question(this, QStringLiteral("Remove Asset"), message,
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+            return;
+        const auto result = asset_service_.trash_asset(project_manifest_path_, asset_id);
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Remove Asset"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Removal failed.") : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    }
+    else if (chosen == restore)
+    {
+        const QDir trash{QDir{project_root_}.filePath(QStringLiteral(".dragonpixel/Trash"))};
+        const auto operations = trash.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Time);
+        bool accepted = false;
+        const auto operation = QInputDialog::getItem(this, QStringLiteral("Restore Project Trash"),
+            QStringLiteral("Operation"), operations, 0, false, &accepted);
+        if (!accepted || operation.isEmpty()) return;
+        const auto result = asset_service_.restore_trash(project_manifest_path_, operation);
+        if (!result.succeeded)
+            QMessageBox::warning(this, QStringLiteral("Restore Project Trash"),
+                result.diagnostics.isEmpty() ? QStringLiteral("Restore failed.") : result.diagnostics.constFirst().message);
+        else rebuild_assets();
+    }
+    else if (chosen == reveal)
+    {
+        const auto reveal_path = QFileInfo{path}.isDir() ? path : QFileInfo{path}.absolutePath();
+        QDesktopServices::openUrl(QUrl::fromLocalFile(reveal_path));
+    }
+    else if (chosen == refresh)
+    {
+        rebuild_assets();
+    }
+}
+
 void EditorWindow::rebuild_assets()
 {
+    apply_project_index(project_manifest_path_.isEmpty()
+        ? ProjectIndexBuildResult{}
+        : ProjectIndexService{}.build_candidate(project_manifest_path_));
+}
+
+void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
+{
+    const auto prior_folder = project_current_folder_.isValid()
+        ? project_current_folder_.data(EditorRoles::project_logical_path).toString()
+        : QString{};
+    const auto prior_index = project_content_stack_ && project_content_stack_->currentIndex() == 1
+        ? project_thumbnail_view_->currentIndex()
+        : project_explorer_->currentIndex();
+    const auto prior_asset_id = prior_index.data(EditorRoles::project_entry_id).toString();
+    const auto prior_path = prior_index.data(EditorRoles::project_path).toString();
     ++project_generation_;
     asset_preview_service_->set_project_generation(project_generation_);
     if (!project_watcher_->files().isEmpty())
@@ -1194,15 +3241,75 @@ void EditorWindow::rebuild_assets()
         project_watcher_->removePaths(project_watcher_->directories());
     }
 
-    if (project_manifest_path_.isEmpty())
+    project_index_ = std::move(candidate);
+    if (!project_index_.candidate)
     {
-        project_index_ = {};
         project_model_->rebuild(project_index_);
+        project_current_folder_ = {};
+        project_explorer_->setRootIndex({});
+        project_thumbnail_view_->setRootIndex({});
+        project_breadcrumb_->setText(QStringLiteral("Project"));
+        project_details_->setText(QStringLiteral("Select an asset to see details."));
+        project_input_map_.reset();
+        input_map_source_path_.clear();
+        game_viewport_->set_input_map(input_map_service_.compatibility_map());
         return;
     }
 
-    project_index_ = ProjectIndexService{}.build_candidate(project_manifest_path_);
     project_model_->rebuild(project_index_);
+    const auto find_source = [this](int role, const QString& value) {
+        std::function<QModelIndex(const QModelIndex&)> visit;
+        visit = [this, role, &value, &visit](const QModelIndex& parent) -> QModelIndex {
+            for (int row = 0; row < project_model_->rowCount(parent); ++row)
+            {
+                const auto index = project_model_->index(row, 0, parent);
+                if (index.data(role).toString().compare(value, Qt::CaseInsensitive) == 0)
+                    return index;
+                if (const auto nested = visit(index); nested.isValid()) return nested;
+            }
+            return {};
+        };
+        return visit({});
+    };
+    auto folder_source = prior_folder.isEmpty()
+        ? QModelIndex{}
+        : find_source(EditorRoles::project_logical_path, prior_folder);
+    if (!folder_source.isValid())
+    {
+        auto first_root = QString{};
+        for (const auto& root : project_index_.candidate->roots)
+        {
+            if (root.kind == ProjectIndexRootKind::assets)
+            {
+                first_root = root.declared_path;
+                break;
+            }
+        }
+        folder_source = first_root.isEmpty()
+            ? project_model_->index(0, 0)
+            : find_source(EditorRoles::project_logical_path, first_root);
+    }
+    const auto folder_proxy = project_folder_filter_->mapFromSource(folder_source);
+    if (folder_proxy.isValid())
+    {
+        project_folder_tree_->setCurrentIndex(folder_proxy);
+        project_folder_tree_->expandAll();
+        update_project_browser_folder(folder_proxy);
+    }
+    auto selection_source = prior_asset_id.isEmpty()
+        ? QModelIndex{} : find_source(EditorRoles::project_entry_id, prior_asset_id);
+    if (!selection_source.isValid() && !prior_path.isEmpty())
+        selection_source = find_source(EditorRoles::project_path, prior_path);
+    if (selection_source.isValid())
+    {
+        const auto selection_proxy = project_filter_->mapFromSource(selection_source);
+        if (selection_proxy.isValid())
+        {
+            project_explorer_->setCurrentIndex(selection_proxy);
+            project_thumbnail_view_->setCurrentIndex(selection_proxy);
+        }
+    }
+    refresh_project_input_map();
     for (const auto& diagnostic : project_index_.diagnostics)
     {
         const auto severity = diagnostic.severity == ProjectIndexDiagnosticSeverity::error
@@ -1276,6 +3383,107 @@ void EditorWindow::rebuild_assets()
     project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::identifier), true);
     project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::path), true);
     project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::structural_status), true);
+    hierarchy_model_->set_drag_context(
+        project_index_.candidate ? project_index_.candidate->project_id : QString{},
+        scene_ ? QString::fromStdString(scene_->id().to_string()) : QString{},
+        command_revision_, project_model_->drag_revision());
+}
+
+void EditorWindow::refresh_project_input_map()
+{
+    project_input_map_.reset();
+    input_map_source_path_.clear();
+    const ProjectIndexEntry* input_entry = nullptr;
+    if (project_index_.candidate)
+    {
+        for (const auto& entry : project_index_.candidate->entries)
+        {
+            if (entry.kind == ProjectIndexEntryKind::asset
+                && entry.asset_type.compare(QStringLiteral("input-map"), Qt::CaseInsensitive) == 0
+                && entry.structurally_valid && !entry.resolved_source_path.isEmpty())
+            {
+                input_entry = &entry;
+                break;
+            }
+        }
+    }
+    if (input_entry == nullptr)
+    {
+        game_viewport_->set_input_map(input_map_service_.compatibility_map());
+        if (!project_manifest_path_.isEmpty())
+        {
+            append_console(
+                QStringLiteral("No valid input-map asset was found; Play uses the compatibility WASD/arrow map."),
+                QStringLiteral("Info"), QStringLiteral("Input"));
+        }
+        return;
+    }
+
+    const auto loaded = input_map_service_.load(input_entry->resolved_source_path, project_root_);
+    if (!loaded.succeeded())
+    {
+        for (const auto& diagnostic : loaded.diagnostics)
+        {
+            append_console(
+                QStringLiteral("%1: %2").arg(diagnostic.code, diagnostic.message),
+                QStringLiteral("Error"), QStringLiteral("Input"),
+                input_entry->resolved_source_path);
+        }
+        game_viewport_->set_input_map(input_map_service_.compatibility_map());
+        return;
+    }
+    project_input_map_ = *loaded.document;
+    input_map_source_path_ = input_entry->resolved_source_path;
+    game_viewport_->set_input_map(*project_input_map_);
+    append_console(
+        QStringLiteral("Loaded input map '%1' with %2 control map(s).")
+            .arg(project_input_map_->name)
+            .arg(project_input_map_->control_maps.size()),
+        QStringLiteral("Info"), QStringLiteral("Input"), input_map_source_path_,
+        {}, {}, {}, {}, input_entry->id, input_map_source_path_);
+}
+
+void EditorWindow::edit_input_map()
+{
+    if (!project_input_map_ || input_map_source_path_.isEmpty())
+    {
+        QMessageBox::information(
+            this, QStringLiteral("Input Map"),
+            QStringLiteral("This project has no valid input-map asset. Add an input-map asset under a declared asset root first."));
+        return;
+    }
+    InputMapEditorDialog dialog{*project_input_map_, this};
+    if (dialog.exec() != QDialog::Accepted) return;
+    const auto saved = input_map_service_.save(
+        input_map_source_path_, project_root_, dialog.document(),
+        project_input_map_->source_hash);
+    if (!saved.saved)
+    {
+        const auto message = saved.diagnostics.isEmpty()
+            ? QStringLiteral("Input map save failed.")
+            : QStringLiteral("%1: %2")
+                  .arg(saved.diagnostics.front().code, saved.diagnostics.front().message);
+        append_console(message, QStringLiteral("Error"), QStringLiteral("Input"),
+            input_map_source_path_);
+        QMessageBox::warning(this, QStringLiteral("Input Map Save Failed"), message);
+        return;
+    }
+    project_input_map_ = dialog.document();
+    project_input_map_->source_hash = saved.source_hash;
+    game_viewport_->set_input_map(*project_input_map_);
+    append_console(
+        QStringLiteral("Saved and activated input map '%1'.").arg(project_input_map_->name),
+        QStringLiteral("Info"), QStringLiteral("Input"), input_map_source_path_);
+}
+
+void EditorWindow::apply_component_module_manifest(QString manifest)
+{
+    component_module_manifest_ = std::move(manifest);
+    component_modules_available_ = !component_module_manifest_.isEmpty();
+    for (auto* worker : {preview_worker_, game_preview_worker_, play_worker_})
+    {
+        worker->set_component_module_manifest(component_module_manifest_);
+    }
 }
 
 void EditorWindow::schedule_project_refresh()
@@ -1305,17 +3513,333 @@ void EditorWindow::schedule_project_refresh()
     });
 }
 
+void EditorWindow::publish_global_selection(SelectionOrigin origin)
+{
+    const auto active = selected_entity_id();
+    selection_service_.publish(
+        project_index_.candidate ? project_index_.candidate->project_id : QString{},
+        scene_ ? QString::fromStdString(scene_->id().to_string()) : QString{},
+        selected_entity_ids(), active, origin);
+}
+
+void EditorWindow::update_global_selection_presentation()
+{
+    if (!scene_)
+    {
+        viewport_->set_selected_name({});
+        viewport_->clear_selection_geometry();
+        update_worker_viewport();
+        return;
+    }
+    const auto ids = selection_service_.snapshot().ordered_entity_ids;
+    std::vector<const dragonpixel::scene::entity*> entities;
+    for (const auto& id : ids)
+    {
+        if (const auto* entity = scene_->find_entity(id)) entities.push_back(entity);
+    }
+    viewport_->set_selected_name(entities.size() == 1
+        ? QString::fromStdString(entities.front()->name)
+        : entities.empty() ? QString{} : QStringLiteral("%1 GameObjects").arg(entities.size()));
+    update_viewport_selection_geometry(*scene_);
+    update_worker_viewport();
+}
+
+QList<dragonpixel::core::uuid> EditorWindow::primary_inspector_targets() const
+{
+    if (inspector_target_override_active_) return inspector_target_override_;
+    if (primary_inspector_locked_) return primary_inspector_locked_targets_;
+    const auto& snapshot = selection_service_.snapshot();
+    return snapshot.ordered_entity_ids.isEmpty() ? selected_entity_ids() : snapshot.ordered_entity_ids;
+}
+
+void EditorWindow::set_primary_inspector_locked(bool locked)
+{
+    if (locked)
+    {
+        const auto targets = selection_service_.snapshot().ordered_entity_ids;
+        if (!scene_ || targets.isEmpty())
+        {
+            QSignalBlocker blocker{inspector_lock_};
+            inspector_lock_->setChecked(false);
+            return;
+        }
+        primary_inspector_locked_ = true;
+        primary_inspector_locked_targets_ = targets;
+        primary_inspector_locked_project_id_ = selection_service_.snapshot().project_id;
+        primary_inspector_locked_scene_id_ = selection_service_.snapshot().scene_id;
+        inspector_lock_->setText(QStringLiteral("Locked"));
+    }
+    else
+    {
+        primary_inspector_locked_ = false;
+        primary_inspector_locked_targets_.clear();
+        primary_inspector_locked_project_id_.clear();
+        primary_inspector_locked_scene_id_.clear();
+        inspector_lock_->setText(QStringLiteral("Lock"));
+    }
+    inspect_selected_entities();
+}
+
+void EditorWindow::create_additional_inspector()
+{
+    auto state = std::make_unique<AdditionalInspector>();
+    state->ordinal = static_cast<int>(additional_inspectors_.size()) + 2;
+    auto* panel = new QWidget(this);
+    state->panel = panel;
+    panel->setObjectName(QStringLiteral("InspectorPanel.%1").arg(state->ordinal));
+    panel->setAccessibleName(QStringLiteral("GameObject Inspector %1").arg(state->ordinal));
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
+    auto* header = new QFrame(panel);
+    header->setFrameShape(QFrame::StyledPanel);
+    auto* header_layout = new QVBoxLayout(header);
+    header_layout->setContentsMargins(8, 8, 8, 8);
+    auto* name_row = new QHBoxLayout;
+    state->enabled = new QCheckBox(header);
+    state->enabled->setObjectName(QStringLiteral("InspectorGameObjectEnabled.%1").arg(state->ordinal));
+    state->enabled->setAccessibleName(QStringLiteral("Inspector %1 GameObject enabled").arg(state->ordinal));
+    state->enabled->setStyleSheet(high_contrast_indicator_style(QStringLiteral("QCheckBox")));
+    state->enabled->setMinimumSize(24, 24);
+    state->name = new QLineEdit(header);
+    state->name->setObjectName(QStringLiteral("InspectorGameObjectName.%1").arg(state->ordinal));
+    state->name->setAccessibleName(QStringLiteral("Inspector %1 GameObject name").arg(state->ordinal));
+    state->lock = new QToolButton(header);
+    state->lock->setObjectName(QStringLiteral("InspectorLock.%1").arg(state->ordinal));
+    state->lock->setText(QStringLiteral("Lock"));
+    state->lock->setCheckable(true);
+    state->lock->setAccessibleName(QStringLiteral("Lock Inspector %1 targets").arg(state->ordinal));
+    name_row->addWidget(state->enabled);
+    name_row->addWidget(state->name, 1);
+    name_row->addWidget(state->lock);
+    header_layout->addLayout(name_row);
+    state->identity = new QLabel(QStringLiteral("No GameObject selected"), header);
+    state->identity->setObjectName(QStringLiteral("InspectorGameObjectIdentity.%1").arg(state->ordinal));
+    state->identity->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    state->identity->setAccessibleName(QStringLiteral("Inspector %1 target identity").arg(state->ordinal));
+    header_layout->addWidget(state->identity);
+    layout->addWidget(header);
+    state->search = new QLineEdit(panel);
+    state->search->setObjectName(QStringLiteral("InspectorSearch.%1").arg(state->ordinal));
+    state->search->setAccessibleName(QStringLiteral("Search Inspector %1").arg(state->ordinal));
+    state->search->setPlaceholderText(QStringLiteral("Search components and properties..."));
+    layout->addWidget(state->search);
+    state->model = new QStandardItemModel(panel);
+    state->model->setHorizontalHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
+    state->delegate = new InspectorDelegate(panel);
+    auto* inspector_view = new InspectorDropTreeView(panel);
+    state->view = inspector_view;
+    state->view->setObjectName(QStringLiteral("InspectorView.%1").arg(state->ordinal));
+    state->view->setAccessibleName(QStringLiteral("Typed component Inspector %1").arg(state->ordinal));
+    state->view->setModel(state->model);
+    state->view->setItemDelegateForColumn(1, state->delegate);
+    state->view->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+    state->view->setRootIsDecorated(true);
+    state->view->setIndentation(14);
+    state->view->setContextMenuPolicy(Qt::CustomContextMenu);
+    state->view->setAcceptDrops(true);
+    state->view->setDragDropMode(QAbstractItemView::DropOnly);
+    state->view->setStyleSheet(QStringLiteral(
+        "QTreeView { border: 0; background: palette(base); }"
+        "QTreeView::item { min-height: 26px; padding: 2px; }")
+        + high_contrast_indicator_style(QStringLiteral("QTreeView")));
+    layout->addWidget(state->view, 1);
+    state->add_component = new QPushButton(QStringLiteral("Add Component"), panel);
+    state->add_component->setObjectName(QStringLiteral("InspectorAddComponent.%1").arg(state->ordinal));
+    state->add_component->setAccessibleName(QStringLiteral("Add component to Inspector %1 targets").arg(state->ordinal));
+    layout->addWidget(state->add_component);
+
+    auto* dock = new QDockWidget(QStringLiteral("Inspector %1").arg(state->ordinal), this);
+    state->dock = dock;
+    dock->setObjectName(QStringLiteral("Dock.Inspector.%1").arg(state->ordinal));
+    dock->setWidget(panel);
+    dock->setAccessibleName(QStringLiteral("Inspector %1").arg(state->ordinal));
+    dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+    dock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable
+        | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
+    if (inspector_dock_ != nullptr) tabifyDockWidget(inspector_dock_, dock);
+    if (view_menu_ != nullptr) view_menu_->addAction(dock->toggleViewAction());
+
+    auto* state_ptr = state.get();
+    inspector_view->set_asset_drop_handler([this, inspector_view](
+        const QModelIndex& index, const QMimeData* mime) {
+        return assign_inspector_asset_drop(inspector_view, index, mime);
+    });
+    connect(state->model, &QStandardItemModel::itemChanged, this, &EditorWindow::edit_inspector_item);
+    connect(state->search, &QLineEdit::textChanged, state->view,
+        [state_ptr](const QString& text) {
+            for (int row = 0; row < state_ptr->model->rowCount(); ++row)
+            {
+                const auto* component = state_ptr->model->item(row, 0);
+                auto matches = text.trimmed().isEmpty() || component->text().contains(text, Qt::CaseInsensitive);
+                for (int child = 0; !matches && child < component->rowCount(); ++child)
+                    matches = component->child(child, 0)->text().contains(text, Qt::CaseInsensitive);
+                state_ptr->view->setRowHidden(row, {}, !matches);
+            }
+        });
+    connect(state->view, &QWidget::customContextMenuRequested, this,
+        [this, state_ptr](const QPoint& point) { show_inspector_context_menu_for(state_ptr->view, point); });
+    connect(state->lock, &QToolButton::toggled, this, [this, state_ptr](bool checked) {
+        if (checked)
+        {
+            const auto& snapshot = selection_service_.snapshot();
+            if (!scene_ || snapshot.ordered_entity_ids.isEmpty())
+            {
+                QSignalBlocker blocker{state_ptr->lock};
+                state_ptr->lock->setChecked(false);
+                return;
+            }
+            state_ptr->locked = true;
+            state_ptr->locked_targets = snapshot.ordered_entity_ids;
+            state_ptr->locked_project_id = snapshot.project_id;
+            state_ptr->locked_scene_id = snapshot.scene_id;
+            state_ptr->lock->setText(QStringLiteral("Locked"));
+        }
+        else
+        {
+            state_ptr->locked = false;
+            state_ptr->locked_targets.clear();
+            state_ptr->locked_project_id.clear();
+            state_ptr->locked_scene_id.clear();
+            state_ptr->lock->setText(QStringLiteral("Lock"));
+        }
+        refresh_additional_inspectors();
+    });
+    connect(state->enabled, &QCheckBox::checkStateChanged, this,
+        [this, state_ptr](Qt::CheckState check_state) {
+            if (rebuilding_inspector_ || !scene_ || check_state == Qt::PartiallyChecked) return;
+            const auto targets = state_ptr->locked
+                ? state_ptr->locked_targets : selection_service_.snapshot().ordered_entity_ids;
+            std::vector<dragonpixel::scene::command> commands;
+            for (const auto& id : targets)
+                commands.emplace_back(dragonpixel::scene::set_entity_enabled_command{id, check_state == Qt::Checked});
+            if (!commands.empty() && apply_authoring_transaction(std::move(commands), "Set GameObject enabled"))
+                after_scene_mutation(QStringLiteral("Inspector %1 changed %2 target enabled state(s)")
+                    .arg(state_ptr->ordinal).arg(targets.size()), selected_entity_ids());
+        });
+    connect(state->name, &QLineEdit::editingFinished, this, [this, state_ptr] {
+        if (rebuilding_inspector_ || !scene_) return;
+        const auto targets = state_ptr->locked
+            ? state_ptr->locked_targets : selection_service_.snapshot().ordered_entity_ids;
+        const auto* entity = targets.size() == 1 ? scene_->find_entity(targets.front()) : nullptr;
+        if (entity != nullptr && state_ptr->name->text().trimmed() != QString::fromStdString(entity->name))
+            static_cast<void>(edit_hierarchy_entity(targets.front(), state_ptr->name->text(), entity->enabled));
+    });
+    connect(state->add_component, &QPushButton::clicked, this, [this, state_ptr] {
+        add_component_to_targets(state_ptr->locked
+            ? state_ptr->locked_targets : selection_service_.snapshot().ordered_entity_ids);
+    });
+
+    additional_inspectors_.push_back(std::move(state));
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    settings.setValue(QStringLiteral("inspector/count"), static_cast<int>(additional_inspectors_.size()) + 1);
+    refresh_additional_inspectors();
+}
+
+void EditorWindow::refresh_additional_inspectors()
+{
+    if (rebuilding_inspector_) return;
+    for (auto& owned_state : additional_inspectors_)
+    {
+        auto& state = *owned_state;
+        const auto targets = state.locked
+            ? state.locked_targets : selection_service_.snapshot().ordered_entity_ids;
+        const auto current_project = selection_service_.snapshot().project_id;
+        const auto current_scene = scene_ ? QString::fromStdString(scene_->id().to_string()) : QString{};
+        const auto unavailable_identity = state.locked
+            && (state.locked_project_id != current_project || state.locked_scene_id != current_scene
+                || std::any_of(targets.begin(), targets.end(), [this](const auto& id) {
+                    return !scene_ || scene_->find_entity(id) == nullptr;
+                }));
+        if (unavailable_identity)
+        {
+            rebuilding_inspector_ = true;
+            state.model->clear();
+            state.model->setHorizontalHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
+            state.enabled->setEnabled(false);
+            state.name->setEnabled(false);
+            state.add_component->setEnabled(false);
+            state.identity->setText(QStringLiteral("Locked target unavailable - Undo may restore it, or unlock this Inspector"));
+            rebuilding_inspector_ = false;
+            continue;
+        }
+
+        auto* saved_view = inspector_;
+        auto* saved_model = inspector_model_;
+        auto* saved_delegate = inspector_delegate_;
+        auto* saved_panel = inspector_panel_;
+        auto* saved_enabled = inspector_enabled_;
+        auto* saved_name = inspector_name_;
+        auto* saved_identity = inspector_identity_;
+        auto* saved_search = inspector_search_;
+        auto* saved_add = inspector_add_component_;
+        inspector_ = state.view;
+        inspector_model_ = state.model;
+        inspector_delegate_ = state.delegate;
+        inspector_panel_ = state.panel;
+        inspector_enabled_ = state.enabled;
+        inspector_name_ = state.name;
+        inspector_identity_ = state.identity;
+        inspector_search_ = state.search;
+        inspector_add_component_ = state.add_component;
+        inspector_target_override_active_ = true;
+        inspector_target_override_ = targets;
+        inspect_selected_entities();
+        inspector_target_override_.clear();
+        inspector_target_override_active_ = false;
+        inspector_ = saved_view;
+        inspector_model_ = saved_model;
+        inspector_delegate_ = saved_delegate;
+        inspector_panel_ = saved_panel;
+        inspector_enabled_ = saved_enabled;
+        inspector_name_ = saved_name;
+        inspector_identity_ = saved_identity;
+        inspector_search_ = saved_search;
+        inspector_add_component_ = saved_add;
+    }
+}
+
+void EditorWindow::clear_inspector_locks()
+{
+    primary_inspector_locked_ = false;
+    primary_inspector_locked_targets_.clear();
+    primary_inspector_locked_project_id_.clear();
+    primary_inspector_locked_scene_id_.clear();
+    if (inspector_lock_ != nullptr)
+    {
+        QSignalBlocker blocker{inspector_lock_};
+        inspector_lock_->setChecked(false);
+        inspector_lock_->setText(QStringLiteral("Lock"));
+    }
+    for (auto& state : additional_inspectors_)
+    {
+        state->locked = false;
+        state->locked_targets.clear();
+        state->locked_project_id.clear();
+        state->locked_scene_id.clear();
+        QSignalBlocker blocker{state->lock};
+        state->lock->setChecked(false);
+        state->lock->setText(QStringLiteral("Lock"));
+    }
+}
+
 void EditorWindow::inspect_selected_entities()
 {
     rebuilding_inspector_ = true;
     inspector_model_->clear();
     inspector_model_->setHorizontalHeaderLabels({QStringLiteral("Property"), QStringLiteral("Value")});
-    const auto selected_ids = selected_entity_ids();
+    const auto selected_ids = primary_inspector_targets();
     if (!scene_ || selected_ids.isEmpty())
     {
-        viewport_->set_selected_name({});
+        inspector_enabled_->setEnabled(false);
+        inspector_enabled_->setTristate(false);
+        inspector_enabled_->setChecked(false);
+        inspector_name_->setEnabled(false);
+        inspector_name_->clear();
+        inspector_identity_->setText(QStringLiteral("No GameObject selected"));
+        inspector_add_component_->setEnabled(false);
         rebuilding_inspector_ = false;
-        update_worker_viewport();
         return;
     }
     std::vector<const dragonpixel::scene::entity*> entities;
@@ -1326,22 +3850,215 @@ void EditorWindow::inspect_selected_entities()
             entities.push_back(entity);
         }
     }
-    if (entities.empty())
+    if (entities.empty() || ((inspector_target_override_active_ || primary_inspector_locked_)
+        && entities.size() != static_cast<std::size_t>(selected_ids.size())))
     {
-        viewport_->set_selected_name({});
+        inspector_enabled_->setEnabled(false);
+        inspector_name_->setEnabled(false);
+        inspector_name_->clear();
+        inspector_identity_->setText(entities.empty() && !primary_inspector_locked_
+            ? QStringLiteral("No GameObject selected")
+            : QStringLiteral("Locked target unavailable - Undo may restore it, or unlock this Inspector"));
+        inspector_add_component_->setEnabled(false);
         rebuilding_inspector_ = false;
-        update_worker_viewport();
         return;
     }
-    viewport_->set_selected_name(entities.size() == 1
+    const auto all_entities_enabled = std::all_of(entities.begin(), entities.end(), [](const auto* value) {
+        return value->enabled;
+    });
+    const auto no_entities_enabled = std::none_of(entities.begin(), entities.end(), [](const auto* value) {
+        return value->enabled;
+    });
+    inspector_enabled_->setEnabled(true);
+    inspector_enabled_->setTristate(entities.size() > 1);
+    inspector_enabled_->setCheckState(all_entities_enabled
+        ? Qt::Checked
+        : (no_entities_enabled ? Qt::Unchecked : Qt::PartiallyChecked));
+    inspector_name_->setEnabled(entities.size() == 1);
+    inspector_name_->setText(entities.size() == 1
         ? QString::fromStdString(entities.front()->name)
-        : QStringLiteral("%1 GameObjects").arg(entities.size()));
-    update_viewport_selection_geometry(*scene_);
+        : QStringLiteral("%1 GameObjects selected").arg(entities.size()));
+    inspector_identity_->setText(entities.size() == 1
+        ? QStringLiteral("UUID  %1   ·   Authoring GameObject").arg(
+            QString::fromStdString(entities.front()->id.to_string()))
+        : QStringLiteral("Multi-object editing   ·   %1 compatible components shown").arg(entities.size()));
+    inspector_add_component_->setEnabled(true);
     QStringList entity_id_strings;
     for (const auto* entity : entities)
     {
         entity_id_strings.push_back(QString::fromStdString(entity->id.to_string()));
     }
+
+    std::function<void(
+        QStandardItem*,
+        const dragonpixel::metadata::property_descriptor&,
+        const std::vector<nlohmann::ordered_json>&,
+        const QString&,
+        const QString&,
+        const QStringList&,
+        int)> append_property;
+    append_property = [this, &append_property, &entity_id_strings](
+                          QStandardItem* parent,
+                          const dragonpixel::metadata::property_descriptor& property,
+                          const std::vector<nlohmann::ordered_json>& values,
+                          const QString& component_type,
+                          const QString& root_property_id,
+                          const QStringList& path,
+                          int depth) {
+        if (values.empty() || depth > 16)
+        {
+            return;
+        }
+        const auto mixed = std::any_of(values.begin() + 1, values.end(), [&](const auto& value) {
+            return value != values.front();
+        });
+        auto* property_name = new QStandardItem{QString::fromStdString(property.display_name)};
+        property_name->setEditable(false);
+        auto* property_value = new QStandardItem{
+            mixed ? QStringLiteral("<mixed>") : QString::fromStdString(values.front().dump())};
+        property_value->setData(entity_id_strings, EditorRoles::entity_ids);
+        property_value->setData(component_type, EditorRoles::component_type);
+        property_value->setData(root_property_id, EditorRoles::property_id);
+        property_value->setData(path, EditorRoles::property_path);
+        property_value->setData(static_cast<int>(property.type), EditorRoles::value_type);
+        property_value->setData(mixed, EditorRoles::mixed_value);
+        property_value->setData(property.nullable, EditorRoles::nullable_value);
+        QStringList choices;
+        for (const auto& choice : property.enum_choices)
+        {
+            choices.push_back(QString::fromStdString(choice));
+        }
+        property_value->setData(choices, EditorRoles::enum_choices);
+        if (property.minimum) property_value->setData(*property.minimum, EditorRoles::minimum);
+        if (property.maximum) property_value->setData(*property.maximum, EditorRoles::maximum);
+        if (property.step) property_value->setData(*property.step, EditorRoles::step);
+        property_value->setData(QString::fromStdString(property.drawer_key), EditorRoles::drawer_key);
+        property_value->setToolTip(QStringLiteral("%1%2%3")
+            .arg(property.tooltip.empty() ? QStringLiteral("Typed Inspector property") : QString::fromStdString(property.tooltip),
+                 property.units.empty() ? QString{} : QStringLiteral(" · %1").arg(QString::fromStdString(property.units)),
+                 property.drawer_key.empty() ? QString{} : QStringLiteral(" · Drawer: %1").arg(QString::fromStdString(property.drawer_key))));
+
+        if (property.type == dragonpixel::metadata::value_type::polymorphic_object && property.shape)
+        {
+            QStringList object_names;
+            QStringList object_ids;
+            QStringList object_values;
+            for (const auto& implementation : metadata_.implementations(property.shape->contract_id))
+            {
+                object_names.push_back(QString::fromStdString(implementation.get().display_name));
+                object_ids.push_back(QString::fromStdString(implementation.get().type_id));
+                object_values.push_back(QString::fromStdString(object_envelope_default(implementation.get()).dump()));
+            }
+            property_value->setData(object_names, EditorRoles::object_type_choices);
+            property_value->setData(object_ids, EditorRoles::object_type_ids);
+            property_value->setData(object_values, EditorRoles::object_type_values);
+        }
+
+        const auto structured = property.type == dragonpixel::metadata::value_type::object
+            || property.type == dragonpixel::metadata::value_type::list
+            || property.type == dragonpixel::metadata::value_type::dictionary;
+        if (!property.read_only && !structured
+            && property.type != dragonpixel::metadata::value_type::component_reference)
+        {
+            property_value->setEditable(true);
+        }
+        parent->appendRow({property_name, property_value});
+        if (mixed || values.front().is_null() || depth == 16)
+        {
+            return;
+        }
+
+        const dragonpixel::metadata::object_type_descriptor* object_type = nullptr;
+        nlohmann::ordered_json object_properties;
+        QStringList child_prefix = path;
+        if (property.type == dragonpixel::metadata::value_type::object && property.shape
+            && values.front().is_object())
+        {
+            object_type = metadata_.find_object_type(property.shape->object_type_id);
+            object_properties = values.front();
+        }
+        else if (property.type == dragonpixel::metadata::value_type::polymorphic_object
+            && values.front().is_object())
+        {
+            object_type = metadata_.find_object_type(values.front().value("typeId", std::string{}));
+            object_properties = values.front().value("properties", nlohmann::ordered_json::object());
+            child_prefix.push_back(QStringLiteral("properties"));
+        }
+        if (object_type != nullptr && object_properties.is_object())
+        {
+            for (const auto& child_property : object_type->properties)
+            {
+                std::vector<nlohmann::ordered_json> child_values;
+                child_values.reserve(values.size());
+                for (const auto& selected_value : values)
+                {
+                    const auto& source = property.type == dragonpixel::metadata::value_type::polymorphic_object
+                        ? selected_value.value("properties", nlohmann::ordered_json::object())
+                        : selected_value;
+                    const auto found = source.find(child_property.property_id);
+                    child_values.push_back(found == source.end() ? property_default(child_property) : *found);
+                }
+                auto child_path = child_prefix;
+                child_path.push_back(QString::fromStdString(child_property.property_id));
+                append_property(property_name, child_property, child_values, component_type,
+                    root_property_id, child_path, depth + 1);
+            }
+            return;
+        }
+
+        if (property.type == dragonpixel::metadata::value_type::list && values.front().is_array()
+            && property.shape && !property.shape->arguments.empty())
+        {
+            const auto& element_shape = property.shape->arguments.front();
+            for (std::size_t index = 0; index < values.front().size(); ++index)
+            {
+                dragonpixel::metadata::property_descriptor element;
+                element.property_id = std::to_string(index);
+                element.display_name = std::string{"Element "} + std::to_string(index);
+                element.type = element_shape.type;
+                element.nullable = element_shape.nullable;
+                element.reference_filter = element_shape.reference_filter;
+                element.shape = element_shape;
+                std::vector<nlohmann::ordered_json> element_values;
+                for (const auto& selected_value : values)
+                {
+                    element_values.push_back(selected_value.is_array() && index < selected_value.size()
+                        ? selected_value.at(index) : nlohmann::ordered_json{nullptr});
+                }
+                auto child_path = path;
+                child_path.push_back(QString::number(index));
+                append_property(property_name, element, element_values, component_type,
+                    root_property_id, child_path, depth + 1);
+            }
+            return;
+        }
+
+        if (property.type == dragonpixel::metadata::value_type::dictionary && values.front().is_object()
+            && property.shape && !property.shape->arguments.empty())
+        {
+            const auto& element_shape = property.shape->arguments.front();
+            for (auto iterator = values.front().begin(); iterator != values.front().end(); ++iterator)
+            {
+                dragonpixel::metadata::property_descriptor element;
+                element.property_id = iterator.key();
+                element.display_name = iterator.key();
+                element.type = element_shape.type;
+                element.nullable = element_shape.nullable;
+                element.reference_filter = element_shape.reference_filter;
+                element.shape = element_shape;
+                std::vector<nlohmann::ordered_json> element_values;
+                for (const auto& selected_value : values)
+                {
+                    const auto found = selected_value.find(iterator.key());
+                    element_values.push_back(found == selected_value.end() ? nlohmann::ordered_json{nullptr} : *found);
+                }
+                auto child_path = path;
+                child_path.push_back(QString::fromStdString(iterator.key()));
+                append_property(property_name, element, element_values, component_type,
+                    root_property_id, child_path, depth + 1);
+            }
+        }
+    };
 
     for (const auto& component : entities.front()->components)
     {
@@ -1374,8 +4091,20 @@ void EditorWindow::inspect_selected_entities()
         component_item->setData(QString::fromStdString(component.type_id), EditorRoles::component_type);
         component_item->setData(entity_id_strings, EditorRoles::entity_ids);
         component_item->setEditable(false);
-        auto* owner_item = new QStandardItem{owner_text(component.owner)};
+        auto component_font = component_item->font();
+        component_font.setBold(true);
+        component_item->setFont(component_font);
+        component_item->setBackground(QBrush{palette().color(QPalette::AlternateBase)});
+        const auto runtime_unavailable = descriptor != nullptr
+            && !descriptor->runtime_module_id.empty() && !component_modules_available_;
+        auto* owner_item = new QStandardItem{owner_text(component.owner)
+            + (runtime_unavailable ? QStringLiteral(" · Unbuilt") : QString{})};
         owner_item->setEditable(false);
+        if (runtime_unavailable)
+        {
+            owner_item->setForeground(QBrush{QColor{224, 164, 54}});
+            owner_item->setToolTip(QStringLiteral("Authoring data is editable and preserved, but Build Components must succeed before this component can execute in Preview or Play."));
+        }
         inspector_model_->appendRow({component_item, owner_item});
         if (opaque || descriptor == nullptr)
         {
@@ -1395,59 +4124,33 @@ void EditorWindow::inspect_selected_entities()
             return value->enabled;
         });
         component_item->setCheckState(all_enabled ? Qt::Checked : (none_enabled ? Qt::Unchecked : Qt::PartiallyChecked));
+        if (!descriptor->source_path.empty())
+        {
+            auto* source_name = new QStandardItem{QStringLiteral("Script Source")};
+            auto* source_value = new QStandardItem{QString::fromStdString(descriptor->source_path)};
+            source_name->setEditable(false);
+            source_value->setEditable(false);
+            source_value->setToolTip(QStringLiteral("Contained project source. Exposed fields below are edited and saved through Inspector commands; source execution remains worker-only."));
+            component_item->appendRow({source_name, source_value});
+        }
         for (const auto& property : descriptor->properties)
         {
-            const auto found = component.properties.find(property.property_id);
-            const auto value = found == component.properties.end() ? nlohmann::ordered_json{nullptr} : *found;
-            const auto mixed = std::any_of(components.begin() + 1, components.end(), [&](const auto* other) {
-                const auto other_found = other->properties.find(property.property_id);
-                const auto other_value = other_found == other->properties.end()
-                    ? nlohmann::ordered_json{nullptr}
-                    : *other_found;
-                return other_value != value;
-            });
-            auto* property_name = new QStandardItem{QString::fromStdString(property.display_name)};
-            property_name->setEditable(false);
-            auto* property_value = new QStandardItem{
-                mixed ? QStringLiteral("<mixed>") : QString::fromStdString(value.dump())};
-            property_value->setData(entity_id_strings, EditorRoles::entity_ids);
-            property_value->setData(QString::fromStdString(component.type_id), EditorRoles::component_type);
-            property_value->setData(QString::fromStdString(property.property_id), EditorRoles::property_id);
-            property_value->setData(static_cast<int>(property.type), EditorRoles::value_type);
-            QStringList choices;
-            for (const auto& choice : property.enum_choices)
+            std::vector<nlohmann::ordered_json> values;
+            values.reserve(components.size());
+            for (const auto* selected_component : components)
             {
-                choices.push_back(QString::fromStdString(choice));
+                const auto found = selected_component->properties.find(property.property_id);
+                values.push_back(found == selected_component->properties.end()
+                    ? property_default(property) : *found);
             }
-            property_value->setData(choices, EditorRoles::enum_choices);
-            if (property.minimum)
-            {
-                property_value->setData(*property.minimum, EditorRoles::minimum);
-            }
-            if (property.maximum)
-            {
-                property_value->setData(*property.maximum, EditorRoles::maximum);
-            }
-            if (property.step)
-            {
-                property_value->setData(*property.step, EditorRoles::step);
-            }
-            property_value->setData(QString::fromStdString(property.drawer_key), EditorRoles::drawer_key);
-            property_value->setToolTip(QStringLiteral("%1%2%3")
-                .arg(property.tooltip.empty() ? QStringLiteral("Typed Inspector property") : QString::fromStdString(property.tooltip),
-                     property.units.empty() ? QString{} : QStringLiteral(" · %1").arg(QString::fromStdString(property.units)),
-                     property.drawer_key.empty() ? QString{} : QStringLiteral(" · Drawer: %1").arg(QString::fromStdString(property.drawer_key))));
-            if (!property.read_only)
-            {
-                property_value->setEditable(true);
-            }
-            component_item->appendRow({property_name, property_value});
+            append_property(component_item, property, values,
+                QString::fromStdString(component.type_id),
+                QString::fromStdString(property.property_id), {}, 0);
         }
     }
     inspector_->expandAll();
     inspector_->resizeColumnToContents(0);
     rebuilding_inspector_ = false;
-    update_worker_viewport();
 }
 
 bool EditorWindow::edit_hierarchy_entity(
@@ -1491,27 +4194,37 @@ bool EditorWindow::edit_hierarchy_entity(
     return true;
 }
 
-bool EditorWindow::drag_reparent_entity(
-    const dragonpixel::core::uuid& id,
+bool EditorWindow::drag_reparent_entities(
+    const std::vector<dragonpixel::core::uuid>& ids,
     const std::optional<dragonpixel::core::uuid>& parent,
     std::optional<std::size_t> sibling_index)
 {
-    if (!scene_)
+    if (!scene_ || ids.empty())
     {
         return false;
     }
-    if (!apply_authoring_transaction({dragonpixel::scene::command{
-            dragonpixel::scene::reparent_entity_command{id, parent, sibling_index}}},
-            "Reparent GameObject"))
+    std::vector<dragonpixel::scene::command> commands;
+    commands.reserve(ids.size());
+    for (std::size_t index = 0; index < ids.size(); ++index)
     {
-        append_console(QStringLiteral("Reparent rejected: hierarchy would be invalid"), QStringLiteral("Warning"));
+        const auto target_index = sibling_index
+            ? std::optional<std::size_t>{*sibling_index + index}
+            : std::optional<std::size_t>{};
+        commands.emplace_back(dragonpixel::scene::reparent_entity_command{
+            ids[index], parent, target_index});
+    }
+    if (!apply_authoring_transaction(std::move(commands), "Reparent GameObjects"))
+    {
+        append_console(QStringLiteral("Grouped reparent rejected without partial movement"), QStringLiteral("Warning"));
         QMetaObject::invokeMethod(this, [this] {
             rebuild_hierarchy();
         }, Qt::QueuedConnection);
         return false;
     }
-    QMetaObject::invokeMethod(this, [this, id] {
-        after_scene_mutation(QStringLiteral("GameObject reparented through command validation"), {id});
+    QList<dragonpixel::core::uuid> selection;
+    for (const auto& id : ids) selection.push_back(id);
+    QMetaObject::invokeMethod(this, [this, selection] {
+        after_scene_mutation(QStringLiteral("GameObjects reparented in one validated transaction"), selection);
     }, Qt::QueuedConnection);
     return true;
 }
@@ -1523,6 +4236,7 @@ void EditorWindow::edit_inspector_item(QStandardItem* item)
         return;
     }
     const auto property_id = item->data(EditorRoles::property_id).toString();
+    const auto property_path = item->data(EditorRoles::property_path).toStringList();
     const auto component_type = item->data(EditorRoles::component_type).toString();
     const auto entity_ids = item->data(EditorRoles::entity_ids).toStringList();
     if (component_type.isEmpty() || entity_ids.isEmpty())
@@ -1553,8 +4267,22 @@ void EditorWindow::edit_inspector_item(QStandardItem* item)
                 const auto id = dragonpixel::core::uuid::parse(id_text.toStdString());
                 if (id)
                 {
-                    commands.emplace_back(dragonpixel::scene::set_component_property_command{
-                        *id, component_type.toStdString(), property_id.toStdString(), value});
+                    if (property_path.isEmpty())
+                    {
+                        commands.emplace_back(dragonpixel::scene::set_component_property_command{
+                            *id, component_type.toStdString(), property_id.toStdString(), value});
+                    }
+                    else
+                    {
+                        std::vector<std::string> path;
+                        path.reserve(static_cast<std::size_t>(property_path.size()));
+                        for (const auto& segment : property_path)
+                        {
+                            path.push_back(segment.toStdString());
+                        }
+                        commands.emplace_back(dragonpixel::scene::set_component_property_path_command{
+                            *id, component_type.toStdString(), property_id.toStdString(), std::move(path), value});
+                    }
                 }
             }
         }
@@ -1578,20 +4306,28 @@ void EditorWindow::edit_inspector_item(QStandardItem* item)
         append_console(QStringLiteral("Property edit rejected: %1").arg(QString::fromUtf8(exception.what())));
         QMetaObject::invokeMethod(this, [this] {
             inspect_selected_entities();
+            refresh_additional_inspectors();
         }, Qt::QueuedConnection);
     }
 }
 
-void EditorWindow::create_preset(dragonpixel::scene::entity_preset preset, const QString& asset_override)
+void EditorWindow::create_preset(
+    dragonpixel::scene::entity_preset preset,
+    const QString& asset_override,
+    bool force_scene_root,
+    const std::optional<dragonpixel::core::uuid>& explicit_parent)
 {
     if (!scene_)
     {
         return;
     }
-    const auto base_name = [preset] {
+    const auto base_name = [preset, &asset_override] {
         switch (preset)
         {
-            case dragonpixel::scene::entity_preset::sprite: return QStringLiteral("Sprite");
+            case dragonpixel::scene::entity_preset::sprite:
+                if (asset_override == QStringLiteral("builtin://square")) return QStringLiteral("Square");
+                if (asset_override == QStringLiteral("builtin://circle")) return QStringLiteral("Circle");
+                return QStringLiteral("Sprite");
             case dragonpixel::scene::entity_preset::cube: return QStringLiteral("Cube");
             case dragonpixel::scene::entity_preset::camera: return QStringLiteral("Camera");
             case dragonpixel::scene::entity_preset::light: return QStringLiteral("Light");
@@ -1611,9 +4347,11 @@ void EditorWindow::create_preset(dragonpixel::scene::entity_preset preset, const
     }
     const auto id = dragonpixel::core::uuid::random_v4();
     const auto selected = selected_entity_ids();
-    const auto parent = selected.size() == 1
-        ? std::optional<dragonpixel::core::uuid>{selected.front()}
-        : std::nullopt;
+    const auto parent = explicit_parent
+        ? explicit_parent
+        : !force_scene_root && selected.size() == 1
+            ? std::optional<dragonpixel::core::uuid>{selected.front()}
+            : std::nullopt;
     std::optional<std::string> primary_asset;
     if (!asset_override.isEmpty())
     {
@@ -1653,37 +4391,54 @@ void EditorWindow::duplicate_selected()
     {
         return;
     }
-    const auto root_id = selected_entity_id();
-    const auto* root = root_id ? scene_->find_entity(*root_id) : nullptr;
-    if (!root_id || root == nullptr)
+    auto root_ids = selected_entity_ids();
+    if (root_ids.isEmpty())
     {
         return;
     }
-    std::vector<dragonpixel::scene::entity_id_remap> remaps;
-    std::vector<dragonpixel::core::uuid> frontier{*root_id};
-    for (std::size_t index = 0; index < frontier.size(); ++index)
-    {
-        const auto parent = frontier[index];
-        remaps.push_back({parent, dragonpixel::core::uuid::random_v4()});
-        for (const auto& entity : scene_->entities())
+    const auto selected_roots = root_ids;
+    root_ids.erase(std::remove_if(root_ids.begin(), root_ids.end(), [&](const auto& id) {
+        const auto* entity = scene_->find_entity(id);
+        auto parent = entity ? entity->parent_id : std::optional<dragonpixel::core::uuid>{};
+        while (parent)
         {
-            if (entity.parent_id == parent)
+            if (selected_roots.contains(*parent)) return true;
+            const auto* parent_entity = scene_->find_entity(*parent);
+            parent = parent_entity ? parent_entity->parent_id
+                                   : std::optional<dragonpixel::core::uuid>{};
+        }
+        return false;
+    }), root_ids.end());
+    std::vector<dragonpixel::scene::command> commands;
+    QList<dragonpixel::core::uuid> duplicates;
+    for (const auto& root_id : root_ids)
+    {
+        const auto* root = scene_->find_entity(root_id);
+        if (root == nullptr) return;
+        std::vector<dragonpixel::scene::entity_id_remap> remaps;
+        std::vector<dragonpixel::core::uuid> frontier{root_id};
+        for (std::size_t index = 0; index < frontier.size(); ++index)
+        {
+            const auto current = frontier[index];
+            remaps.push_back({current, dragonpixel::core::uuid::random_v4()});
+            for (const auto& entity : scene_->entities())
             {
-                frontier.push_back(entity.id);
+                if (entity.parent_id == current) frontier.push_back(entity.id);
             }
         }
-    }
-    const auto duplicate_id = remaps.front().duplicate_id;
-    if (apply_authoring_transaction({dragonpixel::scene::command{
-        dragonpixel::scene::duplicate_subtree_command{
-            *root_id,
+        duplicates.push_back(remaps.front().duplicate_id);
+        commands.emplace_back(dragonpixel::scene::duplicate_subtree_command{
+            root_id,
             std::move(remaps),
             std::nullopt,
             std::nullopt,
             root->name + " Copy",
-            true}}}, "Duplicate GameObject subtree"))
+            true});
+    }
+    if (apply_authoring_transaction(std::move(commands), "Duplicate GameObject subtrees"))
     {
-        after_scene_mutation(QStringLiteral("Duplicated GameObject subtree with remapped UUID references"), {duplicate_id});
+        after_scene_mutation(QStringLiteral("Duplicated %1 top-level selection(s) with remapped UUID references")
+            .arg(duplicates.size()), duplicates);
     }
     else
     {
@@ -1697,32 +4452,51 @@ void EditorWindow::delete_selected_subtree()
     {
         return;
     }
-    const auto root_id = selected_entity_id();
-    const auto* root = root_id ? scene_->find_entity(*root_id) : nullptr;
-    if (!root_id || root == nullptr)
+    auto root_ids = selected_entity_ids();
+    if (root_ids.isEmpty())
     {
         return;
     }
-    std::vector<dragonpixel::core::uuid> descendants{*root_id};
-    for (std::size_t index = 0; index < descendants.size(); ++index)
-    {
-        for (const auto& entity : scene_->entities())
+    const auto selected_roots = root_ids;
+    root_ids.erase(std::remove_if(root_ids.begin(), root_ids.end(), [&](const auto& id) {
+        const auto* entity = scene_->find_entity(id);
+        auto parent = entity ? entity->parent_id : std::optional<dragonpixel::core::uuid>{};
+        while (parent)
         {
-            if (entity.parent_id == descendants[index])
+            if (selected_roots.contains(*parent)) return true;
+            const auto* parent_entity = scene_->find_entity(*parent);
+            parent = parent_entity ? parent_entity->parent_id
+                                   : std::optional<dragonpixel::core::uuid>{};
+        }
+        return false;
+    }), root_ids.end());
+    QSet<QString> all_entities;
+    for (const auto& root_id : root_ids)
+    {
+        std::vector<dragonpixel::core::uuid> descendants{root_id};
+        for (std::size_t index = 0; index < descendants.size(); ++index)
+        {
+            all_entities.insert(QString::fromStdString(descendants[index].to_string()));
+            for (const auto& entity : scene_->entities())
             {
-                descendants.push_back(entity.id);
+                if (entity.parent_id == descendants[index]) descendants.push_back(entity.id);
             }
         }
     }
-    if (delete_prompt_ && !delete_prompt_(QString::fromStdString(root->name), static_cast<int>(descendants.size())))
+    const auto label = root_ids.size() == 1 && scene_->find_entity(root_ids.front())
+        ? QString::fromStdString(scene_->find_entity(root_ids.front())->name)
+        : QStringLiteral("%1 selected roots").arg(root_ids.size());
+    if (delete_prompt_ && !delete_prompt_(label, all_entities.size()))
     {
         return;
     }
-    if (apply_authoring_transaction({dragonpixel::scene::command{
-            dragonpixel::scene::delete_subtree_command{*root_id}}},
-            "Delete GameObject subtree"))
+    std::vector<dragonpixel::scene::command> commands;
+    for (const auto& root_id : root_ids)
+        commands.emplace_back(dragonpixel::scene::delete_subtree_command{root_id});
+    if (apply_authoring_transaction(std::move(commands), "Delete GameObject subtrees"))
     {
-        after_scene_mutation(QStringLiteral("Deleted %1 GameObject(s); Undo restores payloads and ordering").arg(descendants.size()));
+        after_scene_mutation(QStringLiteral("Deleted %1 GameObject(s) in one transaction; Undo restores payloads and ordering")
+            .arg(all_entities.size()));
     }
     else
     {
@@ -1736,16 +4510,29 @@ void EditorWindow::reparent_entity()
     {
         return;
     }
-    const auto selected = selected_entity_id();
-    if (!selected)
+    auto selected = selected_entity_ids();
+    if (selected.isEmpty())
     {
         return;
     }
+    const auto all_selected = selected;
+    selected.erase(std::remove_if(selected.begin(), selected.end(), [&](const auto& id) {
+        const auto* entity = scene_->find_entity(id);
+        auto parent = entity ? entity->parent_id : std::optional<dragonpixel::core::uuid>{};
+        while (parent)
+        {
+            if (all_selected.contains(*parent)) return true;
+            const auto* parent_entity = scene_->find_entity(*parent);
+            parent = parent_entity ? parent_entity->parent_id
+                                   : std::optional<dragonpixel::core::uuid>{};
+        }
+        return false;
+    }), selected.end());
     QStringList labels{QStringLiteral("<Scene root>")};
     QHash<QString, QString> ids;
     for (const auto& entity : scene_->entities())
     {
-        if (entity.id == *selected)
+        if (all_selected.contains(entity.id))
         {
             continue;
         }
@@ -1764,93 +4551,283 @@ void EditorWindow::reparent_entity()
     {
         parent = dragonpixel::core::uuid::parse(ids.value(choice).toStdString());
     }
-    const auto succeeded = apply_authoring_transaction(
-        {dragonpixel::scene::command{dragonpixel::scene::reparent_entity_command{
-            *selected, parent, std::nullopt}}},
-        "Reparent GameObject");
-    append_console(succeeded ? QStringLiteral("Entity reparented through command validation") : QStringLiteral("Reparent rejected: hierarchy would be invalid"));
-    if (succeeded)
-    {
-        after_scene_mutation(QStringLiteral("GameObject reparented through command validation"), {*selected});
-    }
-    else
-    {
-        rebuild_hierarchy();
-    }
+    std::vector<dragonpixel::core::uuid> roots;
+    roots.reserve(selected.size());
+    for (const auto& id : selected) roots.push_back(id);
+    static_cast<void>(drag_reparent_entities(roots, parent, std::nullopt));
 }
 
-void EditorWindow::add_component()
+void EditorWindow::group_selected()
 {
     if (!scene_)
     {
         return;
     }
-    const auto entity_id = selected_entity_id();
-    const auto* entity = selected_entity();
-    if (!entity_id || entity == nullptr)
+    auto selected = selected_entity_ids();
+    if (selected.isEmpty())
     {
         return;
     }
-    QStringList choices;
+    const auto all_selected = selected;
+    selected.erase(std::remove_if(selected.begin(), selected.end(), [&](const auto& id) {
+        const auto* entity = scene_->find_entity(id);
+        auto parent = entity ? entity->parent_id : std::optional<dragonpixel::core::uuid>{};
+        while (parent)
+        {
+            if (all_selected.contains(*parent)) return true;
+            const auto* parent_entity = scene_->find_entity(*parent);
+            parent = parent_entity ? parent_entity->parent_id
+                                   : std::optional<dragonpixel::core::uuid>{};
+        }
+        return false;
+    }), selected.end());
+    if (selected.isEmpty()) return;
+
+    std::optional<dragonpixel::core::uuid> common_parent;
+    const auto* first = scene_->find_entity(selected.front());
+    if (first) common_parent = first->parent_id;
+    for (const auto& id : selected)
+    {
+        const auto* entity = scene_->find_entity(id);
+        if (entity == nullptr || entity->parent_id != common_parent)
+        {
+            common_parent.reset();
+            break;
+        }
+    }
+    const auto group_id = dragonpixel::core::uuid::random_v4();
+    std::vector<dragonpixel::scene::command> commands;
+    commands.emplace_back(dragonpixel::scene::create_preset_command{
+        group_id,
+        "Group",
+        dragonpixel::scene::entity_preset::empty,
+        common_parent,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt});
+    for (std::size_t index = 0; index < static_cast<std::size_t>(selected.size()); ++index)
+    {
+        commands.emplace_back(dragonpixel::scene::reparent_entity_command{
+            selected.at(static_cast<qsizetype>(index)), group_id, index});
+    }
+    if (!apply_authoring_transaction(std::move(commands), "Group GameObjects"))
+    {
+        append_console(QStringLiteral("Grouping was rejected without partial movement"),
+            QStringLiteral("Warning"), QStringLiteral("Hierarchy"));
+        return;
+    }
+    after_scene_mutation(QStringLiteral("Grouped %1 top-level selection(s) in one transaction")
+        .arg(selected.size()), {group_id});
+}
+
+void EditorWindow::add_component()
+{
+    add_component_to_targets(primary_inspector_targets());
+}
+
+void EditorWindow::add_component_to_targets(const QList<dragonpixel::core::uuid>& entity_ids)
+{
+    if (!scene_) return;
+    if (entity_ids.empty())
+    {
+        return;
+    }
     QHash<QString, const dragonpixel::metadata::component_descriptor*> descriptors;
     for (const auto& reference : metadata_.descriptors())
     {
         const auto& descriptor = reference.get();
-        const auto exists = std::any_of(entity->components.begin(), entity->components.end(), [&](const auto& component) {
-            return component.type_id == descriptor.type_id;
+        const auto missing_target = std::any_of(entity_ids.begin(), entity_ids.end(), [&](const auto& id) {
+            const auto* entity = scene_->find_entity(id);
+            return entity != nullptr && std::none_of(entity->components.begin(), entity->components.end(),
+                [&](const auto& component) { return component.type_id == descriptor.type_id; });
         });
-        if (!exists)
+        if (missing_target && descriptor.addable)
         {
-            const auto label = QStringLiteral("%1 — %2").arg(QString::fromStdString(descriptor.display_name), QString::fromStdString(descriptor.type_id));
-            choices.push_back(label);
-            descriptors.insert(label, &descriptor);
+            descriptors.insert(QString::fromStdString(descriptor.type_id), &descriptor);
         }
     }
-    if (choices.isEmpty())
+    QDialog dialog{this};
+    dialog.setObjectName(QStringLiteral("AddComponentDialog"));
+    dialog.setWindowTitle(QStringLiteral("Add Component"));
+    dialog.resize(520, 560);
+    auto* layout = new QVBoxLayout{&dialog};
+    auto* target_count = new QLabel{
+        QStringLiteral("Add to missing GameObjects across %1 Inspector target(s)").arg(entity_ids.size()), &dialog};
+    target_count->setObjectName(QStringLiteral("AddComponentTargetCount"));
+    target_count->setAccessibleName(QStringLiteral("Add Component target count"));
+    layout->addWidget(target_count);
+    auto* search = new QLineEdit{&dialog};
+    search->setObjectName(QStringLiteral("AddComponentSearch"));
+    search->setPlaceholderText(QStringLiteral("Search components by name, category, language, or ID…"));
+    search->setAccessibleName(QStringLiteral("Search available components"));
+    auto* list = new QListWidget{&dialog};
+    list->setObjectName(QStringLiteral("AddComponentList"));
+    list->setAccessibleName(QStringLiteral("Available components"));
+    list->setAlternatingRowColors(true);
+    list->setSelectionMode(QAbstractItemView::SingleSelection);
+    layout->addWidget(search);
+    layout->addWidget(list, 1);
+    auto* buttons = new QDialogButtonBox{QDialogButtonBox::Cancel, &dialog};
+    auto* create_csharp = buttons->addButton(QStringLiteral("New C# Script..."), QDialogButtonBox::ActionRole);
+    create_csharp->setObjectName(QStringLiteral("CreateCSharpScriptFromInspector"));
+    auto* create_cpp = buttons->addButton(QStringLiteral("New C++ Component..."), QDialogButtonBox::ActionRole);
+    create_cpp->setObjectName(QStringLiteral("CreateCppComponentFromInspector"));
+    auto* add = buttons->addButton(QStringLiteral("Add"), QDialogButtonBox::AcceptRole);
+    add->setObjectName(QStringLiteral("ConfirmAddComponent"));
+    add->setEnabled(false);
+    layout->addWidget(buttons);
+
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    const auto recent_type = settings.value(QStringLiteral("inspector/recentComponent")).toString();
+    QList<const dragonpixel::metadata::component_descriptor*> ordered;
+    ordered.reserve(descriptors.size());
+    for (const auto* descriptor : descriptors)
     {
-        append_console(QStringLiteral("Selected entity already has every Slice 1 component type"));
+        ordered.push_back(descriptor);
+    }
+    std::sort(ordered.begin(), ordered.end(), [&recent_type](const auto* left, const auto* right) {
+        const auto left_recent = QString::fromStdString(left->type_id) == recent_type;
+        const auto right_recent = QString::fromStdString(right->type_id) == recent_type;
+        if (left_recent != right_recent) return left_recent;
+        if (left->category != right->category) return left->category < right->category;
+        return left->display_name < right->display_name;
+    });
+    for (const auto* descriptor : ordered)
+    {
+        const auto language = descriptor->language == dragonpixel::metadata::implementation_language::csharp
+            ? QStringLiteral("C#")
+            : descriptor->language == dragonpixel::metadata::implementation_language::data_only
+                ? QStringLiteral("Data") : QStringLiteral("C++");
+        const auto category = descriptor->category.empty()
+            ? QStringLiteral("Components") : QString::fromStdString(descriptor->category);
+        auto* item = new QListWidgetItem{
+            QStringLiteral("%1\n%2  ·  %3")
+                .arg(QString::fromStdString(descriptor->display_name), category, language), list};
+        item->setData(Qt::UserRole, QString::fromStdString(descriptor->type_id));
+        item->setData(Qt::UserRole + 1, QStringLiteral("%1 %2 %3 %4")
+            .arg(QString::fromStdString(descriptor->display_name), category, language,
+                 QString::fromStdString(descriptor->type_id)).toLower());
+        item->setToolTip(QString::fromStdString(descriptor->tooltip));
+        item->setSizeHint(QSize{0, 50});
+    }
+    connect(search, &QLineEdit::textChanged, list, [list](const QString& text) {
+        const auto tokens = text.toLower().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        for (int row = 0; row < list->count(); ++row)
+        {
+            const auto haystack = list->item(row)->data(Qt::UserRole + 1).toString();
+            list->item(row)->setHidden(!std::all_of(tokens.begin(), tokens.end(), [&](const auto& token) {
+                return haystack.contains(token);
+            }));
+        }
+    });
+    connect(list, &QListWidget::currentItemChanged, add, [add](QListWidgetItem* current) {
+        add->setEnabled(current != nullptr);
+    });
+    connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    constexpr int create_csharp_result = QDialog::Accepted + 1;
+    constexpr int create_cpp_result = QDialog::Accepted + 2;
+    connect(create_csharp, &QPushButton::clicked, &dialog, [&dialog] {
+        dialog.done(create_csharp_result);
+    });
+    connect(create_cpp, &QPushButton::clicked, &dialog, [&dialog] {
+        dialog.done(create_cpp_result);
+    });
+    if (list->count() > 0) list->setCurrentRow(0);
+    search->setFocus();
+    const auto dialog_result = dialog.exec();
+    if (dialog_result == create_csharp_result)
+    {
+        create_project_component(ProjectComponentLanguage::csharp);
         return;
     }
-    bool accepted = false;
-    const auto choice = QInputDialog::getItem(this, QStringLiteral("Add Component"), QStringLiteral("Component"), choices, 0, false, &accepted);
-    if (!accepted)
+    if (dialog_result == create_cpp_result)
+    {
+        create_project_component(ProjectComponentLanguage::cpp);
+        return;
+    }
+    if (dialog_result != QDialog::Accepted || list->currentItem() == nullptr)
     {
         return;
     }
-    const auto* descriptor = descriptors.value(choice, nullptr);
-    if (descriptor == nullptr)
+    const auto type_id = list->currentItem()->data(Qt::UserRole).toString();
+    if (attach_component_type(type_id, entity_ids, QStringLiteral("Add component")))
     {
-        return;
+        settings.setValue(QStringLiteral("inspector/recentComponent"), type_id);
     }
+}
+
+bool EditorWindow::attach_component_type(
+    const QString& type_id,
+    const QList<dragonpixel::core::uuid>& entity_ids,
+    const QString& transaction_description)
+{
+    if (!scene_ || entity_ids.isEmpty())
+    {
+        return false;
+    }
+    const auto* descriptor = metadata_.find(type_id.toStdString());
+    if (descriptor == nullptr || !descriptor->addable)
+    {
+        append_console(
+            QStringLiteral("Component type %1 is unavailable or cannot be attached.").arg(type_id),
+            QStringLiteral("Error"),
+            QStringLiteral("Components"));
+        return false;
+    }
+
     nlohmann::ordered_json properties = nlohmann::ordered_json::object();
     for (const auto& property : descriptor->properties)
     {
-        if (!property.default_json.empty())
-        {
-            properties[property.property_id] = nlohmann::ordered_json::parse(property.default_json);
-        }
-        else
-        {
-            properties[property.property_id] = default_value(property.type);
-        }
+        properties[property.property_id] = property_default(property);
     }
-    dragonpixel::scene::component_record component{
-        descriptor->type_id,
-        descriptor->schema_version,
-        descriptor->owner,
-        std::move(properties),
-        false,
-        nlohmann::ordered_json::object(),
-        true,
-        descriptor->qualified_name,
-    };
-    if (apply_authoring_transaction(
-            {dragonpixel::scene::command{dragonpixel::scene::upsert_component_command{
-                *entity_id, std::move(component)}}},
-            "Add component"))
+
+    std::vector<dragonpixel::scene::command> commands;
+    commands.reserve(static_cast<std::size_t>(entity_ids.size()));
+    for (const auto& entity_id : entity_ids)
     {
-        after_scene_mutation(QStringLiteral("Component added through command validation"), {*entity_id});
+        const auto* entity = scene_->find_entity(entity_id);
+        if (entity == nullptr)
+        {
+            append_console(
+                QStringLiteral("Component %1 was not attached because an Inspector target is no longer available.")
+                    .arg(QString::fromStdString(descriptor->display_name)),
+                QStringLiteral("Warning"),
+                QStringLiteral("Components"));
+            return false;
+        }
+        if (std::any_of(entity->components.begin(), entity->components.end(), [&](const auto& component) {
+                return component.type_id == descriptor->type_id;
+            }))
+        {
+            continue;
+        }
+        dragonpixel::scene::component_record component{
+            descriptor->type_id,
+            descriptor->schema_version,
+            descriptor->owner,
+            properties,
+            false,
+            nlohmann::ordered_json::object(),
+            true,
+            descriptor->qualified_name,
+        };
+        commands.emplace_back(dragonpixel::scene::upsert_component_command{entity_id, std::move(component)});
     }
+
+    if (commands.empty()) return true;
+    if (!apply_authoring_transaction(
+            std::move(commands),
+            transaction_description.toStdString()))
+    {
+        return false;
+    }
+    after_scene_mutation(
+        QStringLiteral("Component added to %1 GameObject(s) through one validated transaction")
+            .arg(entity_ids.size()),
+        entity_ids);
+    return true;
 }
 
 void EditorWindow::remove_component()
@@ -1865,7 +4842,7 @@ void EditorWindow::remove_component()
         index = index.parent();
     }
     const auto type_id = index.siblingAtColumn(0).data(EditorRoles::component_type).toString();
-    const auto entity_ids = selected_entity_ids();
+    const auto entity_ids = primary_inspector_targets();
     if (type_id.isEmpty() || entity_ids.isEmpty())
     {
         return;
@@ -1879,6 +4856,356 @@ void EditorWindow::remove_component()
     {
         after_scene_mutation(QStringLiteral("Component removed through command validation"), entity_ids);
     }
+}
+
+void EditorWindow::show_inspector_context_menu(const QPoint& point)
+{
+    show_inspector_context_menu_for(inspector_, point);
+}
+
+bool EditorWindow::assign_inspector_asset_drop(
+    QTreeView* view,
+    const QModelIndex& requested_index,
+    const QMimeData* mime)
+{
+    if (!scene_ || !project_index_.candidate || view == nullptr || mime == nullptr
+        || !mime->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        return false;
+    const auto payload = QJsonDocument::fromJson(mime->data(
+        QStringLiteral("application/x-dragonpixel-project-item"))).object();
+    const auto items = payload.value(QStringLiteral("items")).toArray();
+    if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+        || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+        || payload.value(QStringLiteral("projectId")).toString() != project_index_.candidate->project_id
+        || payload.value(QStringLiteral("sourceRevision")).toInteger()
+            != static_cast<qint64>(project_model_->drag_revision())
+        || items.size() != 1 || !items.at(0).isObject())
+    {
+        append_console(QStringLiteral("Inspector asset assignment rejected because the drag is stale, cross-project, or ambiguous."),
+            QStringLiteral("Warning"), QStringLiteral("Drag and Drop"));
+        return false;
+    }
+    const auto item = items.at(0).toObject();
+    const auto asset_id = item.value(QStringLiteral("assetId")).toString();
+    const auto* entry = project_index_.candidate->find_by_id(asset_id);
+    auto value_index = requested_index.siblingAtColumn(1);
+    const auto value_type = static_cast<dragonpixel::metadata::value_type>(
+        value_index.data(EditorRoles::value_type).toInt());
+    if (!value_index.isValid() || value_type != dragonpixel::metadata::value_type::asset_reference
+        || item.value(QStringLiteral("kind")).toString() != QStringLiteral("asset")
+        || entry == nullptr || !entry->structurally_valid)
+    {
+        append_console(QStringLiteral("Drop a compatible indexed asset onto an Inspector asset-reference field."),
+            QStringLiteral("Warning"), QStringLiteral("Inspector"));
+        return false;
+    }
+    const auto component_type = value_index.data(EditorRoles::component_type).toString();
+    const auto property_id = value_index.data(EditorRoles::property_id).toString();
+    const auto* descriptor = metadata_.find(component_type.toStdString());
+    if (descriptor == nullptr)
+    {
+        append_console(QStringLiteral("Inspector asset assignment rejected because component metadata is unavailable."),
+            QStringLiteral("Warning"), QStringLiteral("Inspector"));
+        return false;
+    }
+    const auto property = std::find_if(descriptor->properties.begin(), descriptor->properties.end(),
+        [&](const auto& candidate) { return candidate.property_id == property_id.toStdString(); });
+    if (property == descriptor->properties.end()
+        || (!property->reference_filter.empty() && !entry->asset_type.contains(
+            QString::fromStdString(property->reference_filter), Qt::CaseInsensitive)))
+    {
+        append_console(QStringLiteral("Inspector asset assignment rejected before mutation because the asset type is incompatible with this field."),
+            QStringLiteral("Warning"), QStringLiteral("Inspector"));
+        return false;
+    }
+    const auto encoded = QString::fromStdString(
+        nlohmann::ordered_json(asset_id.toStdString()).dump());
+    if (!view->model()->setData(value_index, encoded, Qt::EditRole)) return false;
+    append_console(QStringLiteral("Assigned asset %1 to %2 Inspector target(s); validation remains all-or-nothing.")
+        .arg(asset_id).arg(value_index.data(EditorRoles::entity_ids).toStringList().size()),
+        QStringLiteral("Info"), QStringLiteral("Inspector"), {}, {}, {}, {}, {}, asset_id);
+    return true;
+}
+
+void EditorWindow::show_inspector_context_menu_for(QTreeView* view, const QPoint& point)
+{
+    if (!scene_)
+    {
+        return;
+    }
+    auto index = view->indexAt(point);
+    if (!index.isValid()) index = view->currentIndex();
+    if (view == inspector_ && show_collection_context_menu(index, point)) return;
+    while (index.parent().isValid()) index = index.parent();
+    index = index.siblingAtColumn(0);
+    const auto type_id = index.data(EditorRoles::component_type).toString();
+    const auto* descriptor = metadata_.find(type_id.toStdString());
+    QList<dragonpixel::core::uuid> entity_ids;
+    for (const auto& id_text : index.data(EditorRoles::entity_ids).toStringList())
+    {
+        if (const auto id = dragonpixel::core::uuid::parse(id_text.toStdString())) entity_ids.push_back(*id);
+    }
+    if (type_id.isEmpty() || descriptor == nullptr || entity_ids.empty()) return;
+    view->setCurrentIndex(index);
+
+    QMenu menu{view};
+    QAction* edit_source = nullptr;
+    if (!descriptor->source_path.empty())
+    {
+        edit_source = menu.addAction(
+            descriptor->language == dragonpixel::metadata::implementation_language::csharp
+                ? QStringLiteral("Edit Script in Rider")
+                : QStringLiteral("Edit Component Source in Rider"));
+        edit_source->setObjectName(QStringLiteral("InspectorEditScriptInRider"));
+        menu.addSeparator();
+    }
+    auto* reset = menu.addAction(QStringLiteral("Reset Component"));
+    reset->setObjectName(QStringLiteral("InspectorResetComponent"));
+    auto* move_up = menu.addAction(QStringLiteral("Move Up"));
+    move_up->setObjectName(QStringLiteral("InspectorMoveComponentUp"));
+    auto* move_down = menu.addAction(QStringLiteral("Move Down"));
+    move_down->setObjectName(QStringLiteral("InspectorMoveComponentDown"));
+    menu.addSeparator();
+    auto* copy = menu.addAction(QStringLiteral("Copy Component"));
+    copy->setObjectName(QStringLiteral("InspectorCopyComponent"));
+    auto* paste = menu.addAction(QStringLiteral("Paste Component Values"));
+    paste->setObjectName(QStringLiteral("InspectorPasteComponent"));
+    menu.addSeparator();
+    auto* diagnostics = menu.addAction(QStringLiteral("Show Diagnostics"));
+    diagnostics->setObjectName(QStringLiteral("InspectorComponentDiagnostics"));
+    auto* remove = menu.addAction(QStringLiteral("Remove Component"));
+    remove->setObjectName(QStringLiteral("InspectorRemoveComponent"));
+    reset->setEnabled(descriptor->resettable);
+    remove->setEnabled(descriptor->removable);
+    const auto clipboard_payload = nlohmann::ordered_json::parse(
+        QApplication::clipboard()->text().toStdString(), nullptr, false);
+    paste->setEnabled(clipboard_payload.is_object()
+        && clipboard_payload.value("format", std::string{}) == "dpe.component-clipboard"
+        && clipboard_payload.value("typeId", std::string{}) == descriptor->type_id);
+
+    const auto* chosen = menu.exec(view->viewport()->mapToGlobal(point));
+    if (chosen == nullptr) return;
+    if (chosen == edit_source)
+    {
+        edit_project_source(QString::fromStdString(descriptor->source_path));
+        return;
+    }
+    if (chosen == remove)
+    {
+        std::vector<dragonpixel::scene::command> commands;
+        for (const auto& entity_id : entity_ids)
+            commands.emplace_back(dragonpixel::scene::remove_component_command{entity_id, type_id.toStdString()});
+        if (apply_authoring_transaction(std::move(commands), "Remove component"))
+            after_scene_mutation(QStringLiteral("Component removed through command validation"), selected_entity_ids());
+        return;
+    }
+    if (chosen == diagnostics)
+    {
+        append_console(QStringLiteral("%1 · %2 · schema v%3 · %4 properties · module %5")
+            .arg(QString::fromStdString(descriptor->display_name), owner_text(descriptor->owner))
+            .arg(descriptor->schema_version)
+            .arg(descriptor->properties.size())
+            .arg(descriptor->runtime_module_id.empty() ? QStringLiteral("built-in")
+                : QString::fromStdString(descriptor->runtime_module_id)),
+            QStringLiteral("Info"), QStringLiteral("Inspector"), type_id);
+        return;
+    }
+    if (chosen == copy)
+    {
+        const auto* entity = scene_->find_entity(entity_ids.front());
+        if (entity == nullptr) return;
+        const auto component = std::find_if(entity->components.begin(), entity->components.end(), [&](const auto& value) {
+            return value.type_id == descriptor->type_id;
+        });
+        if (component == entity->components.end()) return;
+        QApplication::clipboard()->setText(QString::fromStdString(nlohmann::ordered_json{
+            {"format", "dpe.component-clipboard"},
+            {"typeId", component->type_id},
+            {"schemaVersion", component->schema_version},
+            {"enabled", component->enabled},
+            {"properties", component->properties},
+        }.dump()));
+        statusBar()->showMessage(QStringLiteral("Component values copied"), 2000);
+        return;
+    }
+
+    std::vector<dragonpixel::scene::command> commands;
+    if (chosen == reset)
+    {
+        nlohmann::ordered_json defaults = nlohmann::ordered_json::object();
+        for (const auto& property : descriptor->properties) defaults[property.property_id] = property_default(property);
+        for (const auto& entity_id : entity_ids)
+        {
+            commands.emplace_back(dragonpixel::scene::upsert_component_command{entity_id, {
+                descriptor->type_id, descriptor->schema_version, descriptor->owner, defaults,
+                false, nlohmann::ordered_json::object(), true, descriptor->qualified_name}});
+        }
+    }
+    else if (chosen == paste)
+    {
+        const auto properties = clipboard_payload.value("properties", nlohmann::ordered_json::object());
+        for (const auto& entity_id : entity_ids)
+        {
+            for (const auto& property : descriptor->properties)
+            {
+                const auto found = properties.find(property.property_id);
+                if (found != properties.end() && !property.read_only)
+                {
+                    commands.emplace_back(dragonpixel::scene::set_component_property_command{
+                        entity_id, descriptor->type_id, property.property_id, *found});
+                }
+            }
+        }
+    }
+    else if (chosen == move_up || chosen == move_down)
+    {
+        for (const auto& entity_id : entity_ids)
+        {
+            const auto* entity = scene_->find_entity(entity_id);
+            if (entity == nullptr) continue;
+            const auto component = std::find_if(entity->components.begin(), entity->components.end(), [&](const auto& value) {
+                return value.type_id == descriptor->type_id;
+            });
+            if (component == entity->components.end()) continue;
+            const auto source = static_cast<std::size_t>(std::distance(entity->components.begin(), component));
+            const auto destination = chosen == move_up
+                ? (source == 0 ? source : source - 1)
+                : std::min(source + 1, entity->components.size() - 1);
+            if (source != destination)
+                commands.emplace_back(dragonpixel::scene::reorder_component_command{entity_id, descriptor->type_id, destination});
+        }
+    }
+    if (!commands.empty() && apply_authoring_transaction(std::move(commands), "Inspector component card action"))
+    {
+        after_scene_mutation(QStringLiteral("Component card action completed through validation"), selected_entity_ids());
+    }
+}
+
+bool EditorWindow::show_collection_context_menu(const QModelIndex& requested_index, const QPoint& point)
+{
+    if (!requested_index.isValid() || !scene_) return false;
+    auto current = requested_index;
+    QModelIndex collection;
+    while (current.isValid())
+    {
+        const auto value_index = current.siblingAtColumn(1);
+        const auto type = static_cast<dragonpixel::metadata::value_type>(
+            value_index.data(EditorRoles::value_type).toInt());
+        if (type == dragonpixel::metadata::value_type::list
+            || type == dragonpixel::metadata::value_type::dictionary)
+        {
+            collection = value_index;
+            break;
+        }
+        current = current.parent();
+    }
+    if (!collection.isValid()) return false;
+    const auto type = static_cast<dragonpixel::metadata::value_type>(collection.data(EditorRoles::value_type).toInt());
+    const auto root_property = collection.data(EditorRoles::property_id).toString();
+    const auto collection_path = collection.data(EditorRoles::property_path).toStringList();
+    const auto component_type = collection.data(EditorRoles::component_type).toString();
+    const auto* descriptor = metadata_.find(component_type.toStdString());
+    if (descriptor == nullptr || collection.data(EditorRoles::mixed_value).toBool()) return true;
+    auto root_descriptor = std::find_if(descriptor->properties.begin(), descriptor->properties.end(), [&](const auto& value) {
+        return value.property_id == root_property.toStdString();
+    });
+    if (root_descriptor == descriptor->properties.end() || !root_descriptor->shape
+        || root_descriptor->shape->arguments.empty()) return true;
+
+    auto value = nlohmann::ordered_json::parse(collection.data(Qt::EditRole).toString().toStdString(), nullptr, false);
+    if (value.is_discarded()) return true;
+    QMenu menu{inspector_};
+    auto* add = menu.addAction(type == dragonpixel::metadata::value_type::list
+        ? QStringLiteral("Add Element") : QStringLiteral("Add Entry…"));
+    add->setObjectName(QStringLiteral("InspectorCollectionAdd"));
+    auto* remove = menu.addAction(type == dragonpixel::metadata::value_type::list
+        ? QStringLiteral("Remove Element") : QStringLiteral("Remove Entry"));
+    remove->setObjectName(QStringLiteral("InspectorCollectionRemove"));
+    QAction* move_up = nullptr;
+    QAction* move_down = nullptr;
+    if (type == dragonpixel::metadata::value_type::list)
+    {
+        move_up = menu.addAction(QStringLiteral("Move Element Up"));
+        move_down = menu.addAction(QStringLiteral("Move Element Down"));
+    }
+    const auto requested_path = requested_index.siblingAtColumn(1).data(EditorRoles::property_path).toStringList();
+    const auto nested = requested_path.size() > collection_path.size();
+    remove->setEnabled(nested);
+    if (move_up) move_up->setEnabled(nested);
+    if (move_down) move_down->setEnabled(nested);
+    const auto* chosen = menu.exec(inspector_->viewport()->mapToGlobal(point));
+    if (chosen == nullptr) return true;
+
+    const auto& element_shape = root_descriptor->shape->arguments.front();
+    if (chosen == add)
+    {
+        if (type == dragonpixel::metadata::value_type::list)
+        {
+            value.push_back(element_shape.nullable ? nlohmann::ordered_json{nullptr} : default_value(element_shape.type));
+        }
+        else
+        {
+            bool accepted = false;
+            const auto key = QInputDialog::getText(this, QStringLiteral("Add dictionary entry"),
+                QStringLiteral("Unique string key"), QLineEdit::Normal, {}, &accepted).trimmed();
+            if (!accepted || key.isEmpty() || value.contains(key.toStdString())) return true;
+            value[key.toStdString()] = element_shape.nullable
+                ? nlohmann::ordered_json{nullptr} : default_value(element_shape.type);
+        }
+    }
+    else
+    {
+        if (!nested) return true;
+        const auto segment = requested_path.at(collection_path.size());
+        if (type == dragonpixel::metadata::value_type::list)
+        {
+            bool valid = false;
+            const auto item_index = segment.toInt(&valid);
+            if (!valid || item_index < 0 || item_index >= static_cast<int>(value.size())) return true;
+            if (chosen == remove)
+            {
+                value.erase(value.begin() + item_index);
+            }
+            else
+            {
+                const auto destination = chosen == move_up ? item_index - 1 : item_index + 1;
+                if (destination < 0 || destination >= static_cast<int>(value.size())) return true;
+                std::swap(value[static_cast<std::size_t>(item_index)], value[static_cast<std::size_t>(destination)]);
+            }
+        }
+        else if (chosen == remove)
+        {
+            value.erase(segment.toStdString());
+        }
+    }
+
+    QList<dragonpixel::core::uuid> collection_targets;
+    for (const auto& id_text : collection.data(EditorRoles::entity_ids).toStringList())
+    {
+        if (const auto id = dragonpixel::core::uuid::parse(id_text.toStdString()))
+            collection_targets.push_back(*id);
+    }
+    std::vector<dragonpixel::scene::command> commands;
+    for (const auto& id : collection_targets)
+    {
+        if (collection_path.isEmpty())
+        {
+            commands.emplace_back(dragonpixel::scene::set_component_property_command{
+                id, component_type.toStdString(), root_property.toStdString(), value});
+        }
+        else
+        {
+            std::vector<std::string> path;
+            for (const auto& segment : collection_path) path.push_back(segment.toStdString());
+            commands.emplace_back(dragonpixel::scene::set_component_property_path_command{
+                id, component_type.toStdString(), root_property.toStdString(), std::move(path), value});
+        }
+    }
+    if (apply_authoring_transaction(std::move(commands), "Edit Inspector collection"))
+    {
+        after_scene_mutation(QStringLiteral("Collection edit completed through one validated transaction"), selected_entity_ids());
+    }
+    return true;
 }
 
 void EditorWindow::undo()
@@ -2002,6 +5329,11 @@ void EditorWindow::assign_selected_asset(const QModelIndex& source_index)
                 && component.type_id == dragonpixel::metadata::builtin_component_ids::mesh)
             {
                 property = QStringLiteral("dpe.mesh.material");
+            }
+            else if (asset_type.contains(QStringLiteral("tilemap"))
+                && component.type_id == dragonpixel::metadata::builtin_component_ids::tilemap_2d)
+            {
+                property = QStringLiteral("dpe.tilemap.asset");
             }
             if (!property.isEmpty())
             {
@@ -2135,16 +5467,21 @@ void EditorWindow::report_prefab_result(PrefabOperationResult result)
     after_scene_mutation(result.message, selected);
 }
 
-void EditorWindow::instantiate_prefab(const QString& source_path)
+void EditorWindow::instantiate_prefab(
+    const QString& source_path,
+    bool force_scene_root,
+    const std::optional<dragonpixel::core::uuid>& explicit_parent)
 {
     if (!scene_ || source_path.isEmpty())
     {
         return;
     }
     const auto selected = selected_entity_ids();
-    const auto parent = selected.size() == 1
-        ? std::optional<dragonpixel::core::uuid>{selected.front()}
-        : std::nullopt;
+    const auto parent = explicit_parent
+        ? explicit_parent
+        : !force_scene_root && selected.size() == 1
+            ? std::optional<dragonpixel::core::uuid>{selected.front()}
+            : std::nullopt;
     report_prefab_result(prefab_service_.instantiate(*scene_, source_path, parent));
 }
 
@@ -2154,11 +5491,24 @@ void EditorWindow::create_prefab_from_selection()
     {
         return;
     }
-    const auto selected = selected_entity_id();
+    const auto selected_ids = selected_entity_ids();
+    if (selected_ids.size() != 1)
+    {
+        append_console(QStringLiteral("Prefab creation requires exactly one locally owned root; descendants are included automatically and multi-root selections are rejected."),
+            QStringLiteral("Warning"), QStringLiteral("Prefabs"));
+        return;
+    }
+    const auto selected = std::optional<dragonpixel::core::uuid>{selected_ids.front()};
     const auto* entity = selected ? scene_->find_entity(*selected) : nullptr;
     if (!selected || entity == nullptr)
     {
         append_console(QStringLiteral("Select one locally owned GameObject before creating a prefab."),
+            QStringLiteral("Warning"), QStringLiteral("Prefabs"));
+        return;
+    }
+    if (prefab_service_.has_instance_for_entity(*selected))
+    {
+        append_console(QStringLiteral("Linked prefab content cannot become a new prefab source until it is unpacked into locally owned GameObjects."),
             QStringLiteral("Warning"), QStringLiteral("Prefabs"));
         return;
     }
@@ -2287,10 +5637,82 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
             load_scene(ProjectModel::item_path(source));
             break;
         case ProjectItemKind::asset:
+        {
+            const auto asset_type = ProjectModel::asset_type(source).toLower();
+            if (asset_type == QStringLiteral("input-map"))
+            {
+                edit_input_map();
+                break;
+            }
+            if ((asset_type.contains(QStringLiteral("tilemap"))
+                    || asset_type.contains(QStringLiteral("tileset")))
+                && project_index_.candidate)
+            {
+                const auto asset_id = ProjectModel::asset_id(source);
+                const ProjectIndexEntry* map_entry = nullptr;
+                const ProjectIndexEntry* set_entry = nullptr;
+                if (asset_type.contains(QStringLiteral("tilemap")))
+                {
+                    map_entry = project_index_.candidate->find_by_id(asset_id);
+                    if (map_entry != nullptr && !map_entry->dependencies.isEmpty())
+                    {
+                        set_entry = project_index_.candidate->find_by_id(map_entry->dependencies.front());
+                    }
+                }
+                else
+                {
+                    set_entry = project_index_.candidate->find_by_id(asset_id);
+                    for (const auto& candidate : project_index_.candidate->entries)
+                    {
+                        if (candidate.kind == ProjectIndexEntryKind::asset
+                            && candidate.asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive)
+                            && candidate.dependencies.contains(asset_id))
+                        {
+                            map_entry = &candidate;
+                            break;
+                        }
+                    }
+                }
+                bool may_open = true;
+                if (map_entry != nullptr && tile_document_service_->is_dirty()
+                    && QFileInfo{tile_document_service_->tilemap_path()}.absoluteFilePath()
+                        != QFileInfo{map_entry->resolved_source_path}.absoluteFilePath())
+                {
+                    const auto decision = unsaved_prompt_
+                        ? unsaved_prompt_(QFileInfo{tile_document_service_->tilemap_path()}.fileName())
+                        : UnsavedDecision::cancel;
+                    may_open = decision == UnsavedDecision::discard
+                        || (decision == UnsavedDecision::save && tile_document_service_->save());
+                }
+                if (!may_open)
+                {
+                    break;
+                }
+                if (map_entry != nullptr && set_entry != nullptr
+                    && tile_palette_->load_documents(map_entry->resolved_source_path, set_entry->resolved_source_path))
+                {
+                    tile_palette_dock_->show();
+                    tile_palette_dock_->raise();
+                    append_console(QStringLiteral("Opened %1 with %2 in the Tile Palette")
+                        .arg(map_entry->display_name, set_entry->display_name),
+                        QStringLiteral("Info"), QStringLiteral("Tile Authoring"), map_entry->resolved_source_path,
+                        {}, {}, {}, {}, map_entry->id, map_entry->resolved_source_path);
+                }
+                else
+                {
+                    append_console(QStringLiteral("A tilemap and its contained TileSet dependency are required."),
+                        QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+                }
+                break;
+            }
             assign_selected_asset(source);
             break;
+        }
         case ProjectItemKind::prefab:
             instantiate_prefab(ProjectModel::item_path(source));
+            break;
+        case ProjectItemKind::component_source:
+            edit_project_source(ProjectModel::item_path(source));
             break;
         default:
             break;
@@ -2306,6 +5728,9 @@ void EditorWindow::apply_workspace(const QString& workspace)
     assets_dock_->setVisible(true);
     inspector_dock_->setVisible(true);
     console_dock_->setVisible(debug);
+    scene_view_dock_->setVisible(true);
+    game_view_dock_->setVisible(true);
+    tile_palette_dock_->setVisible(mode_2d);
     viewport_->set_view_mode(mode_2d ? AuthoringViewport::ViewMode::two_d : AuthoringViewport::ViewMode::three_d);
     QSettings settings{editor_settings_path(), QSettings::IniFormat};
     settings.setValue(QStringLiteral("workspace/current"), workspace);
@@ -2314,16 +5739,61 @@ void EditorWindow::apply_workspace(const QString& workspace)
 
 void EditorWindow::reset_workspace()
 {
-    addDockWidget(Qt::LeftDockWidgetArea, scene_dock_);
+    const std::array docks{
+        scene_view_dock_, game_view_dock_, scene_dock_, hierarchy_dock_,
+        assets_dock_, inspector_dock_, tile_palette_dock_, console_dock_, onboarding_dock_,
+        project_hub_dock_};
+    for (auto* dock : docks)
+    {
+        removeDockWidget(dock);
+        dock->setFloating(false);
+    }
+    for (const auto& inspector : additional_inspectors_)
+    {
+        removeDockWidget(inspector->dock);
+        inspector->dock->setFloating(false);
+    }
+
     addDockWidget(Qt::LeftDockWidgetArea, hierarchy_dock_);
-    addDockWidget(Qt::LeftDockWidgetArea, assets_dock_);
-    addDockWidget(Qt::RightDockWidgetArea, inspector_dock_);
-    addDockWidget(Qt::BottomDockWidgetArea, console_dock_);
-    tabifyDockWidget(scene_dock_, hierarchy_dock_);
+    splitDockWidget(hierarchy_dock_, assets_dock_, Qt::Vertical);
+    tabifyDockWidget(hierarchy_dock_, scene_dock_);
+
+    addDockWidget(Qt::RightDockWidgetArea, scene_view_dock_);
+    splitDockWidget(scene_view_dock_, inspector_dock_, Qt::Horizontal);
+    for (const auto& inspector : additional_inspectors_)
+    {
+        addDockWidget(Qt::RightDockWidgetArea, inspector->dock);
+        tabifyDockWidget(inspector_dock_, inspector->dock);
+    }
+    splitDockWidget(scene_view_dock_, console_dock_, Qt::Vertical);
+    tabifyDockWidget(scene_view_dock_, game_view_dock_);
+    tabifyDockWidget(scene_view_dock_, onboarding_dock_);
+    tabifyDockWidget(scene_view_dock_, project_hub_dock_);
+    tabifyDockWidget(console_dock_, tile_palette_dock_);
+
+    resizeDocks({hierarchy_dock_, scene_view_dock_, inspector_dock_}, {280, 860, 320}, Qt::Horizontal);
+    resizeDocks({hierarchy_dock_, assets_dock_}, {560, 260}, Qt::Vertical);
+    resizeDocks({scene_view_dock_, console_dock_}, {620, 220}, Qt::Vertical);
+
     hierarchy_dock_->raise();
-    for (auto* dock : {scene_dock_, hierarchy_dock_, assets_dock_, inspector_dock_, console_dock_})
+    scene_view_dock_->raise();
+    console_dock_->raise();
+    for (auto* dock : docks)
     {
         dock->show();
+    }
+    for (const auto& inspector : additional_inspectors_)
+    {
+        inspector->dock->show();
+    }
+    inspector_dock_->raise();
+    if (scene_)
+    {
+        project_hub_dock_->hide();
+    }
+    else
+    {
+        show_project_hub();
     }
 }
 
@@ -2357,7 +5827,10 @@ void EditorWindow::after_scene_mutation(
         }
     }
     rebuild_scene_summary();
+    publish_global_selection(SelectionOrigin::command);
     inspect_selected_entities();
+    update_global_selection_presentation();
+    refresh_additional_inspectors();
     update_window_title();
     update_action_states();
     append_console(message);
@@ -2376,7 +5849,16 @@ void EditorWindow::update_action_states()
         && prefab_service_.has_overrides_for_entity(*selected_id);
     if (save_action_ != nullptr)
     {
-        save_action_->setEnabled(loaded && scene_->is_dirty());
+        save_action_->setEnabled(loaded && (scene_->is_dirty()
+            || (tile_document_service_ && tile_document_service_->is_dirty())));
+    }
+    if (new_scene_action_ != nullptr)
+    {
+        new_scene_action_->setEnabled(loaded && !project_manifest_path_.isEmpty());
+    }
+    if (save_scene_as_action_ != nullptr)
+    {
+        save_scene_as_action_->setEnabled(loaded && !project_manifest_path_.isEmpty());
     }
     if (undo_action_ != nullptr)
     {
@@ -2424,6 +5906,23 @@ void EditorWindow::update_action_states()
     {
         adapter_->setEnabled(!play_running_);
     }
+    if (input_map_action_ != nullptr)
+    {
+        input_map_action_->setEnabled(project_input_map_.has_value());
+    }
+    if (input_settings_action_ != nullptr)
+    {
+        input_settings_action_->setEnabled(project_input_map_.has_value());
+    }
+    if (onboarding_add_square_ != nullptr)
+    {
+        onboarding_add_square_->setEnabled(loaded);
+        onboarding_add_circle_->setEnabled(loaded);
+        onboarding_add_component_->setEnabled(loaded && selected);
+        onboarding_create_csharp_->setEnabled(loaded);
+        onboarding_create_cpp_->setEnabled(loaded);
+        onboarding_play_->setEnabled(loaded && !play_running_);
+    }
 }
 
 void EditorWindow::update_window_title()
@@ -2433,8 +5932,9 @@ void EditorWindow::update_window_title()
         setWindowTitle(QStringLiteral("Dragon Pixel Engine Editor \u2014 No Project"));
         return;
     }
+    const auto dirty = scene_->is_dirty() || (tile_document_service_ && tile_document_service_->is_dirty());
     setWindowTitle(QStringLiteral("Dragon Pixel Engine Editor \u2014 %1%2")
-        .arg(QString::fromStdString(scene_->name()), scene_->is_dirty() ? QStringLiteral(" *") : QString{}));
+        .arg(QString::fromStdString(scene_->name()), dirty ? QStringLiteral(" *") : QString{}));
 }
 
 void EditorWindow::update_worker_viewport()
@@ -2498,6 +5998,239 @@ void EditorWindow::update_viewport_selection_geometry(
         first_rotation);
 }
 
+std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene& source_scene) const
+{
+    auto root = nlohmann::ordered_json::parse(dragonpixel::serialization::write_scene_json(source_scene));
+    root["snapshotFormatVersion"] = 4;
+    auto assets = nlohmann::ordered_json::array();
+    auto tile_sets = nlohmann::ordered_json::array();
+    auto tilemaps = nlohmann::ordered_json::array();
+    std::unordered_map<std::string, dragonpixel::tiles::tile_set_document> resolved_tile_sets;
+    std::unordered_map<std::string, dragonpixel::tiles::tilemap_document> resolved_tilemaps;
+    if (!project_index_.candidate)
+    {
+        root["assets"] = std::move(assets);
+        root["tileSets"] = std::move(tile_sets);
+        root["tilemaps"] = std::move(tilemaps);
+        return root.dump(2) + "\n";
+    }
+
+    std::unordered_map<std::string, const ProjectIndexEntry*> assets_by_id;
+    for (const auto& entry : project_index_.candidate->entries)
+    {
+        if (entry.kind == ProjectIndexEntryKind::asset && !entry.id.isEmpty())
+            assets_by_id[entry.id.toStdString()] = &entry;
+    }
+
+    for (const auto& entry : project_index_.candidate->entries)
+    {
+        if (entry.kind != ProjectIndexEntryKind::asset
+            || entry.asset_type.compare(QStringLiteral("sprite"), Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+        const auto binding = asset_service_.runtime_binding(project_manifest_path_, entry.id);
+        if (!binding.succeeded)
+        {
+            continue;
+        }
+        assets.push_back({
+            {"assetId", binding.asset_id.toStdString()},
+            {"assetType", "sprite"},
+            {"immutablePath", ""},
+            {"contentHash", binding.content_hash.toStdString()},
+            {"mediaType", binding.media_type.toStdString()},
+            {"embeddedBytesBase64", binding.immutable_bytes.toBase64().toStdString()},
+        });
+    }
+
+    for (const auto& entry : project_index_.candidate->entries)
+    {
+        if (entry.kind != ProjectIndexEntryKind::asset || entry.resolved_source_path.isEmpty()) continue;
+        QFile file{entry.resolved_source_path};
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        if (entry.asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
+        {
+            const auto parsed = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
+            if (!parsed.succeeded()) continue;
+            resolved_tile_sets[parsed.document->asset_id.to_string()] = *parsed.document;
+            std::string texture_png_base64;
+            const auto texture_entry = assets_by_id.find(parsed.document->texture_asset_id.to_string());
+            if (texture_entry != assets_by_id.end()
+                && QFileInfo{texture_entry->second->resolved_source_path}.suffix().compare(
+                    QStringLiteral("png"), Qt::CaseInsensitive) == 0)
+            {
+                QFile texture{texture_entry->second->resolved_source_path};
+                if (texture.open(QIODevice::ReadOnly))
+                    texture_png_base64 = texture.readAll().toBase64().toStdString();
+            }
+            auto tiles = nlohmann::ordered_json::array();
+            for (const auto& tile : parsed.document->tiles)
+            {
+                tiles.push_back({
+                    {"tileId", tile.tile_id.to_string()},
+                    {"name", tile.name},
+                    {"sourceX", tile.source.x},
+                    {"sourceY", tile.source.y},
+                    {"sourceWidth", tile.source.width},
+                    {"sourceHeight", tile.source.height},
+                });
+            }
+            tile_sets.push_back({
+                {"assetId", parsed.document->asset_id.to_string()},
+                {"textureAssetId", parsed.document->texture_asset_id.to_string()},
+                {"texturePngBase64", texture_png_base64},
+                {"cellWidth", parsed.document->cell_size.x},
+                {"cellHeight", parsed.document->cell_size.y},
+                {"pixelsPerUnit", parsed.document->pixels_per_unit},
+                {"tiles", std::move(tiles)},
+            });
+        }
+        else if (entry.asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive))
+        {
+            std::optional<dragonpixel::tiles::tilemap_document> current;
+            if (tile_document_service_ && tile_document_service_->tilemap()
+                && tile_document_service_->tilemap()->asset_id.to_string() == entry.id.toStdString())
+            {
+                current = *tile_document_service_->tilemap();
+            }
+            else
+            {
+                const auto parsed = dragonpixel::tiles::read_tilemap(file.readAll().toStdString());
+                if (parsed.succeeded()) current = *parsed.document;
+            }
+            if (!current) continue;
+            resolved_tilemaps[current->asset_id.to_string()] = *current;
+            auto layers = nlohmann::ordered_json::array();
+            for (const auto& layer : current->layers)
+            {
+                auto cells = nlohmann::ordered_json::array();
+                for (const auto& chunk : layer.chunks)
+                {
+                    for (const auto& cell : chunk.cells)
+                    {
+                        cells.push_back({
+                            {"x", (chunk.x * 32) + static_cast<int>(cell.index % 32U)},
+                            {"y", (chunk.y * 32) + static_cast<int>(cell.index / 32U)},
+                            {"tileId", cell.tile_id.to_string()},
+                            {"flipX", cell.flip_x},
+                            {"flipY", cell.flip_y},
+                            {"rotationQuarterTurns", cell.rotation_quarter_turns},
+                        });
+                    }
+                }
+                layers.push_back({
+                    {"layerId", layer.layer_id.to_string()},
+                    {"name", layer.name},
+                    {"visible", layer.visible},
+                    {"order", layer.order},
+                    {"cells", std::move(cells)},
+                });
+            }
+            tilemaps.push_back({
+                {"assetId", current->asset_id.to_string()},
+                {"tileSetDependencies", [&] {
+                    auto dependencies = nlohmann::ordered_json::array();
+                    for (const auto& dependency : current->tile_set_dependencies)
+                        dependencies.push_back(dependency.to_string());
+                    return dependencies;
+                }()},
+                {"layers", std::move(layers)},
+            });
+        }
+    }
+    root["assets"] = std::move(assets);
+    root["tileSets"] = std::move(tile_sets);
+    root["tilemaps"] = std::move(tilemaps);
+    auto generated_colliders = nlohmann::ordered_json::array();
+    const auto original_entities = root.value("entities", nlohmann::ordered_json::array());
+    for (const auto& entity : original_entities)
+    {
+        if (!entity.value("enabled", true)) continue;
+        std::string map_id;
+        bool collider_enabled = false;
+        for (const auto& component : entity.value("components", nlohmann::ordered_json::array()))
+        {
+            if (!component.value("enabled", true)) continue;
+            const auto type_id = component.value("typeId", std::string{});
+            if (type_id == dragonpixel::metadata::builtin_component_ids::tilemap_2d)
+            {
+                const auto properties = component.value("properties", nlohmann::ordered_json::object());
+                map_id = properties.value("dpe.tilemap.asset", std::string{});
+            }
+            else if (type_id == dragonpixel::metadata::builtin_component_ids::tilemap_collider_2d)
+            {
+                collider_enabled = true;
+            }
+        }
+        const auto map = resolved_tilemaps.find(map_id);
+        if (!collider_enabled || map == resolved_tilemaps.end() || map->second.tile_set_dependencies.empty()) continue;
+        const auto set = resolved_tile_sets.find(map->second.tile_set_dependencies.front().to_string());
+        if (set == resolved_tile_sets.end()) continue;
+        for (const auto& layer : map->second.layers)
+        {
+            if (!layer.visible) continue;
+            for (const auto& chunk : layer.chunks)
+            {
+                for (const auto& cell : chunk.cells)
+                {
+                    const auto tile = std::find_if(set->second.tiles.begin(), set->second.tiles.end(), [&](const auto& value) {
+                        return value.tile_id == cell.tile_id;
+                    });
+                    if (tile == set->second.tiles.end() || !tile->collision) continue;
+                    const auto cell_x = (chunk.x * 32) + static_cast<int>(cell.index % 32U);
+                    const auto cell_y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
+                    const auto generated_id = stable_runtime_uuid(QByteArray::fromStdString(
+                        entity.value("id", std::string{}) + ":" + layer.layer_id.to_string() + ":"
+                        + std::to_string(cell_x) + ":" + std::to_string(cell_y)));
+                    generated_colliders.push_back({
+                        {"id", generated_id},
+                        {"name", std::string{"Generated Tile Collider "} + std::to_string(cell_x) + "," + std::to_string(cell_y)},
+                        {"parentId", entity.value("id", std::string{})},
+                        {"siblingOrder", cell.index},
+                        {"enabled", true},
+                        {"runtimeGenerated", true},
+                        {"components", nlohmann::ordered_json::array({
+                            {
+                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::transform}},
+                                {"qualifiedName", "DragonPixel.Native.TransformComponent"},
+                                {"schemaVersion", 2}, {"owner", "native"}, {"enabled", true},
+                                {"properties", {
+                                    {"dpe.transform.position", {
+                                        {"x", static_cast<double>(cell_x) + tile->collision->offset_x},
+                                        {"y", static_cast<double>(cell_y) + tile->collision->offset_y}, {"z", 0.0}}},
+                                    {"dpe.transform.rotation", {{"w", 1.0}, {"x", 0.0}, {"y", 0.0}, {"z", 0.0}}},
+                                    {"dpe.transform.scale", {{"x", 1.0}, {"y", 1.0}, {"z", 1.0}}},
+                                }},
+                            },
+                            {
+                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::rigid_body_2d}},
+                                {"qualifiedName", "DragonPixel.Native.RigidBody2DComponent"},
+                                {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
+                                {"properties", {{"dpe.physics2d.body_mode", "static"}}},
+                            },
+                            {
+                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::box_collider_2d}},
+                                {"qualifiedName", "DragonPixel.Native.BoxCollider2DComponent"},
+                                {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
+                                {"properties", {
+                                    {"dpe.physics2d.size", {{"x", tile->collision->width}, {"y", tile->collision->height}}},
+                                    {"dpe.physics2d.offset", {{"x", 0.0}, {"y", 0.0}}},
+                                    {"dpe.physics.sensor", false}, {"dpe.physics.density", 1.0},
+                                    {"dpe.physics.friction", 0.5}, {"dpe.physics.restitution", 0.0},
+                                    {"dpe.physics.layer", 0}, {"dpe.physics.mask", 65535},
+                                }},
+                            },
+                        })},
+                    });
+                }
+            }
+        }
+    }
+    for (auto& generated : generated_colliders) root["entities"].push_back(std::move(generated));
+    return root.dump(2) + "\n";
+}
+
 std::vector<dragonpixel::scene::command> EditorWindow::gizmo_commands(
     AuthoringViewport::GizmoTool tool,
     const QVector3D& delta) const
@@ -2557,7 +6290,7 @@ bool EditorWindow::reload_gizmo_preview(const dragonpixel::scene::scene& preview
     const auto snapshot_path = runtime_directory_.filePath(QStringLiteral("preview-mirror.dpescene"));
     const auto result = dragonpixel::serialization::save_utf8_atomic(
         filesystem_path(snapshot_path),
-        dragonpixel::serialization::write_scene_json(preview_scene));
+        runtime_snapshot_json(preview_scene));
     if (!result.succeeded)
     {
         append_console(QStringLiteral("Could not write provisional gizmo preview: %1")
@@ -2741,12 +6474,13 @@ void EditorWindow::apply_gizmo_delta(
 
 void EditorWindow::refresh_preview()
 {
-    if (!scene_ || !runtime_directory_.isValid() || preview_worker_ == nullptr || adapter_ == nullptr)
+    if (!scene_ || !runtime_directory_.isValid() || preview_worker_ == nullptr
+        || game_preview_worker_ == nullptr || adapter_ == nullptr)
     {
         return;
     }
     const auto snapshot_path = runtime_directory_.filePath(QStringLiteral("preview-mirror.dpescene"));
-    const auto json = dragonpixel::serialization::write_scene_json(*scene_);
+    const auto json = runtime_snapshot_json(*scene_);
     const auto result = dragonpixel::serialization::save_utf8_atomic(filesystem_path(snapshot_path), json);
     if (!result.succeeded)
     {
@@ -2767,6 +6501,17 @@ void EditorWindow::refresh_preview()
         preview_worker_->start_session(selected_adapter, snapshot_path);
         preview_worker_->resize_viewport(viewport_->size());
         append_console(QStringLiteral("Preview worker launched from editor-owned authoring mirror"));
+    }
+    if (game_preview_worker_->has_frame() && game_preview_worker_->adapter_name() == selected_adapter)
+    {
+        game_preview_worker_->reload_snapshot(snapshot_path);
+    }
+    else
+    {
+        game_viewport_->clear_preview_frame();
+        game_preview_worker_->start_session(selected_adapter, snapshot_path);
+        game_preview_worker_->resize_viewport(game_viewport_->size());
+        append_console(QStringLiteral("Live Game preview launched with the primary scene camera"));
     }
 }
 
@@ -2884,7 +6629,10 @@ void EditorWindow::start_automation_self_test()
     environment.insert(QStringLiteral("DPE_AUTOMATION_TOKEN"), automation_broker_->capability_token());
     environment.insert(
         QStringLiteral("DPE_AUTOMATION_ENTITY_ID"), QString::fromStdString(self_test_entity_id_->to_string()));
-    const auto tools_root = QString::fromUtf8(DPE_PYTHON_TOOLS_ROOT);
+    const auto tools_root = dragonpixel::editor::runtime_paths::directory(
+        "DPE_PYTHON_TOOLS_ROOT",
+        QStringLiteral("tools/python"),
+        QString::fromUtf8(DPE_PYTHON_TOOLS_ROOT));
     const auto existing_python_path = environment.value(QStringLiteral("PYTHONPATH"));
     environment.insert(
         QStringLiteral("PYTHONPATH"),
@@ -2892,7 +6640,8 @@ void EditorWindow::start_automation_self_test()
             ? tools_root
             : tools_root + QDir::listSeparator() + existing_python_path);
     automation_test_process_->setProcessEnvironment(environment);
-    automation_test_process_->setProgram(QString::fromUtf8(DPE_PYTHON_EXECUTABLE));
+    automation_test_process_->setProgram(dragonpixel::editor::runtime_paths::executable(
+        "DPE_PYTHON_EXECUTABLE", QString::fromUtf8(DPE_PYTHON_EXECUTABLE)));
     automation_test_process_->setArguments({QStringLiteral("-m"), QStringLiteral("dragonpixel_tools.self_test")});
     automation_test_process_->setProcessChannelMode(QProcess::SeparateChannels);
     connect(automation_test_process_, &QProcess::finished, this, [this](int exit_code, QProcess::ExitStatus status) {
@@ -2939,7 +6688,7 @@ void EditorWindow::start_play()
         preview_worker_->set_preview_simulation(false);
     }
     const auto snapshot_path = runtime_directory_.filePath(QStringLiteral("play-snapshot.dpescene"));
-    const auto json = dragonpixel::serialization::write_scene_json(*scene_);
+    const auto json = runtime_snapshot_json(*scene_);
     const auto result = dragonpixel::serialization::save_utf8_atomic(filesystem_path(snapshot_path), json);
     if (!result.succeeded)
     {
@@ -2947,23 +6696,32 @@ void EditorWindow::start_play()
             .arg(QString::fromStdString(result.error)));
         return;
     }
-    viewport_->set_play_mode(true);
-    play_worker_->start_session(adapter_->currentData().toString(), snapshot_path);
+    game_viewport_->set_play_mode(true);
+    game_viewport_->set_runtime_input_ready(false);
+    onboarding_dock_->hide();
+    project_hub_dock_->hide();
+    game_view_dock_->show();
+    game_view_dock_->raise();
     play_running_ = true;
     play_paused_ = false;
     update_action_states();
+    play_worker_->start_session(adapter_->currentData().toString(), snapshot_path);
+    if (!play_running_)
+    {
+        return;
+    }
     append_console(QStringLiteral("Play launched from immutable snapshot; saved scene remains editor-owned"));
 }
 
 void EditorWindow::stop_play()
 {
+    if (game_viewport_ != nullptr)
+    {
+        game_viewport_->set_play_mode(false);
+    }
     if (play_worker_ != nullptr)
     {
         play_worker_->stop_and_discard();
-    }
-    if (viewport_ != nullptr)
-    {
-        viewport_->set_play_mode(false);
     }
     play_running_ = false;
     play_paused_ = false;
@@ -3256,7 +7014,8 @@ void EditorWindow::closeEvent(QCloseEvent* event)
     {
         QSettings settings{editor_settings_path(), QSettings::IniFormat};
         settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
-        settings.setValue(QStringLiteral("window/state"), saveState(2));
+        settings.setValue(QStringLiteral("window/state"), saveState(workspace_state_version));
+        settings.setValue(QStringLiteral("inspector/count"), static_cast<int>(additional_inspectors_.size()) + 1);
         settings.sync();
         event->accept();
     }
@@ -3287,16 +7046,20 @@ bool EditorWindow::self_test_ready() const
     return authoring_self_test_passed_ && automation_self_test_passed_
         && scene_.has_value() && scene_->entities().size() >= 6 && metadata_.size() >= 7
         && hierarchy_model_->rowCount() >= 5 && inspector_model_->rowCount() > 0
-        && project_asset_count() >= 2 && preview_worker_->has_frame() && play_worker_->has_frame()
-        && preview_worker_->process_id() > 0 && play_worker_->process_id() > 0
-        && preview_worker_->process_id() != play_worker_->process_id();
+        && project_asset_count() >= 2 && preview_worker_->has_frame()
+        && game_preview_worker_->has_frame() && play_worker_->has_frame()
+        && preview_worker_->process_id() > 0 && game_preview_worker_->process_id() > 0
+        && play_worker_->process_id() > 0
+        && preview_worker_->process_id() != game_preview_worker_->process_id()
+        && preview_worker_->process_id() != play_worker_->process_id()
+        && game_preview_worker_->process_id() != play_worker_->process_id();
 }
 
 QString EditorWindow::self_test_diagnostics() const
 {
     return QStringLiteral(
         "authoring=%1 automation=%2 scene=%3 entities=%4 metadata=%5 hierarchy=%6 inspector=%7 assets=%8 "
-        "previewFrame=%9 previewPid=%10 playFrame=%11 playPid=%12 project=%13")
+        "previewFrame=%9 previewPid=%10 gameFrame=%11 gamePid=%12 playFrame=%13 playPid=%14 project=%15")
         .arg(authoring_self_test_passed_)
         .arg(automation_self_test_passed_)
         .arg(scene_.has_value())
@@ -3307,6 +7070,8 @@ QString EditorWindow::self_test_diagnostics() const
         .arg(project_asset_count())
         .arg(preview_worker_->has_frame())
         .arg(preview_worker_->process_id())
+        .arg(game_preview_worker_->has_frame())
+        .arg(game_preview_worker_->process_id())
         .arg(play_worker_->has_frame())
         .arg(play_worker_->process_id())
         .arg(!project_manifest_path_.isEmpty());
@@ -3432,7 +7197,11 @@ bool EditorWindow::run_authoring_self_test()
     std::size_t copied_assets = 0;
     QDirIterator asset_iterator{
         original_project_root,
-        {QStringLiteral("*.dpeasset")},
+        {QStringLiteral("*.dpeasset"),
+         QStringLiteral("*.dpeinputmap"),
+         QStringLiteral("*.dpetileset"),
+         QStringLiteral("*.dpetilemap"),
+         QStringLiteral("*.png")},
         QDir::Files,
         QDirIterator::Subdirectories};
     while (asset_iterator.hasNext())

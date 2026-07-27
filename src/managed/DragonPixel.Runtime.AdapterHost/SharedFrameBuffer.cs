@@ -12,6 +12,7 @@ public static class FrameLayout
     public const int PixelFormatBgra8 = 1;
     public const int ContentSprite = 1;
     public const int ContentStaticMesh = 2;
+    public const int ContentTilemap = 4;
 
     public static int HeaderSize(int version) => version switch
     {

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v1/input-map.schema.json",
+  "title": "Dragon Pixel Input Map v1",
+  "type": "object",
+  "required": [
+    "format",
+    "formatVersion",
+    "inputMapId",
+    "name",
+    "activeControlMapId",
+    "controlMaps"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "format": { "const": "dpe.inputmap" },
+    "formatVersion": { "const": 1 },
+    "inputMapId": { "$ref": "#/$defs/uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "activeControlMapId": { "$ref": "#/$defs/uuid" },
+    "controlMaps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/controlMap" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "binding": {
+      "type": "object",
+      "required": ["bindingId", "path", "scale"],
+      "properties": {
+        "bindingId": { "$ref": "#/$defs/uuid" },
+        "path": {
+          "type": "string",
+          "pattern": "^(keyboard|mouse|gamepad)/[a-z0-9-]+$"
+        },
+        "scale": { "type": "number", "minimum": -16, "maximum": 16 },
+        "deadZone": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "action": {
+      "type": "object",
+      "required": ["actionId", "name", "kind", "bindings"],
+      "properties": {
+        "actionId": { "$ref": "#/$defs/uuid" },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+        },
+        "kind": { "enum": ["button", "axis1d"] },
+        "bindings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/binding" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "controlMap": {
+      "type": "object",
+      "required": ["mapId", "name", "enabled", "actions"],
+      "properties": {
+        "mapId": { "$ref": "#/$defs/uuid" },
+        "name": { "type": "string", "minLength": 1 },
+        "enabled": { "type": "boolean" },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/action" }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -2,7 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Last reviewed:** 2026-07-27
+> **Design revision:** `DPE-ARCH-0014`
 
 ## Context
 
@@ -83,6 +84,8 @@ Python, AI, migration, and future plugins call the same command service with exp
 
 One mutation path makes UI, headless tests, automation, undo, runtime reload, and audit behavior agree. Exact before-images cost memory, and transactional model notifications require care, but they avoid whole-project snapshots and preserve opaque data. Service boundaries increase construction and dependency-injection work while allowing Qt models, tests, and later plugins to observe the same state without owning it.
 
+DPE-ARCH-0009 applies the same mutation discipline to lifecycle, import, migration, upgrade, archive/restore, plugin, and update operations. These may use explicit operation transactions rather than ordinary undo entries, but they still require deterministic dry-run summaries, resolved containment, staged outputs, expected input/base hashes, cancellation before a bounded commit, recoverable backups/manifests, structured audit correlation, and deterministic rollback or last-known-good recovery. UI surfaces and disposable workers cannot become alternate authorities or write authoritative project/install state directly.
+
 ## Alternatives considered
 
 - **Panel-specific mutations and undo stacks:** rejected because the same domain change would validate and recover differently by entry point.
@@ -95,14 +98,20 @@ One mutation path makes UI, headless tests, automation, undo, runtime reload, an
 
 Command envelopes are additive and version negotiated. Unknown command types or unsupported versions fail before execution. Stable IDs, not display names or tree indices, identify targets. Each result contains applied/not-applied state, previous/new revisions, affected IDs, structured diagnostics, and correlation ID. No result reports success before the atomic commit completes.
 
++## DPE-ARCH-0014 refinement
+
+SelectionService becomes the ordered stable-ID authority for global selection, active entity, scene identity, origin, and notifications. Locked Inspectors retain independent immutable target snapshots without becoming mutation authorities. Hierarchy multi-drag reduces the selection to top-level roots, preserves relative order, validates cycles/ownership/sibling destinations, and commits the complete reparent/reorder set as one command transaction. Asset import/create/rename/move/duplicate/trash/restore and project/template creation use explicit recoverable operation transactions with the same validation, dry-run, diagnostic, audit, cancellation, and final-disposition requirements as editor commands.
+
 ## Validation and acceptance gate
 
 Domain tests must cover validation with no writes, optimistic revision conflicts, transaction rollback, continuous-edit coalescing, clean savepoints, dirty transitions, undo/redo branching, hierarchy cycles/order, duplication/reference remapping, subtree deletion/incoming references, exact opaque restoration, multi-edit, command cancellation, and audit correlation.
+
+DPE-ARCH-0009 adds POCs M, N, O, P, and R. They must inject validation, staging, commit, cancellation, worker failure, interruption, and restart failures at each operation boundary; prove no outside or partial writes; preserve inspected/original inputs; and verify exact rollback/recovery manifests plus audit correlation. No such evidence is accepted yet, and the existing command/domain/POC H gates remain unchanged.
 
 POC H and end-to-end Qt tests must drive real preset actions, inline rename, enable toggles, drag reparent/reorder, typed multi-edit, gizmo commit/cancel, delete confirmation, undo/redo, dirty prompts, disabled action states, asset assignment, and save/close/reopen through public UI events and injectable prompts. Automation conformance must produce the same validated result as the UI for an equivalent command.
 
 Current evidence (2026-07-25): Windows and Ubuntu now execute typed command validation, compound scene transactions, bounded before-images, Undo/Redo history and branching, dirty/savepoint state, preset creation, duplication with ID remapping, subtree deletion, reparenting, multi-edit/transform deltas, component operations, continuous gizmo previews, and prefab-source journaling. Candidate project indexing, asset previews, model-backed Project Explorer, structured Console, and PrefabService are independently tested. A live Inspector test proves an invalid constrained value leaves state clean and creates no Undo item while a valid value commits; gizmo Escape restores the ordered multi-selection originals and release creates one Undo item.
 
-The complete Windows Release matrix passed **36/36 tests in 118.39 seconds**, and the complete MSVC AddressSanitizer matrix passed **36/36 tests in 134.93 seconds**. Ubuntu Release passed **36/36 tests in 102.20 seconds**, and Ubuntu Clang AddressSanitizer passed **36/36 tests in 101.97 seconds**. Manual Qt QA against only the disposable writable `out/dev/Slice1Sample` copy confirmed typed Inspector editing and a GameObject preset as one transaction followed by Undo; it also confirmed real adapter preview/play controls and isolated simulation.
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices remain 36/36. Windows exercises nested/list/dictionary/polymorphic paths, component actions, tile strokes/documents, generated-component workflows, candidate project-open isolation, SHA-bound multi-file rollback/startup recovery, and injected prefab Apply failure through command-backed paths. Manual Qt QA against only the disposable writable `out/dev/Slice1Sample` copy confirmed typed Inspector editing and a GameObject preset as one transaction followed by Undo; it also confirmed real adapter preview/play controls and isolated simulation.
 
 This is not acceptance evidence for the whole decision. `EditorWindow` still contains substantial orchestration and workflow behavior instead of being composition-only, and the complete Project/Scene/Selection/Command/Metadata/Asset/RuntimeSession/Diagnostics/Workspace service split is unfinished. Hierarchy multi-drag/reorder, deletion-reference repair UX, Inspector entity/asset choosers and component ordering, all dirty prompt cases, complete automation equivalence, broader accessibility/device flows, and a current macOS POC H run remain open. This ADR therefore remains `Proposed`.

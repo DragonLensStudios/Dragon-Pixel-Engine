@@ -277,7 +277,9 @@ internal static class Program
             await preview.CallAsync("handshake", new JsonObject { ["protocolVersion"] = 2 });
             await preview.CallAsync("initialize");
             var loaded = await LoadAsync(preview, scene, 1, reload: false);
-            Assert(loaded["entities"]!.GetValue<int>() == 7,
+            var authoringEntityCount = JsonNode.Parse(File.ReadAllText(scene.Path))?["entities"]?.AsArray().Count
+                ?? throw new InvalidOperationException("Tracked sample did not contain an entities array.");
+            Assert(loaded["entities"]!.GetValue<int>() == authoringEntityCount,
                 "Tracked sample did not retain its complete authoring entity set.");
             Assert(loaded["physicsBodies"]!.GetValue<int>() == 4,
                 "Tracked sample did not load two dynamic bodies and two static grounds.");

@@ -18,6 +18,8 @@ internal static class SceneSnapshotParser
     private const string MeshType = "9be44558-78e9-4912-bee5-046b5ad0a410";
     private const string MaterialType = "90d93631-746a-4f52-9f95-4895e27edf51";
     private const string LightType = "1859c426-7cfe-42fc-a815-f5fc1bf1dad6";
+    private const string TilemapType = "eea820b4-79e4-4dd6-86f8-04c93c3486fb";
+    private const string InputMotion2DType = "64348aba-c5a4-42fc-86e6-e99f9640e36d";
 
     public static ParsedSceneSnapshot Parse(string path, long requestedRevision)
     {
@@ -61,6 +63,8 @@ internal static class SceneSnapshotParser
         }
 
         var diagnostics = new List<string>();
+        var runtimeAssets = ReadRuntimeAssets(root, diagnostics);
+        var runtimeTilemaps = ReadRuntimeTilemaps(root, diagnostics);
         var entities = new List<RenderEntity>();
         var entityIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entityElement in entityArray.EnumerateArray())
@@ -83,8 +87,10 @@ internal static class SceneSnapshotParser
                 RenderVector3.One);
             RenderSprite? sprite = null;
             RenderMesh? mesh = null;
+            RenderTilemap? tilemap = null;
             RenderCamera? camera = null;
             RenderLight? light = null;
+            RenderInputMotion2D? inputMotion = null;
             var colliders = new List<RenderCollider>();
             var rotatorDegreesPerSecond = 0.0f;
             var materialColor = new RenderColor(0.95f, 0.35f, 0.15f, 1.0f);
@@ -148,11 +154,33 @@ internal static class SceneSnapshotParser
                                 Math.Max(0, ReadFloat(properties, "dpe.light.intensity", 1)),
                                 Math.Max(0.01f, ReadFloat(properties, "dpe.light.range", 10)));
                             break;
+                        case TilemapType:
+                            var tilemapAssetId = ReadString(properties, "dpe.tilemap.asset", string.Empty);
+                            if (!string.IsNullOrWhiteSpace(tilemapAssetId)
+                                && runtimeTilemaps.TryGetValue(tilemapAssetId, out var resolvedTilemap))
+                            {
+                                tilemap = resolvedTilemap with
+                                {
+                                    Tint = ReadColor(properties, "dpe.tilemap.tint", RenderColor.White),
+                                    BaseLayer = ReadInt(properties, "dpe.tilemap.layer", 0),
+                                };
+                            }
+                            else if (!string.IsNullOrWhiteSpace(tilemapAssetId))
+                            {
+                                diagnostics.Add($"Tilemap asset {tilemapAssetId} was not present in flattened snapshot v4 data.");
+                            }
+                            break;
                         case RotatorType:
                             rotatorDegreesPerSecond = ReadFloat(
                                 properties,
                                 "dpe.rotator.degrees_per_second",
                                 0);
+                            break;
+                        case InputMotion2DType:
+                            inputMotion = new RenderInputMotion2D(
+                                ReadString(properties, "dpe.input.horizontal_action", "move.x"),
+                                ReadString(properties, "dpe.input.vertical_action", "move.y"),
+                                Math.Max(0, ReadFloat(properties, "dpe.input.speed", 5)));
                             break;
                         case BuiltinComponentIds.BoxCollider2D:
                             var box2DSize = ReadVector3(
@@ -228,9 +256,11 @@ internal static class SceneSnapshotParser
                 transform,
                 sprite,
                 mesh,
+                tilemap,
                 camera,
                 light,
                 colliders,
+                inputMotion,
                 rotatorDegreesPerSecond));
         }
 
@@ -258,6 +288,7 @@ internal static class SceneSnapshotParser
             OptionalString(root, "name") ?? "Scene",
             revision,
             entities,
+            runtimeAssets,
             diagnostics);
         var physics = PhysicsSnapshotParser.Parse(root, scene, formatVersion);
         if (physics.Diagnostics.Count != 0)
@@ -271,6 +302,189 @@ internal static class SceneSnapshotParser
             scene,
             Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
             physics);
+    }
+
+    private sealed record RuntimeTileDefinition(
+        RenderColor Color,
+        int SourceX,
+        int SourceY,
+        int SourceWidth,
+        int SourceHeight);
+
+    private static IReadOnlyDictionary<string, RenderAsset> ReadRuntimeAssets(
+        JsonElement root,
+        List<string> diagnostics)
+    {
+        var result = new Dictionary<string, RenderAsset>(StringComparer.Ordinal);
+        if (!root.TryGetProperty("assets", out var assets))
+        {
+            return result;
+        }
+        if (assets.ValueKind != JsonValueKind.Array)
+        {
+            diagnostics.Add("Runtime assets must be an array.");
+            return result;
+        }
+        foreach (var value in assets.EnumerateArray())
+        {
+            try
+            {
+                var id = CanonicalId(RequiredString(value, "assetId"), "Runtime asset id");
+                var assetType = RequiredString(value, "assetType");
+                var mediaType = RequiredString(value, "mediaType");
+                var contentHash = RequiredString(value, "contentHash").ToLowerInvariant();
+                var encoded = RequiredString(value, "embeddedBytesBase64");
+                var bytes = Convert.FromBase64String(encoded);
+                if (bytes.Length == 0 || bytes.Length > 64 * 1024 * 1024)
+                {
+                    diagnostics.Add($"Runtime asset {id} has an invalid immutable byte length.");
+                    continue;
+                }
+                var actualHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                if (!actualHash.Equals(contentHash, StringComparison.Ordinal))
+                {
+                    diagnostics.Add($"Runtime asset {id} failed content-hash validation.");
+                    continue;
+                }
+                if (assetType != "sprite" || mediaType is not ("image/png" or "image/jpeg"))
+                {
+                    diagnostics.Add($"Runtime asset {id} uses unsupported type {assetType}/{mediaType}.");
+                    continue;
+                }
+                if (!result.TryAdd(id, new RenderAsset(
+                        id, assetType, mediaType, contentHash, bytes)))
+                {
+                    diagnostics.Add($"Runtime asset {id} was duplicated.");
+                }
+            }
+            catch (Exception exception) when (
+                exception is InvalidDataException or FormatException)
+            {
+                diagnostics.Add($"Runtime asset binding was rejected: {exception.Message}");
+            }
+        }
+        return result;
+    }
+
+    private sealed record RuntimeTileSet(
+        string TextureAssetId,
+        byte[] TexturePng,
+        float CellWidth,
+        float CellHeight,
+        IReadOnlyDictionary<string, RuntimeTileDefinition> Tiles);
+
+    private static IReadOnlyDictionary<string, RenderTilemap> ReadRuntimeTilemaps(
+        JsonElement root,
+        List<string> diagnostics)
+    {
+        var sets = new Dictionary<string, RuntimeTileSet>(StringComparer.Ordinal);
+        if (root.TryGetProperty("tileSets", out var tileSets) && tileSets.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var value in tileSets.EnumerateArray())
+            {
+                var id = CanonicalId(RequiredString(value, "assetId"), "TileSet asset id");
+                var pixelsPerUnit = ReadFloat(value, "pixelsPerUnit", 32);
+                var cellWidth = ReadFloat(value, "cellWidth", 32) / Math.Max(0.001f, pixelsPerUnit);
+                var cellHeight = ReadFloat(value, "cellHeight", 32) / Math.Max(0.001f, pixelsPerUnit);
+                var textureAssetId = CanonicalId(RequiredString(value, "textureAssetId"), "TileSet texture asset id");
+                var texturePng = Array.Empty<byte>();
+                if (value.TryGetProperty("texturePngBase64", out var encodedTexture)
+                    && encodedTexture.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(encodedTexture.GetString()))
+                {
+                    try { texturePng = Convert.FromBase64String(encodedTexture.GetString()!); }
+                    catch (FormatException) { diagnostics.Add($"TileSet {id} contains invalid immutable PNG data."); }
+                }
+                var definitions = new Dictionary<string, RuntimeTileDefinition>(StringComparer.Ordinal);
+                if (value.TryGetProperty("tiles", out var tiles) && tiles.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var tile in tiles.EnumerateArray())
+                    {
+                        var tileId = CanonicalId(RequiredString(tile, "tileId"), "tile id");
+                        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(tileId));
+                        definitions[tileId] = new RuntimeTileDefinition(
+                            new RenderColor(
+                                0.25f + (hash[0] / 255.0f * 0.7f),
+                                0.25f + (hash[1] / 255.0f * 0.7f),
+                                0.25f + (hash[2] / 255.0f * 0.7f),
+                                1),
+                            ReadInt(tile, "sourceX", 0),
+                            ReadInt(tile, "sourceY", 0),
+                            Math.Max(1, ReadInt(tile, "sourceWidth", 1)),
+                            Math.Max(1, ReadInt(tile, "sourceHeight", 1)));
+                    }
+                }
+                sets.Add(id, new RuntimeTileSet(textureAssetId, texturePng, cellWidth, cellHeight, definitions));
+            }
+        }
+
+        var result = new Dictionary<string, RenderTilemap>(StringComparer.Ordinal);
+        if (!root.TryGetProperty("tilemaps", out var tilemaps) || tilemaps.ValueKind != JsonValueKind.Array)
+        {
+            return result;
+        }
+        foreach (var value in tilemaps.EnumerateArray())
+        {
+            var id = CanonicalId(RequiredString(value, "assetId"), "tilemap asset id");
+            RuntimeTileSet? set = null;
+            if (value.TryGetProperty("tileSetDependencies", out var dependencies)
+                && dependencies.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var dependency in dependencies.EnumerateArray())
+                {
+                    if (dependency.ValueKind == JsonValueKind.String
+                        && sets.TryGetValue(dependency.GetString()!, out set))
+                    {
+                        break;
+                    }
+                }
+            }
+            if (set is null)
+            {
+                diagnostics.Add($"Tilemap {id} has no resolved flattened TileSet dependency.");
+                continue;
+            }
+            var layers = new List<RenderTileLayer>();
+            if (value.TryGetProperty("layers", out var layerValues) && layerValues.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var layer in layerValues.EnumerateArray())
+                {
+                    var cells = new List<RenderTileCell>();
+                    if (layer.TryGetProperty("cells", out var cellValues) && cellValues.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var cell in cellValues.EnumerateArray())
+                        {
+                            var tileId = CanonicalId(RequiredString(cell, "tileId"), "tile cell id");
+                            if (!set.Tiles.TryGetValue(tileId, out var tile))
+                            {
+                                diagnostics.Add($"Tilemap {id} retained missing tile id {tileId}.");
+                                tile = new RuntimeTileDefinition(new RenderColor(1, 0, 1, 1), 0, 0, 1, 1);
+                            }
+                            cells.Add(new RenderTileCell(
+                                ReadInt(cell, "x", 0),
+                                ReadInt(cell, "y", 0),
+                                tileId,
+                                tile.Color,
+                                tile.SourceX,
+                                tile.SourceY,
+                                tile.SourceWidth,
+                                tile.SourceHeight,
+                                OptionalBool(cell, "flipX", false),
+                                OptionalBool(cell, "flipY", false),
+                                Math.Clamp(ReadInt(cell, "rotationQuarterTurns", 0), 0, 3)));
+                        }
+                    }
+                    layers.Add(new RenderTileLayer(
+                        OptionalString(layer, "name") ?? "Layer",
+                        OptionalBool(layer, "visible", true),
+                        ReadInt(layer, "order", 0),
+                        cells));
+                }
+            }
+            result.Add(id, new RenderTilemap(id, set.TextureAssetId, set.TexturePng, set.CellWidth, set.CellHeight,
+                RenderColor.White, 0, layers));
+        }
+        return result;
     }
 
     private static JsonElement ReadProperties(JsonElement component)

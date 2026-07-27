@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using DragonPixel.Runtime;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -13,6 +14,12 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
     private readonly Color[] _singlePickReadback = new Color[1];
     private readonly Dictionary<string, Matrix> _worldTransforms = new(StringComparer.Ordinal);
     private readonly HashSet<string> _resolvingTransforms = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Texture2D> _tileTextures = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _failedTileTextures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Texture2D> _assetTextures = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _failedAssetTextures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Vector3> _runtimeInputOffsets = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, InputMotionState> _observedInputMotion = new(StringComparer.Ordinal);
     private FrameworkRenderRequest? _request;
     private FrameworkFrame? _completedFrame;
     private RenderTarget2D? _colorTarget;
@@ -20,6 +27,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
     private SpriteBatch? _spriteBatch;
     private Texture2D? _checkerTexture;
     private Texture2D? _whiteTexture;
+    private Texture2D? _circleTexture;
     private BasicEffect? _meshEffect;
     private BasicEffect? _idEffect;
     private BasicEffect? _overlayEffect;
@@ -32,7 +40,20 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
     private long _retainedSnapshotRevision;
     private long _retainedCameraRevision;
     private long _retainedCommandRevision;
+    private long _idTargetSnapshotRevision = -1;
+    private long _idTargetCameraRevision = -1;
+    private bool _idTargetUseSceneCamera;
+    private bool _idTargetValid;
     private bool _contentLoaded;
+    private long _inputOffsetSnapshotRevision;
+    private long _observedInputRevision;
+    private long _reflectedInputRevision;
+    private long _pendingInputRevision;
+    private byte[]? _pendingInputPixelBaseline;
+    private long _lastRenderedInputSnapshotRevision;
+    private int _lastRenderedInputWidth;
+    private int _lastRenderedInputHeight;
+    private TimeSpan? _lastInputElapsed;
     private bool _disposed;
 
     public FrameworkSceneAdapter()
@@ -167,6 +188,22 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         _checkerTexture.SetData(checker);
         _whiteTexture = new Texture2D(GraphicsDevice, 1, 1, false, SurfaceFormat.Color);
         _whiteTexture.SetData([Color.White]);
+        _circleTexture = new Texture2D(GraphicsDevice, 64, 64, false, SurfaceFormat.Color);
+        var circle = new Color[64 * 64];
+        var center = 31.5f;
+        var radiusSquared = 31.0f * 31.0f;
+        for (var y = 0; y < 64; y++)
+        {
+            for (var x = 0; x < 64; x++)
+            {
+                var deltaX = x - center;
+                var deltaY = y - center;
+                circle[(y * 64) + x] = (deltaX * deltaX) + (deltaY * deltaY) <= radiusSquared
+                    ? Color.White
+                    : Color.Transparent;
+            }
+        }
+        _circleTexture.SetData(circle);
 
         _meshEffect = new BasicEffect(GraphicsDevice)
         {
@@ -203,28 +240,20 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         }
 
         EnsureTargets(request.Width, request.Height);
+        var entities = request.Scene.Entities.ToDictionary(static entity => entity.Id, StringComparer.Ordinal);
+        var visible = request.Scene.Entities.Where(static entity => entity.Enabled).ToArray();
+        var renderAffectingEntities = FindRenderAffectingEntities(visible, entities);
+        var inputMotionChangedPixels = UpdateInputMotion(request, visible, renderAffectingEntities);
         _worldTransforms.Clear();
         _resolvingTransforms.Clear();
-        var entities = request.Scene.Entities.ToDictionary(static entity => entity.Id, StringComparer.Ordinal);
         var camera = CreateCamera(request, entities);
-        var visible = request.Scene.Entities.Where(static entity => entity.Enabled).ToArray();
         var pickTokens = visible
-            .Where(static entity => entity.Sprite is not null || entity.Mesh is not null)
+            .Where(static entity => entity.Sprite is not null || entity.Mesh is not null || entity.Tilemap is not null)
             .Select((entity, index) => (entity.Id, Token: index + 1))
             .ToDictionary(static pair => pair.Id, static pair => pair.Token, StringComparer.Ordinal);
-
-        DrawColorFrame(request, visible, entities, camera);
-        DrawIdFrame(request, visible, entities, camera, pickTokens);
-        _retainedPickTokens = pickTokens;
-        _retainedFrameRevision = request.FrameRevision;
-        _retainedSnapshotRevision = request.SnapshotRevision;
-        _retainedCameraRevision = request.CameraRevision;
-        _retainedCommandRevision = request.CommandRevision;
-        ServicePendingOperations();
-
-        _colorTarget!.GetData(_colorReadback);
-        ConvertToBgra(_colorReadback, _bgraReadback);
-
+        var renderAffectingAnimation = visible.Any(entity =>
+            Math.Abs(entity.RotatorDegreesPerSecond) > 0.000001f
+            && (renderAffectingEntities.Contains(entity.Id) || request.UseSceneCamera));
         var contentFlags = 0;
         if (visible.Any(static entity => entity.Sprite is not null))
         {
@@ -234,6 +263,38 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         {
             contentFlags |= FrameLayout.ContentStaticMesh;
         }
+        if (visible.Any(static entity => entity.Tilemap is not null))
+        {
+            contentFlags |= FrameLayout.ContentTilemap;
+        }
+
+        DrawColorFrame(request, visible, entities, camera);
+        // Retain the device-produced ID target across visually identical frames. KNI otherwise
+        // serializes a second full-size render before every color readback even when no pickable
+        // transform changed; PreserveContents keeps the retained target valid for later picks.
+        if (!_idTargetValid
+            || _idTargetSnapshotRevision != request.SnapshotRevision
+            || _idTargetCameraRevision != request.CameraRevision
+            || _idTargetUseSceneCamera != request.UseSceneCamera
+            || inputMotionChangedPixels
+            || renderAffectingAnimation)
+        {
+            DrawIdFrame(request, visible, entities, camera, pickTokens);
+            _idTargetSnapshotRevision = request.SnapshotRevision;
+            _idTargetCameraRevision = request.CameraRevision;
+            _idTargetUseSceneCamera = request.UseSceneCamera;
+            _idTargetValid = true;
+        }
+        _retainedPickTokens = pickTokens;
+        _retainedFrameRevision = request.FrameRevision;
+        _retainedSnapshotRevision = request.SnapshotRevision;
+        _retainedCameraRevision = request.CameraRevision;
+        _retainedCommandRevision = request.CommandRevision;
+        ServicePendingOperations();
+
+        _colorTarget!.GetData(_colorReadback);
+        ConvertToBgra(_colorReadback, _bgraReadback);
+        CompleteInputReflection(request, inputMotionChangedPixels);
 
         _completedFrame = new FrameworkFrame(
             _bgraReadback,
@@ -246,7 +307,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             request.SnapshotRevision,
             request.CameraRevision,
             request.CommandRevision,
-            request.InputRevision);
+            _reflectedInputRevision);
         base.Draw(gameTime);
     }
 
@@ -258,8 +319,14 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         _overlayEffect?.Dispose();
         _idEffect?.Dispose();
         _meshEffect?.Dispose();
+        _circleTexture?.Dispose();
         _whiteTexture?.Dispose();
         _checkerTexture?.Dispose();
+        foreach (var texture in _tileTextures.Values) texture.Dispose();
+        _tileTextures.Clear();
+        foreach (var texture in _assetTextures.Values) texture.Dispose();
+        _assetTextures.Clear();
+        _failedTileTextures.Clear();
         _spriteBatch?.Dispose();
         base.UnloadContent();
     }
@@ -287,6 +354,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         GraphicsDevice.Viewport = new Viewport(0, 0, request.Width, request.Height);
         GraphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, new Color(27, 25, 34), 1, 0);
         DrawMeshes(request, visible, entities, camera, idTokens: null);
+        DrawTilemaps(request, visible, entities, camera, idTokens: null);
         DrawSprites(request, visible, entities, camera, idTokens: null);
         if (!request.UseSceneCamera)
         {
@@ -306,6 +374,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         GraphicsDevice.Viewport = new Viewport(0, 0, request.Width, request.Height);
         GraphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, Color.Black, 1, 0);
         DrawMeshes(request, visible, entities, camera, pickTokens);
+        DrawTilemaps(request, visible, entities, camera, pickTokens);
         DrawSprites(request, visible, entities, camera, pickTokens);
         GraphicsDevice.SetRenderTarget(null);
     }
@@ -364,7 +433,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             .OrderBy(static entity => entity.Sprite!.Layer);
         _spriteBatch!.Begin(
             SpriteSortMode.Deferred,
-            idTokens is null ? BlendState.AlphaBlend : BlendState.Opaque,
+            BlendState.AlphaBlend,
             SamplerState.PointClamp,
             DepthStencilState.None,
             RasterizerState.CullNone);
@@ -383,24 +452,178 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
 
             var scaleX = new Vector3(world.M11, world.M12, world.M13).Length();
             var scaleY = new Vector3(world.M21, world.M22, world.M23).Length();
-            var size = Math.Clamp(
-                (int)MathF.Round(Math.Min(request.Width, request.Height) * 0.14f * Math.Max(scaleX, scaleY)),
-                12,
+            var baseSize = Math.Clamp(
+                Math.Min(request.Width, request.Height) * 0.14f,
+                12.0f,
                 Math.Min(request.Width, request.Height));
-            var destination = new Rectangle(
-                (int)MathF.Round(position.X) - (size / 2),
-                (int)MathF.Round(position.Y) - (size / 2),
-                size,
-                size);
             var color = idTokens is null
                 ? ToXnaColor(entity.Sprite!.Color)
                 : TokenColor(idTokens[entity.Id]);
+            var primitive = entity.Sprite!.AssetId;
+            var texture = primitive.Equals("builtin://circle", StringComparison.OrdinalIgnoreCase)
+                ? _circleTexture!
+                : primitive.Equals("builtin://square", StringComparison.OrdinalIgnoreCase)
+                    ? _whiteTexture!
+                    : idTokens is null
+                        && request.Scene.Assets.TryGetValue(primitive, out var asset)
+                        ? GetAssetTexture(asset) ?? _checkerTexture!
+                        : idTokens is null ? _checkerTexture! : _whiteTexture!;
+            var rotation = MathF.Atan2(world.M12, world.M11);
             _spriteBatch.Draw(
-                idTokens is null ? _checkerTexture! : _whiteTexture!,
-                destination,
-                color);
+                texture,
+                new Vector2(position.X, position.Y),
+                null,
+                color,
+                rotation,
+                new Vector2(texture.Width * 0.5f, texture.Height * 0.5f),
+                new Vector2(
+                    (baseSize * Math.Max(scaleX, 0.0001f)) / texture.Width,
+                    (baseSize * Math.Max(scaleY, 0.0001f)) / texture.Height),
+                SpriteEffects.None,
+                0.0f);
         }
         _spriteBatch.End();
+    }
+
+    private void DrawTilemaps(
+        FrameworkRenderRequest request,
+        IReadOnlyList<RenderEntity> visible,
+        IReadOnlyDictionary<string, RenderEntity> entities,
+        CameraMatrices camera,
+        IReadOnlyDictionary<string, int>? idTokens)
+    {
+        var batches = visible
+            .Where(static entity => entity.Tilemap is not null)
+            .SelectMany(entity => entity.Tilemap!.Layers
+                .Where(static layer => layer.Visible)
+                .SelectMany(layer => layer.Cells.Select(cell => new
+                {
+                    Entity = entity,
+                    Tilemap = entity.Tilemap!,
+                    Layer = layer,
+                    Cell = cell,
+                })))
+            .OrderBy(static item => item.Tilemap.BaseLayer + item.Layer.Order)
+            .ThenBy(static item => item.Tilemap.TextureAssetId, StringComparer.Ordinal)
+            .ThenBy(static item => item.Cell.Y)
+            .ThenBy(static item => item.Cell.X)
+            .ToArray();
+        if (batches.Length == 0)
+        {
+            return;
+        }
+        _spriteBatch!.Begin(
+            SpriteSortMode.Deferred,
+            idTokens is null ? BlendState.AlphaBlend : BlendState.Opaque,
+            SamplerState.PointClamp,
+            DepthStencilState.None,
+            RasterizerState.CullNone);
+        foreach (var item in batches)
+        {
+            var world = ResolveWorldTransform(item.Entity, entities, request.Elapsed);
+            var worldPosition = Vector3.Transform(new Vector3(
+                (item.Cell.X + 0.5f) * item.Tilemap.CellWidth,
+                (item.Cell.Y + 0.5f) * item.Tilemap.CellHeight,
+                0), world);
+            var position = GraphicsDevice.Viewport.Project(
+                worldPosition,
+                camera.Projection,
+                camera.View,
+                Matrix.Identity);
+            if (position.Z is < 0 or > 1)
+            {
+                continue;
+            }
+            var scaleX = new Vector3(world.M11, world.M12, world.M13).Length();
+            var scaleY = new Vector3(world.M21, world.M22, world.M23).Length();
+            var width = Math.Clamp(
+                (int)MathF.Round(Math.Min(request.Width, request.Height) * 0.10f
+                    * item.Tilemap.CellWidth * Math.Max(0.01f, scaleX)),
+                2,
+                Math.Min(request.Width, request.Height));
+            var height = Math.Clamp(
+                (int)MathF.Round(Math.Min(request.Width, request.Height) * 0.10f
+                    * item.Tilemap.CellHeight * Math.Max(0.01f, scaleY)),
+                2,
+                Math.Min(request.Width, request.Height));
+            var destination = new Rectangle(
+                (int)MathF.Round(position.X) - (width / 2),
+                (int)MathF.Round(position.Y) - (height / 2),
+                width,
+                height);
+            var tileTexture = idTokens is null ? GetTileTexture(item.Tilemap) : null;
+            Rectangle? source = null;
+            if (tileTexture is not null
+                && item.Cell.SourceX >= 0 && item.Cell.SourceY >= 0
+                && item.Cell.SourceX + item.Cell.SourceWidth <= tileTexture.Width
+                && item.Cell.SourceY + item.Cell.SourceHeight <= tileTexture.Height)
+            {
+                source = new Rectangle(item.Cell.SourceX, item.Cell.SourceY,
+                    item.Cell.SourceWidth, item.Cell.SourceHeight);
+            }
+            else
+            {
+                tileTexture = null;
+            }
+            var color = idTokens is not null
+                ? TokenColor(idTokens[item.Entity.Id])
+                : tileTexture is not null
+                    ? ToXnaColor(item.Tilemap.Tint)
+                    : ToXnaColor(new RenderColor(
+                        item.Cell.Color.R * item.Tilemap.Tint.R,
+                        item.Cell.Color.G * item.Tilemap.Tint.G,
+                        item.Cell.Color.B * item.Tilemap.Tint.B,
+                        item.Cell.Color.A * item.Tilemap.Tint.A));
+            var effects = (item.Cell.FlipX ? SpriteEffects.FlipHorizontally : SpriteEffects.None)
+                | (item.Cell.FlipY ? SpriteEffects.FlipVertically : SpriteEffects.None);
+            var rotation = item.Cell.RotationQuarterTurns * MathF.PI * 0.5f;
+            var origin = source.HasValue
+                ? new Vector2(source.Value.Width * 0.5f, source.Value.Height * 0.5f)
+                : Vector2.Zero;
+            _spriteBatch.Draw(tileTexture ?? _whiteTexture!, destination, source, color,
+                rotation, origin, effects, 0.0f);
+        }
+        _spriteBatch.End();
+    }
+
+    private Texture2D? GetTileTexture(RenderTilemap tilemap)
+    {
+        if (tilemap.TexturePng.Length == 0) return null;
+        var key = $"{tilemap.TextureAssetId}:{Convert.ToHexString(SHA256.HashData(tilemap.TexturePng))}";
+        if (_tileTextures.TryGetValue(key, out var existing)) return existing;
+        if (_failedTileTextures.Contains(key)) return null;
+        try
+        {
+            using var stream = new MemoryStream(tilemap.TexturePng, writable: false);
+            var texture = Texture2D.FromStream(GraphicsDevice, stream);
+            _tileTextures.Add(key, texture);
+            return texture;
+        }
+        catch
+        {
+            _failedTileTextures.Add(key);
+            return null;
+        }
+    }
+
+    private Texture2D? GetAssetTexture(RenderAsset asset)
+    {
+        if (asset.ImmutableBytes.Length == 0) return null;
+        var key = $"{asset.AssetId}:{asset.ContentHash}";
+        if (_assetTextures.TryGetValue(key, out var existing)) return existing;
+        if (_failedAssetTextures.Contains(key)) return null;
+        try
+        {
+            using var stream = new MemoryStream(asset.ImmutableBytes, writable: false);
+            var texture = Texture2D.FromStream(GraphicsDevice, stream);
+            _assetTextures.Add(key, texture);
+            return texture;
+        }
+        catch (Exception)
+        {
+            _failedAssetTextures.Add(key);
+            return null;
+        }
     }
 
     private void DrawColliderOverlays(
@@ -739,9 +962,11 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
                 Vector3.Up,
                 MathHelper.ToRadians(entity.RotatorDegreesPerSecond * (float)elapsed.TotalSeconds));
         }
+        var runtimePosition = ToVector3(transform.Position)
+            + (_runtimeInputOffsets.TryGetValue(entity.Id, out var offset) ? offset : Vector3.Zero);
         var local = Matrix.CreateScale(ToVector3(transform.Scale))
             * Matrix.CreateFromQuaternion(rotation)
-            * Matrix.CreateTranslation(ToVector3(transform.Position));
+            * Matrix.CreateTranslation(runtimePosition);
         if (entity.ParentId is not null && entities.TryGetValue(entity.ParentId, out var parent))
         {
             local *= ResolveWorldTransform(parent, entities, elapsed);
@@ -749,6 +974,172 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         _resolvingTransforms.Remove(entity.Id);
         _worldTransforms[entity.Id] = local;
         return local;
+    }
+
+    private bool UpdateInputMotion(
+        FrameworkRenderRequest request,
+        IReadOnlyList<RenderEntity> visible,
+        IReadOnlySet<string> renderAffectingEntities)
+    {
+        if (_inputOffsetSnapshotRevision != request.SnapshotRevision)
+        {
+            _runtimeInputOffsets.Clear();
+            _observedInputMotion.Clear();
+            _lastInputElapsed = null;
+            _inputOffsetSnapshotRevision = request.SnapshotRevision;
+            _observedInputRevision = 0;
+            _reflectedInputRevision = 0;
+            _pendingInputRevision = 0;
+            _pendingInputPixelBaseline = null;
+            _lastRenderedInputSnapshotRevision = 0;
+            _lastRenderedInputWidth = 0;
+            _lastRenderedInputHeight = 0;
+        }
+
+        var currentInputMotion = new Dictionary<string, InputMotionState>(StringComparer.Ordinal);
+        foreach (var entity in visible.Where(static entity => entity.InputMotion is not null))
+        {
+            var motion = entity.InputMotion!;
+            if (!renderAffectingEntities.Contains(entity.Id) || Math.Abs(motion.Speed) <= 0.000001f)
+            {
+                continue;
+            }
+            var horizontal = request.InputActions.TryGetValue(motion.HorizontalAction, out var x) ? x : 0.0f;
+            var vertical = request.InputActions.TryGetValue(motion.VerticalAction, out var y) ? y : 0.0f;
+            if (!float.IsFinite(horizontal) || !float.IsFinite(vertical))
+            {
+                horizontal = 0.0f;
+                vertical = 0.0f;
+            }
+            currentInputMotion.Add(entity.Id, new InputMotionState(horizontal, vertical));
+        }
+        ObserveInputRevision(request, currentInputMotion);
+
+        var delta = _lastInputElapsed.HasValue
+            ? Math.Clamp((float)(request.Elapsed - _lastInputElapsed.Value).TotalSeconds, 0.0f, 0.1f)
+            : 0.0f;
+        _lastInputElapsed = request.Elapsed;
+        if (delta <= 0.0f)
+        {
+            return false;
+        }
+
+        var renderAffectingMotionChanged = false;
+        foreach (var entity in visible.Where(static entity => entity.InputMotion is not null))
+        {
+            var motion = entity.InputMotion!;
+            var horizontal = request.InputActions.TryGetValue(motion.HorizontalAction, out var x) ? x : 0.0f;
+            var vertical = request.InputActions.TryGetValue(motion.VerticalAction, out var y) ? y : 0.0f;
+            if (!float.IsFinite(horizontal) || !float.IsFinite(vertical)) continue;
+            var offsetDelta = new Vector3(horizontal, vertical, 0.0f) * motion.Speed * delta;
+            if (offsetDelta == Vector3.Zero) continue;
+            _runtimeInputOffsets.TryGetValue(entity.Id, out var offset);
+            offset += offsetDelta;
+            _runtimeInputOffsets[entity.Id] = offset;
+            renderAffectingMotionChanged |= renderAffectingEntities.Contains(entity.Id);
+        }
+        return renderAffectingMotionChanged;
+    }
+
+    private void ObserveInputRevision(
+        FrameworkRenderRequest request,
+        IReadOnlyDictionary<string, InputMotionState> currentInputMotion)
+    {
+        if (request.InputRevision <= _observedInputRevision)
+        {
+            return;
+        }
+        _observedInputRevision = request.InputRevision;
+        if (InputMotionEquals(_observedInputMotion, currentInputMotion))
+        {
+            return;
+        }
+
+        var wasActive = _observedInputMotion.Values.Any(static state => state.Active);
+        var isActive = currentInputMotion.Values.Any(static state => state.Active);
+        _observedInputMotion.Clear();
+        foreach (var (entityId, state) in currentInputMotion)
+        {
+            _observedInputMotion.Add(entityId, state);
+        }
+
+        if (wasActive && !isActive)
+        {
+            _reflectedInputRevision = request.InputRevision;
+            _pendingInputRevision = 0;
+            _pendingInputPixelBaseline = null;
+            return;
+        }
+        if (!isActive)
+        {
+            return;
+        }
+
+        _pendingInputRevision = request.InputRevision;
+        _pendingInputPixelBaseline = _lastRenderedInputSnapshotRevision == request.SnapshotRevision
+            && _lastRenderedInputWidth == request.Width
+            && _lastRenderedInputHeight == request.Height
+            ? _bgraReadback.ToArray()
+            : null;
+    }
+
+    private void CompleteInputReflection(FrameworkRenderRequest request, bool renderAffectingMotionChanged)
+    {
+        if (_pendingInputRevision != 0)
+        {
+            if (_pendingInputPixelBaseline is null
+                || _pendingInputPixelBaseline.Length != _bgraReadback.Length)
+            {
+                _pendingInputPixelBaseline = _bgraReadback.ToArray();
+            }
+            else if (renderAffectingMotionChanged
+                && !_bgraReadback.AsSpan().SequenceEqual(_pendingInputPixelBaseline))
+            {
+                _reflectedInputRevision = _pendingInputRevision;
+                _pendingInputRevision = 0;
+                _pendingInputPixelBaseline = null;
+            }
+        }
+
+        _lastRenderedInputSnapshotRevision = request.SnapshotRevision;
+        _lastRenderedInputWidth = request.Width;
+        _lastRenderedInputHeight = request.Height;
+    }
+
+    private static HashSet<string> FindRenderAffectingEntities(
+        IReadOnlyList<RenderEntity> visible,
+        IReadOnlyDictionary<string, RenderEntity> entities)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var renderable in visible.Where(static entity =>
+                     entity.Sprite is not null || entity.Mesh is not null || entity.Tilemap is not null))
+        {
+            RenderEntity? current = renderable;
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (current is not null && visited.Add(current.Id))
+            {
+                result.Add(current.Id);
+                current = current.ParentId is not null && entities.TryGetValue(current.ParentId, out var parent)
+                    ? parent
+                    : null;
+            }
+        }
+        return result;
+    }
+
+    private static bool InputMotionEquals(
+        IReadOnlyDictionary<string, InputMotionState> left,
+        IReadOnlyDictionary<string, InputMotionState> right)
+    {
+        if (left.Count != right.Count) return false;
+        foreach (var (entityId, state) in left)
+        {
+            if (!right.TryGetValue(entityId, out var candidate) || candidate != state)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void EnsureTargets(int width, int height)
@@ -766,7 +1157,7 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             SurfaceFormat.Color,
             DepthFormat.Depth24,
             0,
-            RenderTargetUsage.DiscardContents);
+            RenderTargetUsage.PreserveContents);
         _idTarget = new RenderTarget2D(
             GraphicsDevice,
             width,
@@ -775,13 +1166,14 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             SurfaceFormat.Color,
             DepthFormat.Depth24,
             0,
-            RenderTargetUsage.DiscardContents);
+            RenderTargetUsage.PreserveContents);
         _colorReadback = new Color[checked(width * height)];
         _bgraReadback = new byte[checked(width * height * 4)];
     }
 
     private void DisposeTargets()
     {
+        _idTargetValid = false;
         _idTarget?.Dispose();
         _idTarget = null;
         _colorTarget?.Dispose();
@@ -860,6 +1252,10 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
     }
 
     private readonly record struct CameraMatrices(Matrix View, Matrix Projection);
+    private readonly record struct InputMotionState(float Horizontal, float Vertical)
+    {
+        public bool Active => Horizontal != 0.0f || Vertical != 0.0f;
+    }
     private sealed record PendingPick(int X, int Y, long MinimumFrameRevision)
     {
         public TaskCompletionSource<FrameworkPickResult> Completion { get; } =

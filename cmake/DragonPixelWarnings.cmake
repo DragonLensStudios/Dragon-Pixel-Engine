@@ -10,6 +10,26 @@ function(dpe_configure_native_target target)
                 _DISABLE_STRING_ANNOTATION
                 _DISABLE_VECTOR_ANNOTATION
             )
+            get_filename_component(_dpe_msvc_compiler_directory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            if(CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+                set(_dpe_msvc_asan_runtime "${_dpe_msvc_compiler_directory}/clang_rt.asan_dynamic-aarch64.dll")
+            elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+                set(_dpe_msvc_asan_runtime "${_dpe_msvc_compiler_directory}/clang_rt.asan_dynamic-x86_64.dll")
+            else()
+                set(_dpe_msvc_asan_runtime "${_dpe_msvc_compiler_directory}/clang_rt.asan_dynamic-i386.dll")
+            endif()
+            if(NOT EXISTS "${_dpe_msvc_asan_runtime}")
+                message(FATAL_ERROR "MSVC AddressSanitizer runtime was not found: ${_dpe_msvc_asan_runtime}")
+            endif()
+            # Windows resolves an instrumented executable/DLL's ASan dependency
+            # beside that binary. Copying the runtime per target also lets managed
+            # workers load an instrumented dragonpixel.dll without a developer shell.
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_dpe_msvc_asan_runtime}"
+                    "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM
+            )
         endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -21,7 +41,15 @@ function(dpe_configure_native_target target)
 endfunction()
 
 function(dpe_configure_managed_asan_test test_name)
-    if(DPE_ENABLE_ASAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(DPE_ENABLE_ASAN AND MSVC)
+        # A managed test is hosted by dotnet.exe, so Windows does not include the
+        # instrumented plugin directory in its initial DLL search path. Expose the
+        # compiler runtime directory explicitly before NativeLibrary.Load runs.
+        get_filename_component(_dpe_msvc_compiler_directory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${_dpe_msvc_compiler_directory}"
+        )
+    elseif(DPE_ENABLE_ASAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
             set(_dpe_asan_library_name "libclang_rt.asan-x86_64.so")
         elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")

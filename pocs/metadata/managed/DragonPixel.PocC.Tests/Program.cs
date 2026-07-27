@@ -29,7 +29,7 @@ internal static class Program
             var metadataSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "component-metadata.schema.json");
             var sceneSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "scene.schema.json");
             var currentSceneSchemaPath = Path.Combine(repositoryRoot, "schemas", "v3", "scene.schema.json");
-            var currentProjectSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "project.schema.json");
+            var currentProjectSchemaPath = Path.Combine(repositoryRoot, "schemas", "v3", "project.schema.json");
             var currentAssetSchemaPath = Path.Combine(repositoryRoot, "schemas", "v2", "asset-metadata.schema.json");
 
             ValidateAgainstSchema(metadataSchemaPath, nativeManifestJson, "native manifest");

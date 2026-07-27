@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -24,6 +24,8 @@ MonoGame and KNI expose similar XNA-style APIs but have different packages, capa
 
 Separate adapters duplicate device/content glue but keep portable contracts clean and make divergences explicit capabilities instead of hidden conditionals. Real CPU readback provides a common first transport and reliable evidence, but it can be expensive; a later GPU-handle transport may replace it without changing scene or adapter contracts. KNI support can lag without blocking MonoGame or misrepresenting compatibility.
 
+DPE-ARCH-0009 extends the adapter boundary through project build and package operations. A declared project-v4 target identifies its adapter, configuration, platform, architecture, toolchain, and required capabilities; structured build/package results bind those inputs to adapter/module versions and artifact hashes. A package carries only the declared adapter composition and its inventoried dependencies. KNI artifacts remain explicitly experimental and separate from supported/default MonoGame packages until KNI passes the unchanged scene, lifecycle, rendering, picking, content, input, shutdown, clean-install, and packaging conformance suite on all three baselines.
+
 ## Alternatives considered
 
 - **Compile against a common XNA type surface:** rejected because package identity does not guarantee content, native-library, device, or platform behavior.
@@ -35,9 +37,11 @@ Separate adapters duplicate device/content glue but keep portable contracts clea
 
 POC B must run lifecycle and end-to-end frame pacing for each adapter independently so an assertion for one adapter cannot suppress the other's measurements. POC E must prove, for both adapters on every baseline platform, that add, move, color, enable/disable, delete, camera, light, and resize changes alter real device-produced pixels and correct picking UUIDs through the shared-memory path. Diagnostics must identify the actual adapter package, graphics device, backend, and snapshot/frame revisions. The acceptance path has no synthetic fallback.
 
-Current evidence (2026-07-25): MonoGame and KNI now pass the current Windows and Ubuntu worker lifecycle, actual framework-device/render-target/readback, real scene snapshot rendering, graphics-thread single-pixel ID-buffer picking, persistent shared-memory publication/consumption, resize, and recovery suites. In combined POC B on Windows, MonoGame records 60.0 FPS and 15.6 ms median input-to-present latency while KNI records 40.0 FPS and 46.6 ms; independent POC E records 60.1 FPS/15.7 ms for MonoGame and 40.7 FPS/46.7 ms for KNI. On Ubuntu, combined POC B records 61.7 FPS/16.3 ms for MonoGame and 32.3 FPS/55.1 ms for KNI; independent POC E records 61.6 FPS/16.4 ms and 33.3 FPS/55.2 ms respectively. Both adapters therefore clear the unchanged 1280x720, 30 FPS, and 100 ms gates on those platforms without a synthetic acceptance fallback.
+DPE-ARCH-0009 adds POC R package evidence to POCs B and E: clean-machine install/launch/sample build-run, relocatable resource resolution, exact adapter/dependency/license inventory, and artifact path/hash verification for every declared target on all baselines. No POC R evidence exists yet; a KNI packaging failure remains visible and blocks supported status. These additions do not replace or relax the existing POC B/E thresholds.
 
-The full matrices pass on Windows Release (36/36 in 118.39 seconds), Windows MSVC AddressSanitizer (36/36 in 134.93 seconds), Ubuntu Release (36/36 in 102.20 seconds), and Ubuntu Clang AddressSanitizer (36/36 in 101.97 seconds). The available macOS arm64 results remain the earlier 14-of-15 Release and AddressSanitizer runs, where `poc_b.worker_viewport` records approximately 14.2 FPS and 20.8 FPS and fails the unchanged throughput gate. macOS has not rerun the current repairs. MonoGame and KNI evidence remains separately reported, and KNI remains experimental; this ADR remains `Proposed`.
+Current evidence (2026-07-25): MonoGame and KNI pass the current Windows worker lifecycle, actual framework-device/render-target/readback, real scene snapshot rendering, graphics-thread retained-ID picking, persistent shared-memory publication/consumption, resize, input-driven pixel/pick displacement, and recovery suites. In combined POC B on Windows, MonoGame records **64.1 FPS / 15.4 ms median viewport-command-to-present** while KNI records **32.1 FPS / 32.4 ms**; independent POC E records **64.0 FPS / 15.5 ms** and **32.0 FPS / 31.0 ms** respectively. Both adapters clear the unchanged 1280x720 and 30 FPS gate. The timing values are transport evidence, not the still-open POC J Qt action-to-paint gate.
+
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45**, with ASan completing in **368.80 seconds**. The historical pre-DPE-ARCH-0008 Ubuntu matrices pass 36/36 in Release/Clang-ASan and recorded both adapters above 30 FPS; the expanded suite has not run there. Available macOS arm64 results remain the earlier 14-of-15 runs, where `poc_b.worker_viewport` records approximately 14.2 FPS and 20.8 FPS and fails the unchanged throughput gate. macOS has not rerun the current 64 Hz absolute pacing, reader, renderer, picking, and input repairs. MonoGame and KNI evidence remains separately reported, and KNI remains experimental; this ADR remains `Proposed`.
 
 ## Primary sources
 

@@ -1,11 +1,12 @@
 # Dragon Pixel Engine Functional Editor: Slice 1 Closure and Complete Slice 2
 
-> **Plan status:** In progress  
+> **Plan status:** Superseded for active tracking; all unfinished Slice 1/2 gates carried forward
 > **Architecture revision:** `DPE-ARCH-0006`  
 > **Started:** 2026-07-24  
 > **Last updated:** 2026-07-25  
 > **Repository:** `C:\Projects\Github\Engines\Dragon Pixel Engine`  
 > **External mirror:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine`
+> **Active master plan:** [Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan](Dragon%20Pixel%20Engine%20Slices%201-4%20Version%201.0%20Completion%20Plan.md)
 
 ## Objective
 
@@ -207,6 +208,10 @@ This 2026-07-25 checkpoint records the implemented Windows editor workflow and p
 | 2026-07-25 | In progress | Slice 1 and Slice 2 remain open for the prior macOS POC B failure, absent current macOS POCs E-H/sanitizer evidence, the complete prefab matrix, broader Qt/accessibility/designer scenarios, known implementation gaps, and the `EditorWindow` service split. ADRs remain Proposed and KNI remains experimental. |
 | 2026-07-25 | Documented | Added the mirrored Windows functional-editor acceptance audit and synchronized this execution record. Both changed document pairs pass pair-level SHA-256, strict UTF-8/no-BOM, LF-only, local-link, and whitespace checks. The repository-wide mirror validator remains an integration handoff while concurrent ADR, prototype-evidence, and Prompt/Result updates are temporarily unsynchronized. |
 | 2026-07-25 | Documented | Refreshed both mirrored records with the final Windows/Ubuntu matrices, targeted Ubuntu POC metrics, delivered cross-platform fixes, and corrected remaining gates. Scoped mirror, encoding, link, and whitespace verification passes; the repository-wide validator remains temporarily blocked by concurrent ADR, prototype-evidence, and compliance-inventory mirror updates outside this work item. |
+
+## Active-Tracking Handoff
+
+On 2026-07-25, `DPE-ARCH-0009` expanded the active boundary to all four slices and the full design-defined `1.0.0`. This plan remains the durable Slice 1/2 execution and evidence record, but it is no longer the active tracker. Every unchecked item and open failure below is carried forward without being marked complete, waived, or reduced.
 
 ## Completion Checklist
 

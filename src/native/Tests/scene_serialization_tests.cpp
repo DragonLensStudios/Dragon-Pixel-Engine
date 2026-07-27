@@ -346,11 +346,16 @@ void verify_history_validation_and_presets()
         "Compound preset transaction was not recorded as one dirty history item.");
     const auto* empty = value.find_entity(empty_id);
     const auto* sprite = value.find_entity(sprite_id);
+    const auto* sprite_component = sprite == nullptr ? nullptr
+        : find_component(*sprite, dragonpixel::metadata::builtin_component_ids::sprite);
     require(empty != nullptr && sprite != nullptr
             && find_component(*empty, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
             && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
-            && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::sprite) != nullptr,
+            && sprite_component != nullptr,
         "GameObject presets did not include mandatory Transform and preset components.");
+    require(sprite_component->properties.at("dpe.sprite.asset")
+                == "30000000-0000-4000-8000-000000000099",
+        "The transactional Sprite preset did not preserve its requested primitive/asset binding.");
 
     require(value.undo().succeeded && value.entities().empty() && !value.is_dirty() && value.can_redo(),
         "Undo did not restore the initial clean savepoint for a compound transaction.");
@@ -591,6 +596,298 @@ void verify_atomic_save(const std::filesystem::path& root)
     require(dragonpixel::serialization::recover_backup(target).succeeded, "Backup recovery failed.");
     require(read_file(target) == "first\n", "Backup did not retain the previous valid document.");
 }
+
+void verify_atomic_multi_document_save(const std::filesystem::path& root)
+{
+    const auto transaction_root = root / "transaction";
+    std::error_code error;
+    std::filesystem::remove_all(transaction_root, error);
+    std::filesystem::create_directories(transaction_root);
+    const auto scene_target = transaction_root / "sample.dpescene";
+    const auto tile_target = transaction_root / "sample.dpetilemap";
+    require(dragonpixel::serialization::save_utf8_atomic(scene_target, "scene-before\n").succeeded,
+        "Could not arrange the transaction scene fixture.");
+    require(dragonpixel::serialization::save_utf8_atomic(tile_target, "tile-before\n").succeeded,
+        "Could not arrange the transaction tile fixture.");
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> committed{
+        {scene_target, "scene-after\n"},
+        {tile_target, "tile-after\n"},
+    };
+    const auto committed_result =
+        dragonpixel::serialization::save_utf8_transaction(committed, transaction_root);
+    require(committed_result.succeeded,
+        "The valid multi-document save transaction failed: " + committed_result.error);
+    require(read_file(scene_target) == "scene-after\n" && read_file(tile_target) == "tile-after\n",
+        "The valid multi-document transaction did not commit every target.");
+    auto scene_backup = scene_target;
+    scene_backup += ".bak";
+    auto tile_backup = tile_target;
+    tile_backup += ".bak";
+    require(read_file(scene_backup) == "scene-before\n" && read_file(tile_backup) == "tile-before\n",
+        "A successful transaction did not retain exact bounded per-target recovery backups.");
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> rejected{
+        {scene_target, "scene-must-not-appear\n"},
+        {tile_target, "tile-must-not-appear\n"},
+    };
+    const auto failed = dragonpixel::serialization::save_utf8_transaction(
+        rejected,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::after_first_replace);
+    require(!failed.succeeded && failed.error.find("restored") != std::string::npos,
+        "The injected transaction failure did not report successful recovery.");
+    require(read_file(scene_target) == "scene-after\n" && read_file(tile_target) == "tile-after\n",
+        "The injected transaction failure leaked partially committed contents.");
+
+    const auto staging_failed = dragonpixel::serialization::save_utf8_transaction(
+        rejected,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::after_staging);
+    require(!staging_failed.succeeded
+            && read_file(scene_target) == "scene-after\n"
+            && read_file(tile_target) == "tile-after\n",
+        "The injected staging failure changed a transaction target.");
+
+    const auto new_target = transaction_root / "new-document.json";
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> rejected_creation{
+        {new_target, "new-must-not-appear\n"},
+        {scene_target, "scene-must-not-appear\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(
+                 rejected_creation,
+                 transaction_root,
+                 dragonpixel::serialization::transaction_save_fault::after_first_replace)
+                 .succeeded,
+        "The injected new-file transaction unexpectedly succeeded.");
+    require(!std::filesystem::exists(new_target) && read_file(scene_target) == "scene-after\n",
+        "Rollback did not remove a newly created transaction target.");
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> duplicate{
+        {scene_target, "one\n"},
+        {scene_target.parent_path() / "." / scene_target.filename(), "two\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(duplicate, transaction_root).succeeded
+            && read_file(scene_target) == "scene-after\n",
+        "A duplicate transaction target was accepted or changed the valid document.");
+
+    const auto artifacts = transaction_root / ".dragonpixel" / "Recovery" / "Transactions";
+    const auto artifact_count = [&] {
+        if (!std::filesystem::exists(artifacts))
+        {
+            return std::size_t{};
+        }
+        return static_cast<std::size_t>(std::distance(
+            std::filesystem::directory_iterator{artifacts}, std::filesystem::directory_iterator{}));
+    };
+    require(artifact_count() == 0, "Completed or synchronously recovered transactions left artifacts behind.");
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted{
+        {scene_target, "scene-interrupted\n"},
+        {tile_target, "tile-interrupted\n"},
+    };
+    const auto interrupted_result = dragonpixel::serialization::save_utf8_transaction(
+        interrupted,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::leave_interrupted_after_first_replace);
+    require(!interrupted_result.succeeded
+            && read_file(scene_target) == "scene-interrupted\n"
+            && read_file(tile_target) == "tile-after\n"
+            && artifact_count() == 1,
+        "The interruption seam did not leave the expected durable partial transaction.");
+    const auto transaction_directory = *std::filesystem::directory_iterator{artifacts};
+    const auto journal_path = transaction_directory.path() / "journal.json";
+    const auto journal = nlohmann::ordered_json::parse(read_file(journal_path));
+    require(journal.at("format") == "dpe.utf8-transaction-journal"
+            && journal.at("formatVersion") == 1
+            && journal.at("phase") == "prepared"
+            && journal.at("entries").at(0).at("preimageSha256")
+                == "1126ad4fc09a81f331c6493165cb804ca9a5673f0e0488fea2dc8a36c0498c9a"
+            && journal.at("entries").at(0).at("postimageSha256")
+                == "427b894085bbb69babd0503c4401731b8d7cf33a596d7be0b4b1ead9b277f07b",
+        "The interruption seam did not retain a versioned prepared journal with standard SHA-256 hashes.");
+
+    const auto protected_target = transaction_root / "protected-from-journal-cleanup.json";
+    require(dragonpixel::serialization::save_utf8_atomic(protected_target, "protected\n").succeeded,
+        "Could not arrange the forged-journal cleanup fixture.");
+    auto forged_journal = journal;
+    forged_journal["phase"] = "committed";
+    forged_journal["entries"][0]["staged"] = "protected-from-journal-cleanup.json";
+    require(dragonpixel::serialization::save_utf8_atomic(
+                journal_path, forged_journal.dump(2) + "\n").succeeded,
+        "Could not arrange the forged-journal cleanup fixture.");
+    require(!dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded
+            && read_file(protected_target) == "protected\n"
+            && read_file(scene_target) == "scene-interrupted\n"
+            && read_file(tile_target) == "tile-after\n",
+        "A structurally invalid committed journal deleted or changed a contained project file.");
+    require(std::filesystem::remove(journal_path)
+            && dragonpixel::serialization::recover_backup(journal_path).succeeded,
+        "Could not restore the valid prepared journal after the adversarial recovery check.");
+    require(dragonpixel::serialization::save_utf8_atomic(tile_target, "external-change\n").succeeded,
+        "Could not arrange the unexpected-target recovery fixture.");
+    require(!dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded
+            && read_file(scene_target) == "scene-interrupted\n"
+            && read_file(tile_target) == "external-change\n",
+        "Recovery overwrote an unexpected target or partially restored another target.");
+    require(dragonpixel::serialization::save_utf8_atomic(tile_target, "tile-after\n").succeeded,
+        "Could not restore the expected pre-image for startup recovery.");
+    require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
+        "Fresh startup-style transaction recovery failed.");
+    require(read_file(scene_target) == "scene-after\n"
+            && read_file(tile_target) == "tile-after\n"
+            && artifact_count() == 0,
+        "Startup-style recovery did not restore the exact transaction pre-images.");
+    require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded,
+        "Transaction recovery was not idempotent after cleanup.");
+
+    const auto interrupted_new_target = transaction_root / "interrupted-new.json";
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> interrupted_creation{
+        {interrupted_new_target, "created-before-interruption\n"},
+        {scene_target, "scene-must-not-appear\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(
+                 interrupted_creation,
+                 transaction_root,
+                 dragonpixel::serialization::transaction_save_fault::leave_interrupted_after_first_replace)
+                 .succeeded
+            && std::filesystem::exists(interrupted_new_target),
+        "The new-target interruption seam did not leave its recoverable created target.");
+    require(dragonpixel::serialization::recover_utf8_transactions(transaction_root).succeeded
+            && !std::filesystem::exists(interrupted_new_target)
+            && read_file(scene_target) == "scene-after\n",
+        "Startup recovery did not remove a transaction-created target or preserve the existing target.");
+
+    const auto collision_target = transaction_root / "collision.dpescene";
+    auto collision_backup = collision_target;
+    collision_backup += ".bak";
+    require(dragonpixel::serialization::save_utf8_atomic(collision_target, "collision-target-before\n").succeeded
+            && dragonpixel::serialization::save_utf8_atomic(collision_backup, "collision-backup-before\n").succeeded,
+        "Could not arrange the target/backup collision fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> artifact_collision{
+        {collision_target, "collision-target-after\n"},
+        {collision_backup, "collision-backup-after\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(artifact_collision, transaction_root).succeeded
+            && read_file(collision_target) == "collision-target-before\n"
+            && read_file(collision_backup) == "collision-backup-before\n",
+        "A target/recovery-backup intersection was accepted or damaged a pre-image.");
+
+    const auto hardlink_source = transaction_root / "hardlink-source.dpescene";
+    const auto hardlink_alias = transaction_root / "hardlink-alias.dpescene";
+    require(dragonpixel::serialization::save_utf8_atomic(hardlink_source, "hardlink-before\n").succeeded,
+        "Could not arrange the hard-link alias fixture.");
+    std::filesystem::create_hard_link(hardlink_source, hardlink_alias, error);
+    require(!error, "The baseline filesystem could not create the hard-link alias fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> hardlink_collision{
+        {hardlink_source, "hardlink-source-after\n"},
+        {hardlink_alias, "hardlink-alias-after\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(hardlink_collision, transaction_root).succeeded
+            && read_file(hardlink_source) == "hardlink-before\n"
+            && read_file(hardlink_alias) == "hardlink-before\n",
+        "Resolved hard-link aliases were accepted as different transaction targets.");
+
+    const auto symlink_alias = transaction_root / "symlink-alias.dpescene";
+    error.clear();
+    std::filesystem::create_symlink(hardlink_source, symlink_alias, error);
+    if (!error)
+    {
+        const std::vector<dragonpixel::serialization::utf8_transaction_write> symlink_collision{
+            {symlink_alias, "symlink-must-not-appear\n"},
+        };
+        require(!dragonpixel::serialization::save_utf8_transaction(symlink_collision, transaction_root).succeeded
+                && read_file(hardlink_source) == "hardlink-before\n",
+            "A symbolic-link transaction target was accepted or changed its referent.");
+        std::filesystem::remove(symlink_alias, error);
+    }
+
+#if defined(_WIN32) || defined(__APPLE__)
+    const auto upper_case_target = transaction_root / "CaseOnly.dpescene";
+    const auto lower_case_target = transaction_root / "caseonly.dpescene";
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> case_collision{
+        {upper_case_target, "upper\n"},
+        {lower_case_target, "lower\n"},
+    };
+    require(!dragonpixel::serialization::save_utf8_transaction(case_collision, transaction_root).succeeded
+            && !std::filesystem::exists(upper_case_target)
+            && !std::filesystem::exists(lower_case_target),
+        "Case-folded transaction aliases were accepted on a baseline case-folding platform.");
+#endif
+
+#if defined(_WIN32)
+    const auto temporary_artifact_count = [&] {
+        std::size_t count = 0;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator{transaction_root})
+        {
+            if (entry.path().filename().native().find(L".tmp-") != std::wstring::npos)
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_journal_retry{
+        {scene_target, "scene-after-transient-journal-retry\n"},
+        {tile_target, "tile-after-transient-journal-retry\n"},
+    };
+    const auto transient_journal_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_journal_retry,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::committed_journal_transient_sharing_violation);
+    require(transient_journal_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-journal-retry\n"
+            && read_file(tile_target) == "tile-after-transient-journal-retry\n"
+            && read_file(scene_backup) == "scene-after\n"
+            && read_file(tile_backup) == "tile-after\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "A transient committed-journal sharing violation did not retry to a clean commit: "
+            + transient_journal_result.error);
+
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> persistent_journal_retry{
+        {scene_target, "scene-must-not-survive-journal-exhaustion\n"},
+        {tile_target, "tile-must-not-survive-journal-exhaustion\n"},
+    };
+    const auto persistent_journal_result = dragonpixel::serialization::save_utf8_transaction(
+        persistent_journal_retry,
+        transaction_root,
+        dragonpixel::serialization::transaction_save_fault::committed_journal_persistent_sharing_violation);
+    constexpr std::string_view persistent_error_prefix =
+        "The committed marker could not be flushed; pre-images restored: "
+        "Could not publish the transaction journal: MoveFileExW failed with error 32 (";
+    require(!persistent_journal_result.succeeded
+            && persistent_journal_result.error.starts_with(persistent_error_prefix)
+            && persistent_journal_result.error.find(") after 7 attempt(s); target=\"") != std::string::npos
+            && persistent_journal_result.error.find("; staged=\"") != std::string::npos
+            && persistent_journal_result.error.ends_with("; backup=<none>.")
+            && persistent_journal_result.error.find("system message unavailable") == std::string::npos
+            && read_file(scene_target) == "scene-after-transient-journal-retry\n"
+            && read_file(tile_target) == "tile-after-transient-journal-retry\n"
+            && read_file(scene_backup) == "scene-after-transient-journal-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-journal-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Persistent committed-journal retry exhaustion did not preserve the exact error and rollback state: "
+            + persistent_journal_result.error);
+#endif
+
+    const std::u8string unicode_name = u8"unicode-\u573a\u666f-\u00f1.dpescene";
+    const auto unicode_target = transaction_root / std::filesystem::path{unicode_name};
+    require(dragonpixel::serialization::save_utf8_atomic(unicode_target, "unicode-before\n").succeeded,
+        "The atomic writer could not create a non-ASCII target.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> unicode_transaction{
+        {unicode_target, "unicode-after\n"},
+    };
+    const auto unicode_result =
+        dragonpixel::serialization::save_utf8_transaction(unicode_transaction, transaction_root);
+    require(unicode_result.succeeded && read_file(unicode_target) == "unicode-after\n",
+        "The transaction writer could not replace a non-ASCII target: " + unicode_result.error);
+    auto unicode_backup = unicode_target;
+    unicode_backup += ".bak";
+    require(read_file(unicode_backup) == "unicode-before\n",
+        "The non-ASCII target did not retain its exact recovery backup.");
+}
 }
 
 int main(int argc, char* argv[])
@@ -607,8 +904,9 @@ int main(int argc, char* argv[])
         verify_atomic_transactions();
         verify_prefab_instance_command_history();
         verify_atomic_save(generated_root);
+        verify_atomic_multi_document_save(generated_root);
         std::cout << "Native authoring core passed: validated command history, presets, hierarchy, duplication, "
-                     "subtree deletion, deterministic scene v3, opaque preservation, migration, atomic save, and recovery.\n";
+                     "subtree deletion, deterministic scene v3, opaque preservation, migration, atomic single/multi-document save, and recovery.\n";
         return 0;
     }
     catch (const std::exception& exception)

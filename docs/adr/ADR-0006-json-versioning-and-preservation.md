@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -26,12 +26,20 @@ Projects must be inspectable, diffable, deterministic across languages/platforms
 
 JSON is larger and slower than binary, and structural preservation may canonicalize formatting, but it provides reviewability, cross-runtime implementation, migration evidence, and data-loss resistance. Prefab fallbacks and multi-document journals add storage and implementation cost. In return, missing sources, newer sources, failed applies, and interrupted saves remain diagnosable and recoverable without silently flattening or losing authoring intent.
 
+DPE-ARCH-0009 extends deterministic JSON and preservation to `dpe.project` version 4, `dpe.asset` version 3, `dpe.project-template` version 1, `dpe.migration-plan` version 1, and release/update manifests version 1. Ordered project v1-v3 migrations preserve version-3 component roots while adding engine/toolchain/target/plugin/template data; asset migrations preserve stable IDs and unknown data while adding source ownership, hashes, importer/cache/dependency revisions, and recovery state. Template expansion, migration generation, and updates are hash-bound staged operations whose recovery, removal, or rollback manifests preserve the last valid project or installed version; newer incompatible documents remain read-only or fail without rewrite.
+
 ## Validation and acceptance gate
 
 POC C and domain tests must cover known, renamed, missing, newer/version-mismatched records, numeric precision, deterministic output, explicit migrations, atomic-save failure, and recovery behavior. POC F must additionally cover deterministic `dpe.scene` v2-to-v3 migration, canonical `dpe.prefab` v1 hashing, three-level nesting, duplicate sources, stable mappings, every override class, cycles/guards, missing/newer-source fallback, rebase conflicts, and injected failure at each multi-document staging/commit boundary.
 
-Current evidence (2026-07-25): Windows and Ubuntu now pass deterministic `dpe.scene` version 3 and `dpe.prefab` version 1 coverage in addition to older scene migration, known/renamed/missing/newer component records, enabled-state persistence, opaque preservation, atomic single-document recovery, and full project save/close/reopen. Current POC F tests exercise canonical prefab revisions, three-level materialization, duplicate nested sources, stable mappings, normalized overrides, cycles/guards, missing-source fallback, rebase, apply/revert, both unpack modes, and recoverable prefab writes. The full matrices pass on Windows Release (36/36 in 118.39 seconds), Windows MSVC AddressSanitizer (36/36 in 134.93 seconds), Ubuntu Release (36/36 in 102.20 seconds), and Ubuntu Clang AddressSanitizer (36/36 in 101.97 seconds).
+DPE-ARCH-0009 adds POCs M, N, O, R, and S: canonical bytes and hashes, explicit project v1-v3-to-v4 and asset v2-to-v3 fixtures, deterministic template IDs/outputs, migration-plan and removal manifests, update rollback, unknown/newer-version preservation, and interruption injection at staging and commit boundaries. No such evidence is accepted yet, and these additions leave the existing POC C/F gates unchanged.
 
-The current suite still leaves newer-source fallback, exhaustive migration fixtures, and injected failure at every multi-document staging/commit boundary open, and it has not run on macOS arm64. This ADR remains `Proposed`.
+Current evidence (2026-07-25): Windows and historical Ubuntu coverage passes deterministic `dpe.scene` version 3 and `dpe.prefab` version 1 behavior in addition to older scene migration, known/renamed/missing/newer component records, enabled-state persistence, opaque preservation, atomic single-document recovery, and full project save/close/reopen. Current Windows work also validates isolated candidate project-open, explicit project migration, multi-document scene/tile saves, and recovery without replacing the active session on failure.
+
+The native multi-file transaction now validates the complete target set, stages sibling files, records canonical target/staged/backup paths plus SHA-256 before/after identities, flushes a durable journal, commits, rolls back replaced targets on injected failures, and performs deterministic startup recovery. Hostile tests cover path aliasing, duplicate targets, tampered staged/backup bytes, malformed journal data, interruption boundaries, and exact preservation of the last valid documents. Prefab tests additionally cover missing, newer, and incompatible fallback, rebase, direct/indirect cycles, depth/entity guards, injected Apply failures, startup recovery, and complete unpack.
+
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; the sanitizer matrix completes in **368.80 seconds**. Historical Ubuntu Release/Clang-ASan evidence remains 36/36; the expanded suite has not run on Ubuntu or macOS.
+
+The gate still requires exhaustive migration fixtures and injected failure at every platform-specific commit boundary. Current path checks do not provide handle-pinned identity or hard-link detection throughout each transaction, so link-swap/enumeration races and metadata-preserving replacement semantics remain open hardening work. This ADR remains `Proposed`.
 
 Primary specification: [RFC 8259 JSON](https://www.rfc-editor.org/rfc/rfc8259).

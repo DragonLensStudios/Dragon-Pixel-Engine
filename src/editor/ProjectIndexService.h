@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
@@ -57,6 +58,7 @@ enum class ProjectIndexRootKind
 {
     scenes,
     assets,
+    components,
 };
 
 struct ProjectIndexRoot final
@@ -71,6 +73,8 @@ enum class ProjectIndexEntryKind
     scene,
     prefab,
     asset,
+    component_source,
+    component_manifest,
 };
 
 struct ProjectIndexEntry final
@@ -83,10 +87,18 @@ struct ProjectIndexEntry final
     int format_version{};
     QString asset_type;
     QString source;
+    QString source_ownership;
     QString resolved_source_path;
     QStringList dependencies;
     QJsonObject document;
     bool structurally_valid{true};
+};
+
+struct ProjectIndexMigration final
+{
+    int source_format_version{};
+    int target_format_version{};
+    QString summary;
 };
 
 struct ProjectIndexCandidate final
@@ -95,15 +107,24 @@ struct ProjectIndexCandidate final
     QString project_root;
     QString project_id;
     QString name;
+    // The on-disk version and the effective in-memory version are distinct so
+    // candidate inspection can apply deterministic migrations without writing.
+    int source_format_version{};
     int format_version{};
     QString startup_scene;
     QString startup_scene_path;
+    // The effective manifest preserves source extensions and is canonicalized
+    // for a later explicit staged migration owner.
+    QJsonObject manifest;
+    QVector<ProjectIndexMigration> migrations;
     QVector<ProjectIndexRoot> roots;
+    QStringList discovered_folders;
     QVector<ProjectIndexEntry> entries;
     QHash<QString, qsizetype> entry_indices_by_id;
 
     [[nodiscard]] const ProjectIndexEntry* find_by_id(const QString& id) const noexcept;
     [[nodiscard]] const ProjectIndexEntry* find_by_path(const QString& absolute_path) const noexcept;
+    [[nodiscard]] QByteArray canonical_manifest_json() const;
 };
 
 struct ProjectIndexBuildResult final
@@ -115,10 +136,29 @@ struct ProjectIndexBuildResult final
     [[nodiscard]] bool succeeded() const noexcept;
 };
 
+struct ProjectIndexLocation final
+{
+    QString manifest_path;
+    QString project_root;
+};
+
+struct ProjectIndexLocationValidation final
+{
+    std::optional<ProjectIndexLocation> location;
+    QList<ProjectIndexDiagnostic> diagnostics;
+
+    [[nodiscard]] bool succeeded() const noexcept;
+};
+
 // Builds a complete, detached candidate. The service only opens project files
 // for reading and never owns or mutates the editor's active project/session.
 class ProjectIndexService final
 {
 public:
+    // Validates the originally selected manifest spelling without following a
+    // link/reparse-point project root or manifest. Callers that may perform
+    // recovery writes must use these validated canonical outputs.
+    [[nodiscard]] ProjectIndexLocationValidation validate_location(
+        const QString& manifest_path) const;
     [[nodiscard]] ProjectIndexBuildResult build_candidate(const QString& manifest_path) const;
 };

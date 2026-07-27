@@ -1,10 +1,11 @@
 # Dragon Pixel Engine Slice 1 Complete Execution Plan
 
-> **Plan status:** In progress; macOS CI publication authorization pending
+> **Plan status:** Superseded for active tracking; unfinished Slice 1 gates carried forward
 > **Created:** 2026-07-24
 > **Architecture baseline:** `DPE-ARCH-0005`
 > **Goal:** Complete Slice 1: core, infrastructure, scaffolding, and core editor
 > **Repository:** `C:\Projects\Github\Engines\Dragon Pixel Engine`
+> **Active master plan:** [Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan](Dragon%20Pixel%20Engine%20Slices%201-4%20Version%201.0%20Completion%20Plan.md)
 
 ## Outcome
 
@@ -93,3 +94,7 @@ This plan preserves the full Slice 1 objective. Work is sequenced through the ar
 ## Completion Standard
 
 This plan is complete only when the Design Document's Slice 1 acceptance criteria and prototype gates are proven on Windows, macOS, and Linux. Partial editor visuals, Windows-only success, unexecuted CI definitions, skipped KNI evidence, or a passing subset of tests do not complete the goal.
+
+## Active-Tracking Handoff
+
+On 2026-07-25, `DPE-ARCH-0009` made the four-slice version 1.0 master plan the active tracker. This historical plan is not marked complete: its macOS, cross-platform, adapter, and acceptance blockers remain binding and are carried into the active master plan unchanged.

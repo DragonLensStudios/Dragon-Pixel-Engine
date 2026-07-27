@@ -3,6 +3,7 @@
 #include <dragonpixel/scene/scene.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -340,6 +341,180 @@ bool normalize_property_value(
             return false;
         }
         break;
+    case value_type::component_reference:
+        if (!value.is_object() || !value.contains("entityId") || !value.at("entityId").is_string()
+            || !value.contains("componentTypeId") || !value.at("componentTypeId").is_string())
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_COMPONENT_REFERENCE",
+                "The component reference requires entityId and componentTypeId strings.", context);
+            return false;
+        }
+        if (!core::uuid::parse(value.at("entityId").get<std::string>())
+            || !core::uuid::parse(value.at("componentTypeId").get<std::string>()))
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_COMPONENT_REFERENCE",
+                "The component reference contains an invalid stable ID.", context);
+            return false;
+        }
+        normalized = value;
+        return true;
+    case value_type::object:
+        if (!value.is_object())
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_STRUCTURED_PROPERTY",
+                "The structured property requires a JSON object.", context);
+            return false;
+        }
+        if (property.shape && !property.shape->object_type_id.empty())
+        {
+            const auto* object_type = validation_context.descriptors.find_object_type(
+                property.shape->object_type_id);
+            if (object_type == nullptr)
+            {
+                add_error(diagnostics, "DPE.COMMAND.UNKNOWN_OBJECT_TYPE",
+                    "The fixed object type is unavailable in the metadata registry.", context);
+                return false;
+            }
+            normalized = value;
+            for (const auto& child_property : object_type->properties)
+            {
+                auto child = value.find(child_property.property_id);
+                json child_value;
+                if (child != value.end())
+                {
+                    child_value = *child;
+                }
+                else if (!child_property.default_json.empty())
+                {
+                    child_value = json::parse(child_property.default_json, nullptr, false);
+                }
+                else
+                {
+                    child_value = nullptr;
+                }
+                json child_normalized;
+                if (!normalize_property_value(child_value, child_property, command_index, entity_id, type_id,
+                        validation_context, created_entities, child_normalized, diagnostics))
+                {
+                    return false;
+                }
+                normalized[child_property.property_id] = std::move(child_normalized);
+            }
+            return true;
+        }
+        normalized = value;
+        return true;
+    case value_type::dictionary:
+        if (!value.is_object())
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_STRUCTURED_PROPERTY",
+                "The dictionary property requires a JSON object.", context);
+            return false;
+        }
+        normalized = value;
+        if (property.shape && !property.shape->arguments.empty())
+        {
+            const auto& element_shape = property.shape->arguments.front();
+            metadata::property_descriptor element_property;
+            element_property.property_id = property.property_id + ".value";
+            element_property.display_name = property.display_name;
+            element_property.type = element_shape.type;
+            element_property.nullable = element_shape.nullable;
+            element_property.reference_filter = element_shape.reference_filter;
+            element_property.shape = element_shape;
+            for (auto iterator = value.begin(); iterator != value.end(); ++iterator)
+            {
+                json child;
+                if (!normalize_property_value(iterator.value(), element_property, command_index, entity_id, type_id,
+                        validation_context, created_entities, child, diagnostics))
+                {
+                    return false;
+                }
+                normalized[iterator.key()] = std::move(child);
+            }
+        }
+        return true;
+    case value_type::list:
+        if (!value.is_array())
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_STRUCTURED_PROPERTY",
+                "The list property requires a JSON array.", context);
+            return false;
+        }
+        normalized = value;
+        if (property.shape && !property.shape->arguments.empty())
+        {
+            const auto& element_shape = property.shape->arguments.front();
+            metadata::property_descriptor element_property;
+            element_property.property_id = property.property_id + ".element";
+            element_property.display_name = property.display_name;
+            element_property.type = element_shape.type;
+            element_property.nullable = element_shape.nullable;
+            element_property.reference_filter = element_shape.reference_filter;
+            element_property.shape = element_shape;
+            for (std::size_t index = 0; index < value.size(); ++index)
+            {
+                json child;
+                if (!normalize_property_value(value.at(index), element_property, command_index, entity_id, type_id,
+                        validation_context, created_entities, child, diagnostics))
+                {
+                    return false;
+                }
+                normalized[index] = std::move(child);
+            }
+        }
+        return true;
+    case value_type::polymorphic_object:
+        if (!value.is_object() || !value.contains("typeId") || !value.at("typeId").is_string()
+            || !value.contains("schemaVersion") || !value.at("schemaVersion").is_number_integer()
+            || value.at("schemaVersion").get<std::int64_t>() <= 0
+            || !value.contains("properties") || !value.at("properties").is_object())
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_POLYMORPHIC_PROPERTY",
+                "The polymorphic property requires typeId, schemaVersion, and properties.", context);
+            return false;
+        }
+        if (const auto* object_type = validation_context.descriptors.find_object_type(
+                value.at("typeId").get<std::string>());
+            object_type == nullptr
+            || (property.shape && !property.shape->contract_id.empty()
+                && std::find(object_type->contracts.begin(), object_type->contracts.end(), property.shape->contract_id)
+                    == object_type->contracts.end()))
+        {
+            add_error(diagnostics, "DPE.COMMAND.INVALID_POLYMORPHIC_TYPE",
+                "The selected object type is unavailable or does not implement the required contract.", context);
+            return false;
+        }
+        const auto* object_type = validation_context.descriptors.find_object_type(
+            value.at("typeId").get<std::string>());
+        normalized = value;
+        auto normalized_properties = value.at("properties");
+        for (const auto& child_property : object_type->properties)
+        {
+            const auto child = value.at("properties").find(child_property.property_id);
+            json child_value;
+            if (child != value.at("properties").end())
+            {
+                child_value = *child;
+            }
+            else if (!child_property.default_json.empty())
+            {
+                child_value = json::parse(child_property.default_json, nullptr, false);
+            }
+            else
+            {
+                child_value = nullptr;
+            }
+            json child_normalized;
+            if (!normalize_property_value(child_value, child_property, command_index, entity_id, type_id,
+                    validation_context, created_entities, child_normalized, diagnostics))
+            {
+                return false;
+            }
+            normalized_properties[child_property.property_id] = std::move(child_normalized);
+        }
+        normalized["properties"] = std::move(normalized_properties);
+        return true;
     }
 
     const auto& string_value = value.get_ref<const std::string&>();
@@ -547,6 +722,13 @@ command_validation_result validate_and_normalize_commands(
                 {
                     return;
                 }
+                if (!existing && !descriptor->addable)
+                {
+                    add_error(result.diagnostics, "DPE.COMMAND.COMPONENT_NOT_ADDABLE",
+                        "Component policy does not allow adding this component explicitly.",
+                        command_context(command_index, concrete.entity_id, concrete.component.type_id));
+                    return;
+                }
                 auto normalized = normalize_upsert(
                     concrete,
                     command_index,
@@ -563,7 +745,8 @@ command_validation_result validate_and_normalize_commands(
                     });
                 }
             }
-            else if constexpr (std::is_same_v<command_type, set_component_property_command>)
+            else if constexpr (std::is_same_v<command_type, set_component_property_command>
+                || std::is_same_v<command_type, set_component_property_path_command>)
             {
                 const auto* descriptor = context.descriptors.find(concrete.type_id);
                 auto& component = projected_component(projected, context, concrete.entity_id, concrete.type_id);
@@ -600,9 +783,81 @@ command_validation_result validate_and_normalize_commands(
                         command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
                     return;
                 }
+                json candidate_value = concrete.value;
+                if constexpr (std::is_same_v<command_type, set_component_property_path_command>)
+                {
+                    if (concrete.path.empty())
+                    {
+                        add_error(result.diagnostics, "DPE.COMMAND.EMPTY_PROPERTY_PATH",
+                            "A nested property command requires at least one path segment.",
+                            command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
+                        return;
+                    }
+                    const auto current = component->properties.find(concrete.property_id);
+                    if (current == component->properties.end())
+                    {
+                        add_error(result.diagnostics, "DPE.COMMAND.MISSING_PROPERTY_ROOT",
+                            "The nested property root is absent from the component record.",
+                            command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
+                        return;
+                    }
+                    candidate_value = *current;
+                    json* cursor = &candidate_value;
+                    for (std::size_t path_index = 0; path_index < concrete.path.size(); ++path_index)
+                    {
+                        const auto& segment = concrete.path[path_index];
+                        const auto is_leaf = path_index + 1 == concrete.path.size();
+                        if (cursor->is_object())
+                        {
+                            if (!cursor->contains(segment) && !is_leaf)
+                            {
+                                add_error(result.diagnostics, "DPE.COMMAND.INVALID_PROPERTY_PATH",
+                                    "A nested object path segment does not exist.",
+                                    command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
+                                return;
+                            }
+                            if (is_leaf)
+                            {
+                                (*cursor)[segment] = concrete.value;
+                            }
+                            else
+                            {
+                                cursor = &(*cursor)[segment];
+                            }
+                        }
+                        else if (cursor->is_array())
+                        {
+                            std::size_t parsed{};
+                            const auto [end, error] = std::from_chars(
+                                segment.data(), segment.data() + segment.size(), parsed);
+                            if (error != std::errc{} || end != segment.data() + segment.size() || parsed >= cursor->size())
+                            {
+                                add_error(result.diagnostics, "DPE.COMMAND.INVALID_PROPERTY_PATH",
+                                    "A nested list path index is invalid.",
+                                    command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
+                                return;
+                            }
+                            if (is_leaf)
+                            {
+                                (*cursor)[parsed] = concrete.value;
+                            }
+                            else
+                            {
+                                cursor = &(*cursor)[parsed];
+                            }
+                        }
+                        else
+                        {
+                            add_error(result.diagnostics, "DPE.COMMAND.INVALID_PROPERTY_PATH",
+                                "A nested property path crossed a scalar or null value.",
+                                command_context(command_index, concrete.entity_id, concrete.type_id, concrete.property_id));
+                            return;
+                        }
+                    }
+                }
                 json normalized;
                 if (!normalize_property_value(
-                        concrete.value,
+                        candidate_value,
                         *property,
                         command_index,
                         concrete.entity_id,
@@ -638,6 +893,16 @@ command_validation_result validate_and_normalize_commands(
                         result.diagnostics))
                 {
                     return;
+                }
+                if constexpr (std::is_same_v<command_type, remove_component_command>)
+                {
+                    if (!descriptor->removable)
+                    {
+                        add_error(result.diagnostics, "DPE.COMMAND.COMPONENT_NOT_REMOVABLE",
+                            "Component policy does not allow removing this component.",
+                            command_context(command_index, concrete.entity_id, concrete.type_id));
+                        return;
+                    }
                 }
                 result.commands.push_back(value);
                 if constexpr (std::is_same_v<command_type, remove_component_command>)

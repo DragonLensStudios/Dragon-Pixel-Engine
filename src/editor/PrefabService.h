@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,16 @@ struct PrefabApplyLevel final
 {
     QString label;
     std::vector<dragonpixel::core::uuid> nesting_path;
+};
+
+enum class PrefabApplyFault
+{
+    none,
+    backup_write,
+    recovery_marker_write,
+    source_write,
+    scene_transaction,
+    scene_transaction_and_rollback_write,
 };
 
 class PrefabService final
@@ -84,7 +95,8 @@ public:
     [[nodiscard]] PrefabOperationResult apply(
         dragonpixel::scene::scene& current_scene,
         const dragonpixel::core::uuid& selected_entity_id,
-        std::span<const dragonpixel::core::uuid> nesting_path);
+        std::span<const dragonpixel::core::uuid> nesting_path,
+        PrefabApplyFault injected_fault = PrefabApplyFault::none);
     [[nodiscard]] PrefabOperationResult revert_selected(
         dragonpixel::scene::scene& current_scene,
         const dragonpixel::core::uuid& selected_entity_id);
@@ -111,6 +123,7 @@ private:
         std::size_t instance_index{};
         dragonpixel::core::uuid instance_id;
         dragonpixel::core::uuid source_asset_id;
+        std::string source_revision;
         dragonpixel::core::uuid source_entity_id;
         std::vector<dragonpixel::core::uuid> nested_path;
         bool root{};
@@ -139,7 +152,7 @@ private:
         const dragonpixel::prefab::instance_record& value,
         const nlohmann::ordered_json* preserve = nullptr) const;
     void rebuild_ownership(const nlohmann::ordered_json& instances);
-    void allocate_mappings(
+    [[nodiscard]] bool allocate_mappings(
         const dragonpixel::prefab::document& source_document,
         std::vector<dragonpixel::core::uuid> path,
         dragonpixel::prefab::instance_record& instance,

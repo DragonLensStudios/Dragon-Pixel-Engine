@@ -35,18 +35,7 @@ target_compile_definitions(dpe_poc_b_viewer PRIVATE
 )
 add_dependencies(dpe_poc_b_viewer dpe_poc_b_managed)
 
-if(MSVC)
-    target_compile_options(dpe_poc_b_viewer PRIVATE /W4 /WX /permissive- /EHsc)
-    if(DPE_ENABLE_ASAN)
-        target_compile_options(dpe_poc_b_viewer PRIVATE /fsanitize=address /Zi)
-    endif()
-else()
-    target_compile_options(dpe_poc_b_viewer PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    if(DPE_ENABLE_ASAN)
-        target_compile_options(dpe_poc_b_viewer PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-        target_link_options(dpe_poc_b_viewer PRIVATE -fsanitize=address)
-    endif()
-endif()
+dpe_configure_native_target(dpe_poc_b_viewer)
 
 add_test(
     NAME poc_b.worker_viewport

@@ -43,6 +43,10 @@ ModelFixture make_fixture()
             ProjectIndexRootKind::assets,
             QStringLiteral("Assets"),
             QDir{candidate.project_root}.filePath(QStringLiteral("Assets"))},
+        ProjectIndexRoot{
+            ProjectIndexRootKind::components,
+            QStringLiteral("Components"),
+            QDir{candidate.project_root}.filePath(QStringLiteral("Components"))},
     };
 
     ProjectIndexEntry sprite;
@@ -84,9 +88,23 @@ ModelFixture make_fixture()
     mesh.source = QStringLiteral("generated://cube");
     mesh.document = {{QStringLiteral("name"), QStringLiteral("Cube")}};
 
+    ProjectIndexEntry script;
+    script.kind = ProjectIndexEntryKind::component_source;
+    script.display_name = QStringLiteral("PlayerController.cs");
+    script.logical_path = QStringLiteral("Components/CSharp/PlayerController.cs");
+    script.absolute_path = QDir{candidate.project_root}.filePath(script.logical_path);
+    script.asset_type = QStringLiteral("C# Script");
+
+    ProjectIndexEntry component_manifest;
+    component_manifest.kind = ProjectIndexEntryKind::component_manifest;
+    component_manifest.display_name = QStringLiteral("Gameplay.dpecomponents");
+    component_manifest.logical_path = QStringLiteral("Components/Gameplay.dpecomponents");
+    component_manifest.absolute_path = QDir{candidate.project_root}.filePath(
+        component_manifest.logical_path);
+
     // Deliberately non-sorted input proves the model does not inherit caller
     // insertion order.
-    candidate.entries = {scene, sprite, mesh, prefab};
+    candidate.entries = {scene, script, sprite, component_manifest, mesh, prefab};
     return fixture;
 }
 
@@ -128,7 +146,9 @@ int entry_count(const QAbstractItemModel& model, const QModelIndex& parent = {})
         const auto index = model.index(row, 0, parent);
         const auto kind = ProjectModel::item_kind(index);
         if (kind == ProjectItemKind::scene || kind == ProjectItemKind::prefab
-            || kind == ProjectItemKind::asset)
+            || kind == ProjectItemKind::asset
+            || kind == ProjectItemKind::component_source
+            || kind == ProjectItemKind::component_manifest)
         {
             ++result;
         }
@@ -158,6 +178,7 @@ private slots:
         QCOMPARE(child_names(model, project), QStringList({
             QStringLiteral("DragonPixelProject.json"),
             QStringLiteral("Assets"),
+            QStringLiteral("Components"),
             QStringLiteral("Scenes"),
         }));
         const auto assets = find_logical_path(model, QStringLiteral("Assets"));
@@ -167,11 +188,19 @@ private slots:
             QStringLiteral("Cube"),
             QStringLiteral("Dragon"),
         }));
-        QCOMPARE(entry_count(model), 4);
+        QCOMPARE(entry_count(model), 6);
         QVERIFY(find_logical_path(model, QStringLiteral("Scenes/Main.dpescene")).isValid());
         QVERIFY(find_logical_path(
             model,
             QStringLiteral("Assets/Prefabs/Actor.dpeprefab")).isValid());
+        const auto script = find_logical_path(
+            model,
+            QStringLiteral("Components/CSharp/PlayerController.cs"));
+        QVERIFY(script.isValid());
+        QCOMPARE(ProjectModel::item_kind(script), ProjectItemKind::component_source);
+        QCOMPARE(
+            script.siblingAtColumn(static_cast<int>(ProjectColumn::kind_type)).data().toString(),
+            QStringLiteral("Component Source / C# Script"));
     }
 
     void exposes_entry_roles_columns_tooltips_and_diagnostic_status()
@@ -311,7 +340,7 @@ private slots:
         model.rebuild(result);
         ProjectFilterProxyModel proxy;
         proxy.setSourceModel(&model);
-        QCOMPARE(entry_count(proxy), 4);
+        QCOMPARE(entry_count(proxy), 6);
 
         proxy.set_type_filter(QStringLiteral(" SCENE "));
         QCOMPARE(proxy.type_filter(), QStringLiteral("scene"));
@@ -325,6 +354,13 @@ private slots:
         QVERIFY(find_logical_path(proxy, QStringLiteral("Assets")).isValid());
         QVERIFY(!find_logical_path(proxy, QStringLiteral("Assets/Prefabs")).isValid());
         QVERIFY(!find_logical_path(proxy, QStringLiteral("Scenes")).isValid());
+
+        proxy.set_type_filter(QStringLiteral("component"));
+        QCOMPARE(entry_count(proxy), 2);
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Components/CSharp/PlayerController.cs")).isValid());
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Components/Gameplay.dpecomponents")).isValid());
 
         proxy.clear_type_filter();
         proxy.set_status_filter(QStringLiteral("ERROR"));
@@ -345,7 +381,7 @@ private slots:
             proxy,
             QStringLiteral("Assets/Prefabs/Actor.dpeprefab")).isValid());
         proxy.set_status_filter(QStringLiteral("ready"));
-        QCOMPARE(entry_count(proxy), 1);
+        QCOMPARE(entry_count(proxy), 3);
         QVERIFY(find_logical_path(
             proxy,
             QStringLiteral("Assets/Cube.mesh.dpeasset")).isValid());
@@ -377,7 +413,7 @@ private slots:
         proxy.clear_search_text();
         proxy.clear_type_filter();
         proxy.clear_status_filter();
-        QCOMPARE(entry_count(proxy), 4);
+        QCOMPARE(entry_count(proxy), 6);
     }
 };
 

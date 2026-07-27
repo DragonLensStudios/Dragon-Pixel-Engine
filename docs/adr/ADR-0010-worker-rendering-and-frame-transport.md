@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -29,6 +29,8 @@ The additive control surface includes:
 | `viewport.setSelection` | Apply revisioned selection/overlay state |
 | `viewport.input` | Send runtime or camera input with a correlation token; authoring edits still use ADR-0008 commands/snapshots |
 | `viewport.pick` | Read one entity ID from the retained ID target for a specified displayed frame/revision |
+
+Every viewport method carries a negotiated stable view ID. Preview owns concurrent `scene` and `game` outputs with independent dimensions, camera source, shared-memory mapping, revisions, and retained picking target. Play publishes only `game`; Stop rebinds Game to Preview without replacing the Scene output.
 | `runtime.play` / `pause` / `resume` / `stop` | Control the isolated runtime lifecycle |
 | `runtime.simulatePreview` | Start/stop the disposable Edit-mode simulation world |
 | `diagnostics.subscribe` / `unsubscribe` | Stream structured diagnostics and counters |
@@ -85,7 +87,7 @@ Input-to-present latency is measured in the editor's monotonic clock to avoid cr
 1. The Qt viewport records `t_input` when it handles the real input event and assigns a correlation ID.
 2. The input, camera update, or authoring-preview revision travels through the normal production path.
 3. The worker tags the first frame whose rendered pixels include it.
-4. The Scene View records `t_present` when the Qt paint/presentation path completes for that tagged frame.
+4. The focused Game View records `t_present` when the Qt paint/presentation path completes for that tagged frame.
 5. The sample is `t_present - t_input`.
 
 Control-response time, worker render time, memory-copy time, and frame-arrival time are reported separately but cannot substitute for this sample. Unreflected inputs, timeouts, dropped correlated frames, warm-up policy, sample count, median, tail latency, FPS, dropped frames, and late deadlines are all included in evidence.
@@ -113,13 +115,13 @@ POC B must prove version negotiation, both local transports, cancellation, absol
 
 POC E must prove that real device-produced pixels and ID-buffer picks change correctly after add, move, color, enable/disable, delete, camera, light, snapshot reload, and resize operations through both adapters. It must also prove old-revision frames/picks are rejected and diagnostics name the real adapter/device/backend. No synthetic path may satisfy these assertions.
 
-Current Windows and Ubuntu evidence (2026-07-25): production shared frames are the actual MonoGame/KNI render-target readbacks. Header version 2 carries snapshot/camera/selection/command/input/frame revisions; atomic reload, resize, stale pick rejection, absolute frame deadlines, independently executed adapters, adapter/device/backend diagnostics, and forced worker recovery are automated. Picking is queued to the owning graphics thread and reads the actual ID render target through one-pixel `GetData`. The conformance reader keeps one memory mapping, uses seqlock-validated header-only lifecycle/FPS observation, derives FPS from producer publish timestamps, and still hashes complete BGRA8 payloads for pixel-mutation assertions.
+Current Windows and historical Ubuntu evidence (2026-07-25): production shared frames are the actual MonoGame/KNI render-target readbacks. Header version 2 carries snapshot/camera/selection/command/input/frame revisions; atomic reload, resize, stale pick rejection, absolute frame deadlines, independently executed adapters, adapter/device/backend diagnostics, and forced worker recovery are automated. Picking is queued to the owning graphics thread and reads the retained real ID render target through one-pixel `GetData`; visually identical frames preserve that target, while resize, snapshot, camera, rotation, or input movement invalidates it. The conformance reader keeps one mapping, retries transient odd/changed seqlock sequences for a bounded interval, derives FPS from producer timestamps, and hashes complete BGRA8 payloads for pixel-mutation assertions.
 
-Windows combined POC B measured MonoGame at **60.0 FPS / 15.6 ms median input-to-present / 466.4 ms control / 683.2 ms recovery / 3.1 ms render-readback / 0.1 ms publish** and KNI at **40.0 FPS / 46.6 ms / 153.5 ms / 757.7 ms / 23.3 ms / 0.1 ms**. Independent POC E measured MonoGame at **60.1 FPS / 15.7 ms / 399.7 ms / 638.4 ms / 2.6 ms / 0.1 ms** and KNI at **40.7 FPS / 46.7 ms / 152.4 ms / 728.5 ms / 23.1 ms / 0.1 ms**.
+The current Windows worker uses a **64 Hz absolute origin-derived deadline lattice**. This is an implementation pacing target, not a lower acceptance threshold: a synchronous KNI render/readback of roughly 22–24 ms skips one lattice slot and presents near 32 FPS, leaving measurable margin above the unchanged 30 FPS gate. The final combined POC B run measured MonoGame at **64.1 FPS / 15.4 ms median viewport-command-to-present / 566.3 ms control / 933.0 ms recovery / 2.5 ms render-readback / 0.1 ms publish** and KNI at **32.1 FPS / 32.4 ms / 253.2 ms / 1213.4 ms / 22.6 ms / 0.1 ms**. Independent POC E measured MonoGame at **64.0 FPS / 15.5 ms / 601.7 ms / 1084.2 ms / 2.9 ms / 0.2 ms** and KNI at **32.0 FPS / 31.0 ms / 245.2 ms / 778.4 ms / 22.2 ms / 0.1 ms**.
 
-Ubuntu combined POC B measured MonoGame at **61.7 FPS / 16.3 ms / 306.2 ms / 492.1 ms / 8.5 ms / 0.2 ms** and KNI at **32.3 FPS / 55.1 ms / 315.1 ms / 534.4 ms / 26.6 ms / 0.2 ms**. Independent POC E measured MonoGame at **61.6 FPS / 16.4 ms / 349.1 ms / 487.6 ms / 6.8 ms / 0.1 ms** and KNI at **33.3 FPS / 55.2 ms / 353.1 ms / 544.7 ms / 28.0 ms / 0.1 ms**. All results are at 1280x720 and meet the unchanged 30 FPS and 100 ms median gates. Control and recovery diagnostics remain separate from correlated latency.
+These Windows medians and the historical Ubuntu values remain **viewport-command-to-present**, not action-to-Qt-paint acceptance evidence. Ubuntu combined POC B measured MonoGame at **61.7 FPS / 16.3 ms / 306.2 ms / 492.1 ms / 8.5 ms / 0.2 ms** and KNI at **32.3 FPS / 55.1 ms / 315.1 ms / 534.4 ms / 26.6 ms / 0.2 ms**. Independent POC E measured MonoGame at **61.6 FPS / 16.4 ms / 349.1 ms / 487.6 ms / 6.8 ms / 0.1 ms** and KNI at **33.3 FPS / 55.2 ms / 353.1 ms / 544.7 ms / 28.0 ms / 0.1 ms**. Control and recovery diagnostics remain separate lifecycle measurements.
 
-The complete Windows Release matrix passed **36/36 tests in 118.39 seconds**, and MSVC AddressSanitizer passed **36/36 tests in 134.93 seconds**. Ubuntu Release passed **36/36 tests in 102.20 seconds**, and Clang AddressSanitizer passed **36/36 tests in 101.97 seconds**. Position-independent native code and sanitizer-runtime propagation through managed workers/native-host children are included in the Ubuntu proof. Manual Qt QA against the disposable `out/dev/Slice1Sample` copy confirmed actual MonoGame and KNI preview/play output, plus KNI pause/stop, without relying on a synthetic fallback.
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. POC J now proves a full-state `InputMotion2D` action changes real pixels and retained-ID picks through both adapters, validates neutral/restart behavior, and rejects stale, duplicate, future, or malformed correlations without partial state. It still does not measure the aggregate Qt event-to-first-reflecting-Qt-paint latency distribution. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices passed **36/36** in 102.20 and 101.97 seconds respectively.
 
 The available macOS arm64 Release and AddressSanitizer matrices still pass only 14 of 15 tests. `poc_b.worker_viewport` fails at 1280x720; the two recorded failing runs are approximately 14.2 FPS and 20.8 FPS, both below 30 FPS. The old failure has not been rerun successfully with the corrected transport/reader/picking implementation. The failure remains blocking, thresholds are unchanged, KNI remains experimental, and this ADR remains `Proposed`.
 

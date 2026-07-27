@@ -16,6 +16,8 @@ internal static class Program
     private const int LatencySampleCount = 21;
     private const string SpriteId = "e75d033b-bba0-4f8f-8f54-c7a1e6990aef";
     private const string CubeId = "3466ea8a-d7d4-458c-83ae-cc33291e5c26";
+    private const string RuntimeSpriteAssetId = "4dc81fa5-c0f7-4dfd-8610-bcaffb053bcf";
+    private const string CyanPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAQSURBVBhXY2D4//8/GMMYAGWsC/VzMJBzAAAAAElFTkSuQmCC";
 
     private static async Task<int> Main(string[] args)
     {
@@ -85,6 +87,7 @@ internal static class Program
         {
             Directory.CreateDirectory(runDirectory);
             await VerifyWorkerAsync(expectedAdapter, workerDll, runDirectory, nativeLibrary);
+            await VerifyInputComponentAsync(expectedAdapter, workerDll, runDirectory, nativeLibrary);
             await VerifyV1CompatibilityAsync(expectedAdapter, workerDll, runDirectory, nativeLibrary);
             return new AdapterRun(expectedAdapter, null);
         }
@@ -93,6 +96,252 @@ internal static class Program
             Console.Error.WriteLine($"{expectedAdapter} FAILED:{Environment.NewLine}{exception}");
             return new AdapterRun(expectedAdapter, exception);
         }
+    }
+
+    private static async Task VerifyInputComponentAsync(
+        string expectedAdapter,
+        string workerDll,
+        string runDirectory,
+        string nativeLibrary)
+    {
+        var frameFile = Path.Combine(runDirectory, "input-component-v2.frame");
+        File.Delete(frameFile);
+        var snapshots = CreateSnapshots(runDirectory);
+        using var worker = StartWorker(
+            workerDll,
+            frameFile,
+            nativeLibrary,
+            frameVersion: 2,
+            width: 1280,
+            height: 720,
+            session: "play");
+
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "runtimeInput",
+                new JsonObject
+                {
+                    ["inputRevision"] = 1,
+                    ["actions"] = new JsonObject { ["move.x"] = 1.0 },
+                }),
+            "-32013",
+            "A runtimeInput request was accepted before the mandatory handshake.");
+        var handshake = await worker.CallAsync(
+            "handshake",
+            new JsonObject { ["protocolVersion"] = 2 });
+        Assert(handshake["adapter"]!.GetValue<string>() == expectedAdapter,
+            "Input proof worker reported the wrong adapter.");
+        Assert(handshake["runtimeInput"]!.GetValue<bool>(),
+            "Input proof worker did not negotiate runtimeInput.");
+        await worker.CallAsync("initialize");
+        await worker.CallAsync(
+            "setViewport",
+            new JsonObject
+            {
+                ["width"] = 1280,
+                ["height"] = 720,
+                ["cameraRevision"] = 1,
+                ["commandRevision"] = 1,
+                ["camera"] = OrthographicCamera(),
+            });
+        await LoadSnapshotAsync(worker, snapshots[14], 14, reload: false);
+        await worker.CallAsync("play");
+
+        var viewportAcknowledgement = await worker.CallAsync(
+            "viewportInput",
+            new JsonObject
+            {
+                ["inputRevision"] = 1,
+                ["width"] = 1280,
+                ["height"] = 720,
+                ["cameraRevision"] = 1,
+                ["commandRevision"] = 2,
+            });
+        Assert(viewportAcknowledgement["inputRevision"]!.GetValue<long>() == 1,
+            "Viewport command revision was not acknowledged independently.");
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "viewportInput",
+                new JsonObject
+                {
+                    ["inputRevision"] = 2,
+                    ["width"] = 640,
+                    ["height"] = 360,
+                    ["cameraRevision"] = 1,
+                    ["commandRevision"] = 1,
+                }),
+            "-32602",
+            "A regressing viewport command was accepted.");
+        var viewportAfterRejection = await worker.CallAsync("setViewport");
+        Assert(viewportAfterRejection["width"]!.GetValue<int>() == 1280
+            && viewportAfterRejection["height"]!.GetValue<int>() == 720
+            && viewportAfterRejection["commandRevision"]!.GetValue<long>() == 2,
+            "Rejected viewportInput partially mutated viewport state.");
+        viewportAcknowledgement = await worker.CallAsync(
+            "viewportInput",
+            new JsonObject
+            {
+                ["inputRevision"] = 2,
+                ["width"] = 1280,
+                ["height"] = 720,
+                ["cameraRevision"] = 1,
+                ["commandRevision"] = 3,
+            });
+        Assert(viewportAcknowledgement["inputRevision"]!.GetValue<long>() == 2,
+            "Rejected viewportInput consumed its viewport command revision.");
+        var mixedRevisionDiagnostics = await worker.CallAsync("diagnostics");
+        Assert(mixedRevisionDiagnostics["viewportInputRevision"]!.GetValue<long>() == 2
+            && mixedRevisionDiagnostics["inputRevision"]!.GetValue<long>() == 0,
+            "Viewport command input contaminated the runtime action revision stream.");
+
+        var baseline = await ReadFrameAfterAsync(frameFile, 0, 14, TimeSpan.FromSeconds(8));
+        Assert(baseline.InputRevision == 0, "Input proof did not start from an uncredited neutral state.");
+        await AssertPickAsync(worker, 496, 360, baseline.FrameRevision, SpriteId);
+
+        var ignoredAcknowledgement = await worker.CallAsync(
+            "runtimeInput",
+            RuntimeInputSnapshot(
+                inputRevision: 1,
+                lookX: 1,
+                lookXPressCount: 1));
+        Assert(ignoredAcknowledgement["inputRevision"]!.GetValue<long>() == 1,
+            "Non-applicable input revision was not acknowledged.");
+        var ignoredFrame = await ReadFrameAfterAsync(
+            frameFile,
+            baseline.Sequence,
+            14,
+            TimeSpan.FromSeconds(4));
+        var ignoredStableFrame = await ReadFrameAfterAsync(
+            frameFile,
+            ignoredFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4));
+        Assert(ignoredFrame.InputRevision == 0 && ignoredStableFrame.InputRevision == 0,
+            "A non-applicable input revision was falsely credited to rendered frames.");
+        Assert(ignoredFrame.PixelSha256 == baseline.PixelSha256
+            && ignoredStableFrame.PixelSha256 == baseline.PixelSha256,
+            "A non-applicable input action changed device-produced pixels.");
+
+        var pressAcknowledgement = await worker.CallAsync(
+            "runtimeInput",
+            RuntimeInputSnapshot(
+                inputRevision: 2,
+                moveX: 1,
+                moveXPressCount: 1,
+                lookX: 1,
+                lookXPressCount: 1));
+        Assert(pressAcknowledgement["inputRevision"]!.GetValue<long>() == 2,
+            "Applicable input action revision was not acknowledged.");
+        var moved = await ReadFrameAfterAsync(
+            frameFile,
+            ignoredStableFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4),
+            minimumInputRevision: 2);
+        Assert(moved.InputRevision == 2,
+            "The press revision advanced before applicable InputMotion behavior was reflected.");
+        Assert(moved.PixelSha256 != ignoredStableFrame.PixelSha256,
+            "InputMotion2D did not change device-produced pixels before crediting move.x input.");
+
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "runtimeInput",
+                RuntimeInputSnapshot(
+                    inputRevision: 3,
+                    moveX: 1,
+                    moveXPressCount: 2,
+                    lookX: 1,
+                    lookXPressCount: 1)),
+            "-32602",
+            "runtimeInput accepted inconsistent edge counters.");
+        var runtimeAfterRejection = await worker.CallAsync("diagnostics");
+        Assert(runtimeAfterRejection["inputRevision"]!.GetValue<long>() == 2
+            && runtimeAfterRejection["viewportInputRevision"]!.GetValue<long>() == 2,
+            "Rejected runtimeInput partially advanced an input revision stream.");
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "runtimeInput",
+                RuntimeInputSnapshot(
+                    inputRevision: 2,
+                    moveX: 1,
+                    moveXPressCount: 1,
+                    lookX: 1,
+                    lookXPressCount: 1)),
+            "-32602",
+            "runtimeInput accepted a stale revision.");
+
+        var identicalAcknowledgement = await worker.CallAsync(
+            "runtimeInput",
+            RuntimeInputSnapshot(
+                inputRevision: 3,
+                moveX: 1,
+                moveXPressCount: 1,
+                lookX: 1,
+                lookXPressCount: 1));
+        Assert(identicalAcknowledgement["inputRevision"]!.GetValue<long>() == 3,
+            "Semantically identical input revision was not acknowledged.");
+        var identicalFrame = await ReadFrameAfterAsync(
+            frameFile,
+            moved.Sequence,
+            14,
+            TimeSpan.FromSeconds(4));
+        var identicalLaterFrame = await ReadFrameAfterAsync(
+            frameFile,
+            identicalFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4));
+        Assert(identicalFrame.InputRevision == 2 && identicalLaterFrame.InputRevision == 2,
+            "A semantically identical action state was falsely credited as new reflected input.");
+
+        await Task.Delay(350);
+        var displacedActiveFrame = await ReadFrameAfterAsync(
+            frameFile,
+            identicalLaterFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4),
+            minimumInputRevision: 2);
+
+        var neutral = await worker.CallAsync(
+            "runtimeInput",
+            RuntimeInputSnapshot(
+                inputRevision: 4,
+                moveXPressCount: 1,
+                moveXReleaseCount: 1,
+                lookXPressCount: 1,
+                lookXReleaseCount: 1));
+        Assert(neutral["neutral"]!.GetValue<bool>(), "Neutral input state was not accepted.");
+        var neutralFrame = await ReadFrameAfterAsync(
+            frameFile,
+            displacedActiveFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4),
+            minimumInputRevision: 4);
+        Assert(neutralFrame.InputRevision == 4,
+            "The active-to-neutral release was not credited as a consumed stop state.");
+        var stableNeutralFrame = await ReadFrameAfterAsync(
+            frameFile,
+            neutralFrame.Sequence,
+            14,
+            TimeSpan.FromSeconds(4),
+            minimumInputRevision: 4);
+        Assert(stableNeutralFrame.InputRevision == 4,
+            "The reflected neutral input revision was not retained.");
+        Assert(stableNeutralFrame.PixelSha256 == neutralFrame.PixelSha256,
+            "InputMotion2D continued changing pixels after the neutral revision was reflected.");
+        await AssertPickAsync(worker, 496, 360, stableNeutralFrame.FrameRevision, null);
+        var displacedPickX = await FindPickXAsync(
+            worker,
+            520,
+            1000,
+            8,
+            360,
+            stableNeutralFrame.FrameRevision,
+            SpriteId);
+        Assert(displacedPickX is > 496,
+            "The ID-buffer pick did not move with the input-displaced device pixels.");
+
+        await worker.CallAsync("shutdown");
+        await worker.WaitForExitAsync(TimeSpan.FromSeconds(5));
     }
 
     private static async Task VerifyWorkerAsync(
@@ -124,6 +373,18 @@ internal static class Program
         Assert(handshake["sceneDrivenGraphics"]!.GetValue<bool>(), "Worker did not declare scene-driven graphics.");
         Assert(handshake["idBufferPicking"]!.GetValue<bool>(), "Worker did not negotiate ID-buffer picking.");
         Assert(handshake["revisionCorrelatedFrames"]!.GetValue<bool>(), "Worker did not negotiate revision correlation.");
+        Assert(!handshake["runtimeInput"]!.GetValue<bool>(),
+            "Preview worker incorrectly negotiated Play-only runtimeInput.");
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "runtimeInput",
+                new JsonObject
+                {
+                    ["inputRevision"] = 1,
+                    ["actions"] = new JsonObject { ["move.x"] = 1.0 },
+                }),
+            "-32011",
+            "A Preview worker accepted Play-only runtimeInput.");
         Assert(
             handshake["backend"]!.GetValue<string>().Contains(expectedAdapter, StringComparison.Ordinal),
             "Worker backend diagnostics did not identify the selected adapter.");
@@ -219,6 +480,49 @@ internal static class Program
         await AssertPickAsync(worker, 496, 360, colliderFrame.FrameRevision, SpriteId);
         await AssertPickAsync(worker, 640, 360, colliderFrame.FrameRevision, CubeId);
 
+        await LoadSnapshotAsync(worker, snapshots[15], 15, reload: true);
+        var squareFrame = await ReadFrameAfterAsync(
+            frameFile,
+            colliderFrame.Sequence,
+            15,
+            TimeSpan.FromSeconds(4));
+        Assert(squareFrame.ContentFlags == 1,
+            "The square primitive did not render through the Sprite component path.");
+        await AssertPickAsync(worker, 496, 360, squareFrame.FrameRevision, SpriteId);
+        await AssertPickAsync(worker, 456, 320, squareFrame.FrameRevision, SpriteId);
+
+        await LoadSnapshotAsync(worker, snapshots[16], 16, reload: true);
+        var circleFrame = await ReadFrameAfterAsync(
+            frameFile,
+            squareFrame.Sequence,
+            16,
+            TimeSpan.FromSeconds(4));
+        Assert(circleFrame.ContentFlags == 1,
+            "The circle primitive did not render through the Sprite component path.");
+        Assert(circleFrame.PixelSha256 != squareFrame.PixelSha256,
+            "Square and circle Sprite primitives produced identical device pixels.");
+        await AssertPickAsync(worker, 496, 360, circleFrame.FrameRevision, SpriteId);
+        await AssertPickAsync(worker, 456, 320, circleFrame.FrameRevision, null);
+
+        await LoadSnapshotAsync(worker, snapshots[17], 17, reload: true);
+        var importedSpriteFrame = await ReadFrameAfterAsync(
+            frameFile,
+            circleFrame.Sequence,
+            17,
+            TimeSpan.FromSeconds(4));
+        Assert(importedSpriteFrame.ContentFlags == 1
+                && importedSpriteFrame.PixelSha256 != circleFrame.PixelSha256,
+            "An immutable imported sprite binding did not change framework device pixels.");
+        var importedBlue = importedSpriteFrame.SamplePixelBgra & 0xff;
+        var importedGreen = (importedSpriteFrame.SamplePixelBgra >> 8) & 0xff;
+        var importedRed = (importedSpriteFrame.SamplePixelBgra >> 16) & 0xff;
+        Assert(importedBlue is >= 172 and <= 184
+                && importedGreen is >= 72 and <= 82
+                && importedRed <= 4,
+            $"Imported cyan PNG bytes did not reach the Sprite shader; sampled BGRA was "
+            + $"{importedBlue},{importedGreen},{importedRed}.");
+        await AssertPickAsync(worker, 496, 360, importedSpriteFrame.FrameRevision, SpriteId);
+
         var resized = await worker.CallAsync(
             "resizeViewport",
             new JsonObject
@@ -231,8 +535,8 @@ internal static class Program
         Assert(resized["width"]!.GetValue<int>() == 640, "Viewport resize was not acknowledged.");
         var smallFrame = await ReadFrameAfterAsync(
             frameFile,
-            colliderFrame.Sequence,
-            13,
+            importedSpriteFrame.Sequence,
+            17,
             TimeSpan.FromSeconds(4),
             minimumCameraRevision: 2);
         Assert(smallFrame.Width == 640 && smallFrame.Height == 360, "Resized frame dimensions were not published.");
@@ -248,7 +552,7 @@ internal static class Program
         var fullFrame = await ReadFrameAfterAsync(
             frameFile,
             smallFrame.Sequence,
-            13,
+            16,
             TimeSpan.FromSeconds(4),
             minimumCameraRevision: 3);
         Assert(fullFrame.Width == 1280 && fullFrame.Height == 720, "Full viewport size was not restored.");
@@ -261,13 +565,13 @@ internal static class Program
             rateStart = await ReadFrameHeaderAfterAsync(
                 rateReader,
                 fullFrame.Sequence,
-                13,
+                16,
                 TimeSpan.FromSeconds(3));
             await Task.Delay(2000);
             rateEnd = await ReadFrameHeaderAfterAsync(
                 rateReader,
                 rateStart.Sequence,
-                13,
+                16,
                 TimeSpan.FromSeconds(2));
         }
         var presentedDuration = TimeSpan.FromTicks(rateEnd.TimestampTicks - rateStart.TimestampTicks);
@@ -286,12 +590,13 @@ internal static class Program
         Assert(framesPerSecond >= 30.0,
             $"{expectedAdapter} frame rate was only {framesPerSecond:F1} FPS ({timingSummary}).");
 
-        var inputToPresentSamples = new double[LatencySampleCount];
+        var viewportCommandToPresentSamples = new double[LatencySampleCount];
         using (var correlationReader = new SharedFrameReader(frameFile))
         {
-            for (var index = 0; index < inputToPresentSamples.Length; index++)
+            for (var index = 0; index < viewportCommandToPresentSamples.Length; index++)
             {
                 var inputRevision = index + 1L;
+                var commandRevision = inputRevision + 3;
                 var inputTimestamp = Stopwatch.GetTimestamp();
                 var acknowledgement = await worker.CallAsync(
                     "viewportInput",
@@ -299,62 +604,72 @@ internal static class Program
                     {
                         ["inputRevision"] = inputRevision,
                         ["cameraRevision"] = 3,
-                        ["commandRevision"] = inputRevision + 3,
+                        ["commandRevision"] = commandRevision,
                     });
                 Assert(
                     acknowledgement["inputRevision"]!.GetValue<long>() == inputRevision,
                     "Worker acknowledged the wrong input revision.");
-                var correlatedFrame = await ReadFrameForInputRevisionAsync(
+                var correlatedFrame = await ReadFrameForCommandRevisionAsync(
                     correlationReader,
-                    inputRevision,
+                    commandRevision,
                     TimeSpan.FromSeconds(2));
-                Assert(correlatedFrame.InputRevision >= inputRevision && correlatedFrame.Sequence > 0,
-                    "Presented frame did not carry the requested input revision.");
-                inputToPresentSamples[index] = Stopwatch.GetElapsedTime(inputTimestamp).TotalMilliseconds;
+                Assert(correlatedFrame.CommandRevision >= commandRevision && correlatedFrame.Sequence > 0,
+                    "Presented frame did not carry the requested viewport command revision.");
+                viewportCommandToPresentSamples[index] = Stopwatch.GetElapsedTime(inputTimestamp).TotalMilliseconds;
             }
         }
 
-        Array.Sort(inputToPresentSamples);
-        var medianInputToPresentMilliseconds = inputToPresentSamples[inputToPresentSamples.Length / 2];
-        Assert(medianInputToPresentMilliseconds < 100.0,
-            $"{expectedAdapter} median input-to-present latency was "
-            + $"{medianInputToPresentMilliseconds:F1} ms, above the 100 ms gate.");
+        Array.Sort(viewportCommandToPresentSamples);
+        var medianViewportCommandToPresentMilliseconds =
+            viewportCommandToPresentSamples[viewportCommandToPresentSamples.Length / 2];
+        Assert(medianViewportCommandToPresentMilliseconds < 100.0,
+            $"{expectedAdapter} median viewport-command-to-present latency was "
+            + $"{medianViewportCommandToPresentMilliseconds:F1} ms, above the 100 ms gate.");
 
         var postLatencyDiagnostics = await worker.CallAsync("diagnostics");
         Assert(
-            postLatencyDiagnostics["presentedInputRevision"]!.GetValue<long>() == LatencySampleCount,
-            "Worker diagnostics did not retain the last presented input revision.");
+            postLatencyDiagnostics["presentedInputRevision"]!.GetValue<long>() == 0,
+            "Viewport-only commands were falsely credited as reflected gameplay input.");
 
         long stoppedSequence;
         using (var lifecycleReader = new SharedFrameReader(frameFile))
         {
             await worker.CallAsync("pause");
             await Task.Delay(100);
+            var pausedSnapshot = lifecycleReader.ReadFrame();
             var pausedFrame = lifecycleReader.ReadHeader();
             var pausedSequence = pausedFrame.Sequence;
             await AssertPickTimeoutIsStructuredAsync(worker, pausedFrame.FrameRevision + 1_000_000);
             await AssertPickAsync(worker, 496, 360, pausedFrame.FrameRevision, SpriteId);
-            await Task.Delay(250);
-            Assert(lifecycleReader.ReadHeader().Sequence == pausedSequence, "Pause did not stop frame publication.");
+            var renderedWhilePaused = await ReadFrameHeaderAfterAsync(
+                lifecycleReader,
+                pausedSequence,
+                16,
+                TimeSpan.FromSeconds(2));
+            var stablePausedSnapshot = lifecycleReader.ReadFrame();
+            Assert(renderedWhilePaused.Sequence > pausedSequence,
+                "Pause stopped rendering instead of preserving the viewport.");
+            Assert(stablePausedSnapshot.PixelSha256 == pausedSnapshot.PixelSha256,
+                "Pause advanced render-affecting simulation state.");
 
             await worker.CallAsync("resume");
             var resumed = await ReadFrameHeaderAfterAsync(
                 lifecycleReader,
-                pausedSequence,
-                13,
+                renderedWhilePaused.Sequence,
+                16,
                 TimeSpan.FromSeconds(2));
             await worker.CallAsync("stop");
             await Task.Delay(100);
             stoppedSequence = lifecycleReader.ReadHeader().Sequence;
             await Task.Delay(250);
             Assert(lifecycleReader.ReadHeader().Sequence == stoppedSequence, "Stop did not stop frame publication.");
-            Assert(resumed.Sequence > pausedSequence, "Resume did not restart frame publication.");
+            Assert(resumed.Sequence > renderedWhilePaused.Sequence, "Resume did not continue frame publication.");
 
             await worker.CallAsync("play");
             await ReadFrameHeaderAfterAsync(
                 lifecycleReader,
                 stoppedSequence,
-                13,
+                16,
                 TimeSpan.FromSeconds(2));
         }
         var firstProcessId = worker.ProcessId;
@@ -387,8 +702,9 @@ internal static class Program
         Assert(restarted.ExitCode == 0, "Worker did not shut down cleanly.");
 
         Console.WriteLine(
-            $"{expectedAdapter}: real scene-driven frames, {framesPerSecond:F1} FPS, median input-to-present "
-            + $"{medianInputToPresentMilliseconds:F1} ms, control {controlTimer.Elapsed.TotalMilliseconds:F1} ms, "
+            $"{expectedAdapter}: real scene-driven frames, {framesPerSecond:F1} FPS, "
+            + $"median viewport-command-to-present {medianViewportCommandToPresentMilliseconds:F1} ms, "
+            + $"control {controlTimer.Elapsed.TotalMilliseconds:F1} ms, "
             + $"crash recovery {recoveryTimer.Elapsed.TotalMilliseconds:F1} ms, {timingSummary}, "
             + $"backend {diagnostics["backend"]}, device {diagnostics["device"]}.");
     }
@@ -414,6 +730,16 @@ internal static class Program
         Assert(handshake["frameLayoutVersion"]!.GetValue<int>() == 1, "Frame layout v1 handshake regressed.");
         Assert(handshake["frameHeaderSize"]!.GetValue<int>() == Version1HeaderSize, "Frame layout v1 header changed.");
         Assert(handshake["adapter"]!.GetValue<string>() == expectedAdapter, "v1 adapter identity regressed.");
+        await AssertRpcRejectedAsync(
+            () => worker.CallAsync(
+                "runtimeInput",
+                new JsonObject
+                {
+                    ["inputRevision"] = 1,
+                    ["actions"] = new JsonObject { ["move.x"] = 1.0 },
+                }),
+            "-32011",
+            "A protocol-v1 session accepted unnegotiated runtimeInput.");
         await LoadSnapshotAsync(worker, snapshot, 1, reload: false);
         await worker.CallAsync("play");
         var frame = await ReadFrameAfterAsync(frameFile, 0, 0, TimeSpan.FromSeconds(8));
@@ -484,6 +810,35 @@ internal static class Program
                 IncludeCircle2D: true,
                 IncludeBox3D: true,
                 IncludeSphere3D: true),
+            new SnapshotConfiguration(
+                14,
+                IncludeCube: false,
+                CubeEnabled: false,
+                CubeX: 0,
+                CubeColor: "blue",
+                IncludeInputMotion: true),
+            new SnapshotConfiguration(
+                15,
+                IncludeCube: false,
+                CubeEnabled: false,
+                CubeX: 0,
+                CubeColor: "blue",
+                SpriteAsset: "builtin://square"),
+            new SnapshotConfiguration(
+                16,
+                IncludeCube: false,
+                CubeEnabled: false,
+                CubeX: 0,
+                CubeColor: "blue",
+                SpriteAsset: "builtin://circle"),
+            new SnapshotConfiguration(
+                17,
+                IncludeCube: false,
+                CubeEnabled: false,
+                CubeX: 0,
+                CubeColor: "blue",
+                SpriteAsset: RuntimeSpriteAssetId,
+                IncludeRuntimeSpriteAsset: true),
         };
         var paths = new Dictionary<int, string>();
         foreach (var configuration in configurations)
@@ -497,6 +852,19 @@ internal static class Program
 
     private static string CreateSnapshot(SnapshotConfiguration configuration)
     {
+        var runtimeAssetBytes = Convert.FromBase64String(CyanPngBase64);
+        var runtimeAssetHash = Convert.ToHexString(SHA256.HashData(runtimeAssetBytes)).ToLowerInvariant();
+        var runtimeAssets = configuration.IncludeRuntimeSpriteAsset
+            ? $$"""
+              "assets": [{
+                "assetId": "{{RuntimeSpriteAssetId}}",
+                "assetType": "sprite",
+                "mediaType": "image/png",
+                "contentHash": "{{runtimeAssetHash}}",
+                "embeddedBytesBase64": "{{CyanPngBase64}}"
+              }],
+              """
+            : string.Empty;
         var color = configuration.CubeColor switch
         {
             "green" => "{ \"r\": 0.1, \"g\": 0.95, \"b\": 0.2, \"a\": 1.0 }",
@@ -563,6 +931,22 @@ internal static class Program
                     "dpe.physics3d.radius": 0.7,
                     "dpe.physics3d.offset": { "x": 0.0, "y": 0.0, "z": 0.0 },
                     "dpe.physics.sensor": true
+                  }
+                }
+                """
+            : string.Empty;
+        var inputMotion = configuration.IncludeInputMotion
+            ? """
+                ,{
+                  "typeId": "64348aba-c5a4-42fc-86e6-e99f9640e36d",
+                  "qualifiedName": "DragonPixel.Managed.InputMotion2D",
+                  "schemaVersion": 1,
+                  "owner": "managed",
+                  "enabled": true,
+                  "properties": {
+                    "dpe.input.horizontal_action": "move.x",
+                    "dpe.input.vertical_action": "move.y",
+                    "dpe.input.speed": 4.0
                   }
                 }
                 """
@@ -640,6 +1024,7 @@ internal static class Program
               "formatVersion": 2,
               "engineVersion": "0.2.0-poc-e",
               "snapshotRevision": {{configuration.Revision}},
+              {{runtimeAssets}}
               "sceneId": "af8ffc47-d69b-4ba9-886a-8b8876dd0ed1",
               "name": "POC E Scene",
               "entities": [
@@ -668,13 +1053,14 @@ internal static class Program
                       "owner": "native",
                       "enabled": true,
                       "properties": {
-                        "dpe.sprite.asset": "builtin://checker",
+                        "dpe.sprite.asset": "{{configuration.SpriteAsset}}",
                         "dpe.sprite.color": { "r": 1.0, "g": 0.3, "b": 0.7, "a": 1.0 },
                         "dpe.sprite.layer": 0
                       }
                     }
                     {{box2D}}
                     {{circle2D}}
+                    {{inputMotion}}
                   ]
                 }
                 {{cube}}
@@ -691,6 +1077,43 @@ internal static class Program
         ["target"] = new JsonArray(0.0, 0.0, 0.0),
         ["orthographicSize"] = 10.0,
         ["fieldOfViewDegrees"] = 60.0,
+    };
+
+    private static JsonObject RuntimeInputSnapshot(
+        long inputRevision,
+        float moveX = 0,
+        long moveXPressCount = 0,
+        long moveXReleaseCount = 0,
+        float lookX = 0,
+        long lookXPressCount = 0,
+        long lookXReleaseCount = 0,
+        bool focused = true,
+        bool captured = true) => new()
+    {
+        ["inputRevision"] = inputRevision,
+        ["focused"] = focused,
+        ["captured"] = captured,
+        ["actions"] = new JsonObject
+        {
+            ["move.x"] = RuntimeInputAction(
+                "axis1d", moveX, moveXPressCount, moveXReleaseCount),
+            ["move.y"] = RuntimeInputAction("axis1d", 0, 0, 0),
+            ["jump"] = RuntimeInputAction("button", 0, 0, 0),
+            ["look.x"] = RuntimeInputAction(
+                "axis1d", lookX, lookXPressCount, lookXReleaseCount),
+        },
+    };
+
+    private static JsonObject RuntimeInputAction(
+        string kind,
+        float value,
+        long pressCount,
+        long releaseCount) => new()
+    {
+        ["kind"] = kind,
+        ["value"] = value,
+        ["pressCount"] = pressCount,
+        ["releaseCount"] = releaseCount,
     };
 
     private static async Task LoadSnapshotAsync(
@@ -727,6 +1150,33 @@ internal static class Program
         var actual = pick["entityId"]?.GetValue<string>();
         Assert(actual == expectedEntityId,
             $"Picking ({x}, {y}) returned {actual ?? "nothing"}; expected {expectedEntityId ?? "nothing"}.");
+    }
+
+    private static async Task<int?> FindPickXAsync(
+        WorkerProcess worker,
+        int minimumX,
+        int maximumX,
+        int step,
+        int y,
+        long minimumFrameRevision,
+        string expectedEntityId)
+    {
+        for (var x = minimumX; x <= maximumX; x += step)
+        {
+            var pick = await worker.CallAsync(
+                "pick",
+                new JsonObject
+                {
+                    ["x"] = x,
+                    ["y"] = y,
+                    ["minimumFrameRevision"] = minimumFrameRevision,
+                });
+            if (pick["entityId"]?.GetValue<string>() == expectedEntityId)
+            {
+                return x;
+            }
+        }
+        return null;
     }
 
     private static async Task AssertStalePickIsRejectedAsync(
@@ -784,7 +1234,8 @@ internal static class Program
         string nativeLibrary,
         int frameVersion,
         int width,
-        int height)
+        int height,
+        string session = "preview")
     {
         var startInfo = new ProcessStartInfo
         {
@@ -803,7 +1254,7 @@ internal static class Program
                      "--frame-version", frameVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
                      "--width", width.ToString(System.Globalization.CultureInfo.InvariantCulture),
                      "--height", height.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                     "--session", "preview",
+                      "--session", session,
                  })
         {
             startInfo.ArgumentList.Add(argument);
@@ -817,7 +1268,8 @@ internal static class Program
         long sequence,
         long minimumSnapshotRevision,
         TimeSpan timeout,
-        long minimumCameraRevision = 0)
+        long minimumCameraRevision = 0,
+        long minimumInputRevision = 0)
     {
         var stopwatch = Stopwatch.StartNew();
         Exception? lastError = null;
@@ -832,12 +1284,14 @@ internal static class Program
                     var header = reader.ReadHeader();
                     if (header.Sequence > sequence
                         && header.SnapshotRevision >= minimumSnapshotRevision
-                        && header.CameraRevision >= minimumCameraRevision)
+                        && header.CameraRevision >= minimumCameraRevision
+                        && header.InputRevision >= minimumInputRevision)
                     {
                         var frame = reader.ReadFrame();
                         if (frame.Sequence > sequence
                             && frame.SnapshotRevision >= minimumSnapshotRevision
-                            && frame.CameraRevision >= minimumCameraRevision)
+                            && frame.CameraRevision >= minimumCameraRevision
+                            && frame.InputRevision >= minimumInputRevision)
                         {
                             return frame;
                         }
@@ -859,9 +1313,9 @@ internal static class Program
             lastError);
     }
 
-    private static async Task<FrameHeader> ReadFrameForInputRevisionAsync(
+    private static async Task<FrameHeader> ReadFrameForCommandRevisionAsync(
         SharedFrameReader reader,
-        long inputRevision,
+        long commandRevision,
         TimeSpan timeout)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -871,7 +1325,7 @@ internal static class Program
             try
             {
                 var header = reader.ReadHeader();
-                if (header.InputRevision >= inputRevision)
+                if (header.CommandRevision >= commandRevision)
                 {
                     return header;
                 }
@@ -882,7 +1336,9 @@ internal static class Program
             }
             await Task.Delay(1);
         }
-        throw new TimeoutException($"No stable frame correlated input revision {inputRevision} in {timeout}.", lastError);
+        throw new TimeoutException(
+            $"No stable frame correlated viewport command revision {commandRevision} in {timeout}.",
+            lastError);
     }
 
     private static async Task<FrameHeader> ReadFrameHeaderAfterAsync(
@@ -925,6 +1381,24 @@ internal static class Program
         }
     }
 
+    private static async Task AssertRpcRejectedAsync(
+        Func<Task<JsonObject>> operation,
+        string expectedCode,
+        string failureMessage)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (InvalidOperationException exception) when (
+            exception.Message.Contains(expectedCode, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(failureMessage);
+    }
+
     private sealed record SnapshotConfiguration(
         int Revision,
         bool IncludeCube,
@@ -935,7 +1409,10 @@ internal static class Program
         bool IncludeBox2D = false,
         bool IncludeCircle2D = false,
         bool IncludeBox3D = false,
-        bool IncludeSphere3D = false);
+        bool IncludeSphere3D = false,
+        bool IncludeInputMotion = false,
+        string SpriteAsset = "builtin://checker",
+        bool IncludeRuntimeSpriteAsset = false);
 
     private sealed record FrameSnapshot(
         int Version,
@@ -947,6 +1424,7 @@ internal static class Program
         int ContentFlags,
         int DistinctColorEstimate,
         string PixelSha256,
+        int SamplePixelBgra,
         long InputRevision,
         long FrameRevision,
         long SnapshotRevision,
@@ -989,109 +1467,131 @@ internal static class Program
 
         public FrameHeader ReadHeader()
         {
-            var sequenceBefore = _view.ReadInt64(24);
-            if ((sequenceBefore & 1) != 0)
+            var deadline = Stopwatch.GetTimestamp() + (Stopwatch.Frequency / 4);
+            var spinner = new SpinWait();
+            do
             {
-                throw new IOException("Shared frame is currently being written.");
-            }
-            Thread.MemoryBarrier();
-            var magic = _view.ReadInt32(0);
-            var version = _view.ReadInt32(4);
-            var timestampTicks = _view.ReadInt64(32);
-            var inputRevision = _view.ReadInt64(48);
-            var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
-            var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
-            var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
-            var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
-            Thread.MemoryBarrier();
-            var sequenceAfter = _view.ReadInt64(24);
-            if (magic != FrameMagic
-                || version is not (1 or 2)
-                || sequenceBefore != sequenceAfter
-                || (sequenceAfter & 1) != 0)
-            {
-                throw new IOException("Shared frame header changed while being read.");
-            }
-            return new FrameHeader(
-                sequenceAfter,
-                timestampTicks,
-                inputRevision,
-                frameRevision,
-                snapshotRevision,
-                cameraRevision,
-                commandRevision);
+                var sequenceBefore = _view.ReadInt64(24);
+                if ((sequenceBefore & 1) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+                Thread.MemoryBarrier();
+                var magic = _view.ReadInt32(0);
+                var version = _view.ReadInt32(4);
+                var timestampTicks = _view.ReadInt64(32);
+                var inputRevision = _view.ReadInt64(48);
+                var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
+                var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
+                var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
+                var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
+                Thread.MemoryBarrier();
+                var sequenceAfter = _view.ReadInt64(24);
+                if (sequenceBefore != sequenceAfter || (sequenceAfter & 1) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
+                if (magic != FrameMagic || version is not (1 or 2))
+                {
+                    throw new IOException("Shared frame header was invalid.");
+                }
+                return new FrameHeader(
+                    sequenceAfter,
+                    timestampTicks,
+                    inputRevision,
+                    frameRevision,
+                    snapshotRevision,
+                    cameraRevision,
+                    commandRevision);
+            } while (Stopwatch.GetTimestamp() < deadline);
+
+            throw new IOException("Shared frame header remained unavailable while the writer was publishing.");
         }
 
         public FrameSnapshot ReadFrame()
         {
-            var sequenceBefore = _view.ReadInt64(24);
-            if ((sequenceBefore & 1) != 0)
+            var deadline = Stopwatch.GetTimestamp() + (Stopwatch.Frequency / 4);
+            var spinner = new SpinWait();
+            do
             {
-                throw new IOException("Shared frame is currently being written.");
-            }
+                var sequenceBefore = _view.ReadInt64(24);
+                if ((sequenceBefore & 1) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
 
-            Thread.MemoryBarrier();
-            var magic = _view.ReadInt32(0);
-            var version = _view.ReadInt32(4);
-            var width = _view.ReadInt32(8);
-            var height = _view.ReadInt32(12);
-            var stride = _view.ReadInt32(16);
-            var format = _view.ReadInt32(20);
-            var contentFlags = _view.ReadInt32(40);
-            var inputRevision = _view.ReadInt64(48);
-            var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
-            var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
-            var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
-            var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
-            var headerSize = version >= 2 ? Version2HeaderSize : Version1HeaderSize;
-            if (magic != FrameMagic
-                || version is not (1 or 2)
-                || width <= 0
-                || height <= 0
-                || stride != checked(width * 4))
-            {
-                throw new IOException("Shared frame header was invalid.");
-            }
+                Thread.MemoryBarrier();
+                var magic = _view.ReadInt32(0);
+                var version = _view.ReadInt32(4);
+                var width = _view.ReadInt32(8);
+                var height = _view.ReadInt32(12);
+                var stride = _view.ReadInt32(16);
+                var format = _view.ReadInt32(20);
+                var contentFlags = _view.ReadInt32(40);
+                var inputRevision = _view.ReadInt64(48);
+                var frameRevision = version >= 2 ? _view.ReadInt64(56) : 0;
+                var snapshotRevision = version >= 2 ? _view.ReadInt64(64) : 0;
+                var cameraRevision = version >= 2 ? _view.ReadInt64(72) : 0;
+                var commandRevision = version >= 2 ? _view.ReadInt64(80) : 0;
+                var headerSize = version >= 2 ? Version2HeaderSize : Version1HeaderSize;
+                if (magic != FrameMagic
+                    || version is not (1 or 2)
+                    || width <= 0
+                    || height <= 0
+                    || stride != checked(width * 4))
+                {
+                    throw new IOException("Shared frame header was invalid.");
+                }
 
-            var pixelLength = checked(stride * height);
-            if ((long)headerSize + pixelLength > _view.Capacity)
-            {
-                throw new IOException("Shared frame pixel payload exceeded the mapped capacity.");
-            }
-            if (_pixels.Length != pixelLength)
-            {
-                _pixels = new byte[pixelLength];
-            }
-            new ReadOnlySpan<byte>(_viewPointer + headerSize, pixelLength).CopyTo(_pixels);
-            Thread.MemoryBarrier();
-            var sequenceAfter = _view.ReadInt64(24);
-            if (sequenceBefore != sequenceAfter || (sequenceAfter & 1) != 0)
-            {
-                throw new IOException("Shared frame was unavailable or changed while being read.");
-            }
+                var pixelLength = checked(stride * height);
+                if ((long)headerSize + pixelLength > _view.Capacity)
+                {
+                    throw new IOException("Shared frame pixel payload exceeded the mapped capacity.");
+                }
+                if (_pixels.Length != pixelLength)
+                {
+                    _pixels = new byte[pixelLength];
+                }
+                new ReadOnlySpan<byte>(_viewPointer + headerSize, pixelLength).CopyTo(_pixels);
+                Thread.MemoryBarrier();
+                var sequenceAfter = _view.ReadInt64(24);
+                if (sequenceBefore != sequenceAfter || (sequenceAfter & 1) != 0)
+                {
+                    spinner.SpinOnce();
+                    continue;
+                }
 
-            var colors = new HashSet<int>();
-            var samplingStep = Math.Max(4, pixelLength / 4096);
-            samplingStep -= samplingStep % 4;
-            for (var index = 0; index + 3 < pixelLength; index += samplingStep)
-            {
-                colors.Add(BinaryPrimitives.ReadInt32LittleEndian(_pixels.AsSpan(index, 4)));
-            }
-            return new FrameSnapshot(
-                version,
-                width,
-                height,
-                stride,
-                format,
-                sequenceAfter,
-                contentFlags,
-                colors.Count,
-                Convert.ToHexString(SHA256.HashData(_pixels.AsSpan(0, pixelLength))),
-                inputRevision,
-                frameRevision,
-                snapshotRevision,
-                cameraRevision,
-                commandRevision);
+                var colors = new HashSet<int>();
+                var samplingStep = Math.Max(4, pixelLength / 4096);
+                samplingStep -= samplingStep % 4;
+                for (var index = 0; index + 3 < pixelLength; index += samplingStep)
+                {
+                    colors.Add(BinaryPrimitives.ReadInt32LittleEndian(_pixels.AsSpan(index, 4)));
+                }
+                return new FrameSnapshot(
+                    version,
+                    width,
+                    height,
+                    stride,
+                    format,
+                    sequenceAfter,
+                    contentFlags,
+                    colors.Count,
+                    Convert.ToHexString(SHA256.HashData(_pixels.AsSpan(0, pixelLength))),
+                    BinaryPrimitives.ReadInt32LittleEndian(
+                        _pixels.AsSpan((Math.Min(360, height - 1) * stride)
+                            + (Math.Min(496, width - 1) * 4), 4)),
+                    inputRevision,
+                    frameRevision,
+                    snapshotRevision,
+                    cameraRevision,
+                    commandRevision);
+            } while (Stopwatch.GetTimestamp() < deadline);
+
+            throw new IOException("Shared frame remained unavailable while the writer was publishing.");
         }
 
         public void Dispose()

@@ -1,5 +1,6 @@
 #include "EditorModels.h"
 
+#include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFileInfo>
@@ -12,6 +13,10 @@
 #include <QLineEdit>
 #include <QMetaObject>
 #include <QMimeData>
+#include <QPainter>
+#include <QPalette>
+#include <QSet>
+#include <QStyle>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QUrl>
@@ -66,6 +71,9 @@ public:
             value->setRange(type == dragonpixel::metadata::value_type::color ? 0.0 : -1000000.0,
                 type == dragonpixel::metadata::value_type::color ? 1.0 : 1000000.0);
             fields_.push_back(value);
+            connect(value, &QDoubleSpinBox::valueChanged, this, [this] {
+                setProperty("dpeDirty", true);
+            });
             layout->addWidget(label);
             layout->addWidget(value, 1);
         }
@@ -114,6 +122,26 @@ ProjectFilterProxyModel::ProjectFilterProxyModel(QObject* parent)
     setFilterCaseSensitivity(Qt::CaseInsensitive);
     setRecursiveFilteringEnabled(false);
     setAutoAcceptChildRows(false);
+}
+
+ProjectFolderProxyModel::ProjectFolderProxyModel(QObject* parent)
+    : QSortFilterProxyModel(parent)
+{
+    setDynamicSortFilter(true);
+}
+
+bool ProjectFolderProxyModel::filterAcceptsRow(
+    int source_row,
+    const QModelIndex& source_parent) const
+{
+    const auto source_index = sourceModel()->index(source_row, 0, source_parent);
+    if (!source_index.isValid())
+    {
+        return false;
+    }
+    const auto kind = static_cast<ProjectItemKind>(
+        source_index.data(EditorRoles::project_kind).toInt());
+    return kind == ProjectItemKind::project || kind == ProjectItemKind::folder;
 }
 
 void ProjectFilterProxyModel::set_search_text(QString text)
@@ -221,7 +249,9 @@ bool ProjectFilterProxyModel::accepts_source_row(
         index.data(EditorRoles::project_kind).toInt());
     const auto is_entry = kind == ProjectItemKind::scene
         || kind == ProjectItemKind::prefab
-        || kind == ProjectItemKind::asset;
+        || kind == ProjectItemKind::asset
+        || kind == ProjectItemKind::component_source
+        || kind == ProjectItemKind::component_manifest;
     const auto has_structured_filter = !type_filter_.isEmpty() || !status_filter_.isEmpty();
     if (is_entry)
     {
@@ -356,6 +386,23 @@ void HierarchyModel::set_handlers(EditHandler edit, ReparentHandler reparent)
     reparent_handler_ = std::move(reparent);
 }
 
+void HierarchyModel::set_project_drop_handler(ProjectDropHandler handler)
+{
+    project_drop_handler_ = std::move(handler);
+}
+
+void HierarchyModel::set_drag_context(
+    QString project_id,
+    QString scene_id,
+    quint64 source_revision,
+    quint64 project_source_revision)
+{
+    drag_project_id_ = std::move(project_id);
+    drag_scene_id_ = std::move(scene_id);
+    drag_source_revision_ = source_revision;
+    project_source_revision_ = project_source_revision;
+}
+
 void HierarchyModel::rebuild(const dragonpixel::scene::scene* scene)
 {
     rebuilding_ = true;
@@ -459,22 +506,61 @@ Qt::ItemFlags HierarchyModel::flags(const QModelIndex& index) const
 
 QStringList HierarchyModel::mimeTypes() const
 {
-    return {QString::fromLatin1(hierarchy_mime_type)};
+    return {
+        QString::fromLatin1(hierarchy_mime_type),
+        QStringLiteral("application/x-dragonpixel-project-item"),
+    };
 }
 
 QMimeData* HierarchyModel::mimeData(const QModelIndexList& indexes) const
 {
     auto* mime = new QMimeData;
+    QStringList ordered_ids;
     for (const auto& index : indexes)
     {
         if (index.column() == 0)
         {
-            mime->setData(
-                QString::fromLatin1(hierarchy_mime_type),
-                index.data(EditorRoles::entity_id).toString().toUtf8());
-            break;
+            const auto id = index.data(EditorRoles::entity_id).toString();
+            if (!id.isEmpty() && !ordered_ids.contains(id)) ordered_ids.push_back(id);
         }
     }
+    if (scene_ != nullptr && ordered_ids.size() > 1)
+    {
+        QSet<QString> selected;
+        for (const auto& id : ordered_ids) selected.insert(id);
+        ordered_ids.erase(std::remove_if(ordered_ids.begin(), ordered_ids.end(), [&](const auto& id) {
+            const auto parsed = dragonpixel::core::uuid::parse(id.toStdString());
+            const auto* entity = parsed ? scene_->find_entity(*parsed) : nullptr;
+            auto parent = entity ? entity->parent_id : std::optional<dragonpixel::core::uuid>{};
+            while (parent)
+            {
+                const auto parent_text = QString::fromStdString(parent->to_string());
+                if (selected.contains(parent_text)) return true;
+                const auto* parent_entity = scene_->find_entity(*parent);
+                parent = parent_entity ? parent_entity->parent_id
+                                       : std::optional<dragonpixel::core::uuid>{};
+            }
+            return false;
+        }), ordered_ids.end());
+    }
+    QJsonArray items;
+    for (const auto& id : ordered_ids)
+    {
+        items.push_back(QJsonObject{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("kind"), QStringLiteral("entity")},
+        });
+    }
+    const QJsonObject payload{
+        {QStringLiteral("format"), QStringLiteral("dpe.drag")},
+        {QStringLiteral("formatVersion"), 1},
+        {QStringLiteral("projectId"), drag_project_id_},
+        {QStringLiteral("sceneId"), drag_scene_id_},
+        {QStringLiteral("sourceRevision"), static_cast<qint64>(drag_source_revision_)},
+        {QStringLiteral("items"), items},
+    };
+    mime->setData(QString::fromLatin1(hierarchy_mime_type),
+        QJsonDocument{payload}.toJson(QJsonDocument::Compact));
     return mime;
 }
 
@@ -490,14 +576,7 @@ bool HierarchyModel::dropMimeData(
     {
         return true;
     }
-    if (action != Qt::MoveAction || data == nullptr || !reparent_handler_
-        || !data->hasFormat(QString::fromLatin1(hierarchy_mime_type)))
-    {
-        return false;
-    }
-    const auto entity_id = dragonpixel::core::uuid::parse(
-        QString::fromUtf8(data->data(QString::fromLatin1(hierarchy_mime_type))).toStdString());
-    if (!entity_id)
+    if (data == nullptr)
     {
         return false;
     }
@@ -507,14 +586,66 @@ bool HierarchyModel::dropMimeData(
         parent_id = dragonpixel::core::uuid::parse(
             parent.siblingAtColumn(0).data(EditorRoles::entity_id).toString().toStdString());
     }
+    if (action == Qt::CopyAction
+        && project_drop_handler_
+        && data->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+    {
+        const auto project_payload = QJsonDocument::fromJson(
+            data->data(QStringLiteral("application/x-dragonpixel-project-item"))).object();
+        const auto items = project_payload.value(QStringLiteral("items")).toArray();
+        if (project_payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+            || project_payload.value(QStringLiteral("formatVersion")).toInt() != 1
+            || project_payload.value(QStringLiteral("projectId")).toString() != drag_project_id_
+            || project_payload.value(QStringLiteral("sourceRevision")).toInteger()
+                != static_cast<qint64>(project_source_revision_)
+            || items.size() != 1 || !items.at(0).isObject())
+        {
+            return false;
+        }
+        const auto item = items.at(0).toObject();
+        return project_drop_handler_(
+            item.value(QStringLiteral("path")).toString(),
+            item.value(QStringLiteral("kind")).toString(),
+            item.value(QStringLiteral("assetType")).toString(),
+            item.value(QStringLiteral("assetId")).toString(),
+            parent_id);
+    }
+    if (action != Qt::MoveAction || !reparent_handler_
+        || !data->hasFormat(QString::fromLatin1(hierarchy_mime_type)))
+    {
+        return false;
+    }
+    const auto document = QJsonDocument::fromJson(
+        data->data(QString::fromLatin1(hierarchy_mime_type)));
+    const auto payload = document.object();
+    if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+        || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+        || payload.value(QStringLiteral("projectId")).toString() != drag_project_id_
+        || payload.value(QStringLiteral("sceneId")).toString() != drag_scene_id_
+        || payload.value(QStringLiteral("sourceRevision")).toInteger() != static_cast<qint64>(drag_source_revision_)
+        || !payload.value(QStringLiteral("items")).isArray())
+    {
+        return false;
+    }
+    std::vector<dragonpixel::core::uuid> entity_ids;
+    for (const auto& value : payload.value(QStringLiteral("items")).toArray())
+    {
+        const auto item = value.toObject();
+        if (item.value(QStringLiteral("kind")).toString() != QStringLiteral("entity")) return false;
+        const auto id = dragonpixel::core::uuid::parse(
+            item.value(QStringLiteral("id")).toString().toStdString());
+        if (!id) return false;
+        entity_ids.push_back(*id);
+    }
+    if (entity_ids.empty()) return false;
     const auto sibling = row < 0 ? std::optional<std::size_t>{}
                                  : std::optional<std::size_t>{static_cast<std::size_t>(row)};
-    return reparent_handler_(*entity_id, parent_id, sibling);
+    return reparent_handler_(entity_ids, parent_id, sibling);
 }
 
 Qt::DropActions HierarchyModel::supportedDropActions() const
 {
-    return Qt::MoveAction;
+    return Qt::MoveAction | Qt::CopyAction;
 }
 
 namespace
@@ -914,9 +1045,14 @@ struct ProjectRowPresentation final
         QStringLiteral("%1, %2, %3")
             .arg(row.name, row.kind_type, status_display_name(row.status)));
     if (row.kind == ProjectItemKind::scene || row.kind == ProjectItemKind::prefab
-        || row.kind == ProjectItemKind::asset)
+        || row.kind == ProjectItemKind::asset || row.kind == ProjectItemKind::folder)
     {
         name_item->setDragEnabled(true);
+    }
+    if (row.kind == ProjectItemKind::folder)
+    {
+        name_item->setDragEnabled(true);
+        name_item->setDropEnabled(true);
     }
     if (parent == nullptr)
     {
@@ -1043,6 +1179,10 @@ void sort_project_children(QStandardItem* parent)
         return ProjectItemKind::prefab;
     case ProjectIndexEntryKind::asset:
         return ProjectItemKind::asset;
+    case ProjectIndexEntryKind::component_source:
+        return ProjectItemKind::component_source;
+    case ProjectIndexEntryKind::component_manifest:
+        return ProjectItemKind::component_manifest;
     }
     return ProjectItemKind::asset;
 }
@@ -1059,6 +1199,12 @@ void sort_project_children(QStandardItem* parent)
         return entry.asset_type.trimmed().isEmpty()
             ? QStringLiteral("Asset")
             : QStringLiteral("Asset / %1").arg(entry.asset_type);
+    case ProjectIndexEntryKind::component_source:
+        return entry.asset_type.trimmed().isEmpty()
+            ? QStringLiteral("Component Source")
+            : QStringLiteral("Component Source / %1").arg(entry.asset_type);
+    case ProjectIndexEntryKind::component_manifest:
+        return QStringLiteral("Component Metadata");
     }
     return QStringLiteral("Asset");
 }
@@ -1075,6 +1221,13 @@ void sort_project_children(QStandardItem* parent)
         return entry.asset_type.trimmed().isEmpty()
             ? QStringLiteral("asset")
             : QStringLiteral("asset %1").arg(entry.asset_type.toCaseFolded());
+    case ProjectIndexEntryKind::component_source:
+        return QFileInfo{entry.absolute_path}.suffix().compare(
+                   QStringLiteral("cs"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("component script component-source csharp")
+            : QStringLiteral("component component-source cpp");
+    case ProjectIndexEntryKind::component_manifest:
+        return QStringLiteral("component component-manifest metadata");
     }
     return QStringLiteral("asset");
 }
@@ -1152,6 +1305,8 @@ void ProjectModel::rebuild_candidate(
     const ProjectIndexCandidate& candidate,
     const QList<ProjectIndexDiagnostic>& diagnostics)
 {
+    ++drag_revision_;
+    drag_project_id_ = candidate.project_id;
     asset_rows_by_id_.clear();
     asset_rows_by_path_.clear();
     clear();
@@ -1287,6 +1442,10 @@ void ProjectModel::rebuild_candidate(
     for (const auto& root : roots)
     {
         static_cast<void>(ensure_folder(root.declared_path));
+    }
+    for (const auto& folder : candidate.discovered_folders)
+    {
+        static_cast<void>(ensure_folder(folder));
     }
 
     auto entries = candidate.entries;
@@ -1439,32 +1598,37 @@ QStringList ProjectModel::mimeTypes() const
 QMimeData* ProjectModel::mimeData(const QModelIndexList& indexes) const
 {
     auto* mime = new QMimeData;
-    const auto found = std::find_if(indexes.begin(), indexes.end(), [](const QModelIndex& index) {
-        return index.isValid() && index.column() == 0;
-    });
-    if (found == indexes.end())
+    QJsonArray items;
+    QSet<QString> seen;
+    for (const auto& index : indexes)
     {
-        return mime;
-    }
-    const auto kind = item_kind(*found);
-    auto kind_text = QStringLiteral("other");
-    if (kind == ProjectItemKind::asset)
-    {
-        kind_text = QStringLiteral("asset");
-    }
-    else if (kind == ProjectItemKind::prefab)
-    {
-        kind_text = QStringLiteral("prefab");
-    }
-    else if (kind == ProjectItemKind::scene)
-    {
-        kind_text = QStringLiteral("scene");
+        if (!index.isValid() || index.column() != 0) continue;
+        const auto key = QStringLiteral("%1|%2")
+            .arg(item_path(index), asset_id(index));
+        if (seen.contains(key)) continue;
+        seen.insert(key);
+        const auto kind = item_kind(index);
+        auto kind_text = QStringLiteral("other");
+        if (kind == ProjectItemKind::asset) kind_text = QStringLiteral("asset");
+        else if (kind == ProjectItemKind::prefab) kind_text = QStringLiteral("prefab");
+        else if (kind == ProjectItemKind::scene) kind_text = QStringLiteral("scene");
+        else if (kind == ProjectItemKind::folder) kind_text = QStringLiteral("folder");
+        else if (kind == ProjectItemKind::component_source) kind_text = QStringLiteral("component-source");
+        else if (kind == ProjectItemKind::component_manifest) kind_text = QStringLiteral("component-manifest");
+        items.push_back(QJsonObject{
+            {QStringLiteral("id"), index.data(EditorRoles::project_entry_id).toString()},
+            {QStringLiteral("path"), item_path(index)},
+            {QStringLiteral("kind"), kind_text},
+            {QStringLiteral("assetType"), asset_type(index)},
+            {QStringLiteral("assetId"), asset_id(index)},
+        });
     }
     const QJsonObject payload{
-        {QStringLiteral("path"), item_path(*found)},
-        {QStringLiteral("kind"), kind_text},
-        {QStringLiteral("assetType"), asset_type(*found)},
-        {QStringLiteral("assetId"), asset_id(*found)},
+        {QStringLiteral("format"), QStringLiteral("dpe.drag")},
+        {QStringLiteral("formatVersion"), 1},
+        {QStringLiteral("projectId"), drag_project_id_},
+        {QStringLiteral("sourceRevision"), static_cast<qint64>(drag_revision_)},
+        {QStringLiteral("items"), items},
     };
     mime->setData(
         QStringLiteral("application/x-dragonpixel-project-item"),
@@ -1474,7 +1638,7 @@ QMimeData* ProjectModel::mimeData(const QModelIndexList& indexes) const
 
 Qt::DropActions ProjectModel::supportedDragActions() const
 {
-    return Qt::CopyAction;
+    return Qt::CopyAction | Qt::MoveAction;
 }
 
 namespace
@@ -1812,6 +1976,7 @@ QWidget* InspectorDelegate::createEditor(
         editor->setObjectName(QStringLiteral("InspectorBooleanEditor"));
         editor->setProperty("booleanEditor", true);
         editor->addItems({QStringLiteral("false"), QStringLiteral("true")});
+        connect(editor, &QComboBox::activated, editor, [editor] { editor->setProperty("dpeDirty", true); });
         return editor;
     }
     if (type == dragonpixel::metadata::value_type::integer)
@@ -1825,6 +1990,7 @@ QWidget* InspectorDelegate::createEditor(
         {
             editor->setSingleStep(std::max(1, index.data(EditorRoles::step).toInt()));
         }
+        connect(editor, &QSpinBox::valueChanged, editor, [editor] { editor->setProperty("dpeDirty", true); });
         return editor;
     }
     if (type == dragonpixel::metadata::value_type::number)
@@ -1839,6 +2005,7 @@ QWidget* InspectorDelegate::createEditor(
         {
             editor->setSingleStep(index.data(EditorRoles::step).toDouble());
         }
+        connect(editor, &QDoubleSpinBox::valueChanged, editor, [editor] { editor->setProperty("dpeDirty", true); });
         return editor;
     }
     if (type == dragonpixel::metadata::value_type::vector2
@@ -1848,6 +2015,28 @@ QWidget* InspectorDelegate::createEditor(
     {
         return new JsonTupleEditor{type, parent};
     }
+    if (type == dragonpixel::metadata::value_type::polymorphic_object)
+    {
+        auto* editor = new QComboBox{parent};
+        editor->setObjectName(QStringLiteral("InspectorPolymorphicEditor"));
+        editor->setProperty("polymorphicEditor", true);
+        const auto choices = index.data(EditorRoles::object_type_choices).toStringList();
+        const auto ids = index.data(EditorRoles::object_type_ids).toStringList();
+        const auto values = index.data(EditorRoles::object_type_values).toStringList();
+        if (index.data(EditorRoles::nullable_value).toBool())
+        {
+            editor->addItem(QStringLiteral("None"), QStringLiteral("null"));
+            editor->setItemData(0, QString{}, Qt::UserRole + 1);
+        }
+        for (int choice = 0; choice < choices.size(); ++choice)
+        {
+            editor->addItem(choices.at(choice), choice < values.size() ? values.at(choice) : QStringLiteral("null"));
+            editor->setItemData(editor->count() - 1, choice < ids.size() ? ids.at(choice) : QString{}, Qt::UserRole + 1);
+        }
+        editor->setAccessibleName(QStringLiteral("Concrete object type"));
+        connect(editor, &QComboBox::activated, editor, [editor] { editor->setProperty("dpeDirty", true); });
+        return editor;
+    }
     const auto choices = index.data(EditorRoles::enum_choices).toStringList();
     if (!choices.isEmpty())
     {
@@ -1856,11 +2045,13 @@ QWidget* InspectorDelegate::createEditor(
         editor->setProperty("enumEditor", true);
         editor->addItems(choices);
         editor->setAccessibleName(QStringLiteral("Inspector enum choice"));
+        connect(editor, &QComboBox::activated, editor, [editor] { editor->setProperty("dpeDirty", true); });
         return editor;
     }
     auto* editor = new QLineEdit{parent};
     editor->setObjectName(QStringLiteral("InspectorValueEditor"));
     editor->setAccessibleName(QStringLiteral("Inspector property value"));
+    connect(editor, &QLineEdit::textEdited, editor, [editor] { editor->setProperty("dpeDirty", true); });
     return editor;
 }
 
@@ -1872,6 +2063,21 @@ void InspectorDelegate::setEditorData(QWidget* editor, const QModelIndex& index)
         if (combo->property("booleanEditor").toBool())
         {
             combo->setCurrentIndex(text == QStringLiteral("true") ? 1 : 0);
+        }
+        else if (combo->property("polymorphicEditor").toBool())
+        {
+            const auto value = parse_json_value(text).toObject();
+            const auto type_id = value.value(QStringLiteral("typeId")).toString();
+            int selected = 0;
+            for (int choice = 0; choice < combo->count(); ++choice)
+            {
+                if (combo->itemData(choice, Qt::UserRole + 1).toString() == type_id)
+                {
+                    selected = choice;
+                    break;
+                }
+            }
+            combo->setCurrentIndex(selected);
         }
         else
         {
@@ -1924,6 +2130,7 @@ void InspectorDelegate::setEditorData(QWidget* editor, const QModelIndex& index)
             }
         }
     }
+    editor->setProperty("dpeDirty", false);
 }
 
 void InspectorDelegate::setModelData(
@@ -1931,11 +2138,24 @@ void InspectorDelegate::setModelData(
     QAbstractItemModel* model,
     const QModelIndex& index) const
 {
+    if (index.data(EditorRoles::mixed_value).toBool() && !editor->property("dpeDirty").toBool())
+    {
+        return;
+    }
     if (auto* combo = qobject_cast<QComboBox*>(editor))
     {
-        model->setData(index, combo->property("booleanEditor").toBool()
-            ? (combo->currentIndex() == 1 ? QStringLiteral("true") : QStringLiteral("false"))
-            : serialize_json_string(combo->currentText()));
+        if (combo->property("booleanEditor").toBool())
+        {
+            model->setData(index, combo->currentIndex() == 1 ? QStringLiteral("true") : QStringLiteral("false"));
+        }
+        else if (combo->property("polymorphicEditor").toBool())
+        {
+            model->setData(index, combo->currentData().toString());
+        }
+        else
+        {
+            model->setData(index, serialize_json_string(combo->currentText()));
+        }
     }
     else if (auto* integer = qobject_cast<QSpinBox*>(editor))
     {
@@ -1985,4 +2205,105 @@ void InspectorDelegate::setModelData(
         }
         model->setData(index, QString::fromUtf8(QJsonDocument{value}.toJson(QJsonDocument::Compact)));
     }
+}
+
+void InspectorDelegate::paint(
+    QPainter* painter,
+    const QStyleOptionViewItem& option,
+    const QModelIndex& index) const
+{
+    if (index.column() != 1 || !index.data(EditorRoles::property_id).isValid())
+    {
+        QStyledItemDelegate::paint(painter, option, index);
+        return;
+    }
+
+    QStyleOptionViewItem display_option{option};
+    initStyleOption(&display_option, index);
+    if (index.data(EditorRoles::mixed_value).toBool())
+    {
+        display_option.text = QStringLiteral("—");
+        display_option.palette.setColor(QPalette::Text, display_option.palette.color(QPalette::PlaceholderText));
+    }
+    else
+    {
+        const auto raw = index.data(Qt::EditRole).toString();
+        const auto value = parse_json_value(raw);
+        const auto type = static_cast<dragonpixel::metadata::value_type>(
+            index.data(EditorRoles::value_type).toInt());
+        if (value.isString())
+        {
+            display_option.text = value.toString();
+        }
+        else if (value.isNull())
+        {
+            display_option.text = QStringLiteral("None");
+        }
+        else if (value.isBool())
+        {
+            display_option.text = value.toBool() ? QStringLiteral("On") : QStringLiteral("Off");
+        }
+        else if (value.isObject()
+            && (type == dragonpixel::metadata::value_type::vector2
+                || type == dragonpixel::metadata::value_type::vector3
+                || type == dragonpixel::metadata::value_type::quaternion
+                || type == dragonpixel::metadata::value_type::color))
+        {
+            const auto object = value.toObject();
+            const auto names = type == dragonpixel::metadata::value_type::color
+                ? QStringList{QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B"), QStringLiteral("A")}
+                : type == dragonpixel::metadata::value_type::vector2
+                    ? QStringList{QStringLiteral("X"), QStringLiteral("Y")}
+                    : QStringList{QStringLiteral("X"), QStringLiteral("Y"), QStringLiteral("Z")};
+            const auto keys = type == dragonpixel::metadata::value_type::color
+                ? QStringList{QStringLiteral("r"), QStringLiteral("g"), QStringLiteral("b"), QStringLiteral("a")}
+                : type == dragonpixel::metadata::value_type::vector2
+                    ? QStringList{QStringLiteral("x"), QStringLiteral("y")}
+                    : QStringList{QStringLiteral("x"), QStringLiteral("y"), QStringLiteral("z")};
+            QStringList fields;
+            for (int field = 0; field < keys.size(); ++field)
+            {
+                fields.push_back(QStringLiteral("%1 %2").arg(names.at(field)).arg(
+                    object.value(keys.at(field)).toDouble(), 0, 'g', 5));
+            }
+            display_option.text = fields.join(QStringLiteral("   "));
+        }
+        else if (type == dragonpixel::metadata::value_type::polymorphic_object && value.isObject())
+        {
+            const auto ids = index.data(EditorRoles::object_type_ids).toStringList();
+            const auto choices = index.data(EditorRoles::object_type_choices).toStringList();
+            const auto type_id = value.toObject().value(QStringLiteral("typeId")).toString();
+            const auto choice_index = ids.indexOf(type_id);
+            display_option.text = choice_index >= 0
+                ? choices.at(choice_index)
+                : QStringLiteral("Missing type %1").arg(type_id);
+        }
+        else if (type == dragonpixel::metadata::value_type::object && value.isObject())
+        {
+            display_option.text = QStringLiteral("Object");
+        }
+        else if (type == dragonpixel::metadata::value_type::list && value.isArray())
+        {
+            display_option.text = QStringLiteral("%1 items").arg(value.toArray().size());
+        }
+        else if (type == dragonpixel::metadata::value_type::dictionary && value.isObject())
+        {
+            display_option.text = QStringLiteral("%1 entries").arg(value.toObject().size());
+        }
+        else if (type == dragonpixel::metadata::value_type::component_reference && value.isObject())
+        {
+            const auto reference = value.toObject();
+            display_option.text = QStringLiteral("%1  (%2)")
+                .arg(reference.value(QStringLiteral("entityId")).toString(),
+                     reference.value(QStringLiteral("componentTypeId")).toString());
+        }
+        else
+        {
+            display_option.text = raw;
+        }
+    }
+    const auto* style = display_option.widget != nullptr
+        ? display_option.widget->style()
+        : QApplication::style();
+    style->drawControl(QStyle::CE_ItemViewItem, &display_option, painter, display_option.widget);
 }

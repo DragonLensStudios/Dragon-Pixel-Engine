@@ -59,6 +59,12 @@ inline constexpr int console_entity_id = Qt::UserRole + 35;
 inline constexpr int console_asset_id = Qt::UserRole + 36;
 inline constexpr int console_navigation_path = Qt::UserRole + 37;
 inline constexpr int console_filter_text = Qt::UserRole + 38;
+inline constexpr int mixed_value = Qt::UserRole + 39;
+inline constexpr int object_type_choices = Qt::UserRole + 40;
+inline constexpr int object_type_ids = Qt::UserRole + 41;
+inline constexpr int object_type_values = Qt::UserRole + 42;
+inline constexpr int property_path = Qt::UserRole + 43;
+inline constexpr int nullable_value = Qt::UserRole + 44;
 }
 
 class RecursiveFilterProxyModel final : public QSortFilterProxyModel
@@ -102,6 +108,17 @@ private:
     QString status_filter_;
 };
 
+class ProjectFolderProxyModel final : public QSortFilterProxyModel
+{
+public:
+    explicit ProjectFolderProxyModel(QObject* parent = nullptr);
+
+protected:
+    [[nodiscard]] bool filterAcceptsRow(
+        int source_row,
+        const QModelIndex& source_parent) const override;
+};
+
 class HierarchyModel final : public QStandardItemModel
 {
 public:
@@ -110,13 +127,25 @@ public:
         const QString&,
         bool)>;
     using ReparentHandler = std::function<bool(
-        const dragonpixel::core::uuid&,
+        const std::vector<dragonpixel::core::uuid>&,
         const std::optional<dragonpixel::core::uuid>&,
         std::optional<std::size_t>)>;
+    using ProjectDropHandler = std::function<bool(
+        const QString&,
+        const QString&,
+        const QString&,
+        const QString&,
+        const std::optional<dragonpixel::core::uuid>&)>;
 
     explicit HierarchyModel(QObject* parent = nullptr);
 
     void set_handlers(EditHandler edit, ReparentHandler reparent);
+    void set_project_drop_handler(ProjectDropHandler handler);
+    void set_drag_context(
+        QString project_id,
+        QString scene_id,
+        quint64 source_revision,
+        quint64 project_source_revision);
     void rebuild(const dragonpixel::scene::scene* scene);
     [[nodiscard]] QModelIndex index_for_entity(const dragonpixel::core::uuid& id) const;
 
@@ -139,7 +168,12 @@ private:
     const dragonpixel::scene::scene* scene_{};
     EditHandler edit_handler_;
     ReparentHandler reparent_handler_;
+    ProjectDropHandler project_drop_handler_;
     bool rebuilding_{};
+    QString drag_project_id_;
+    QString drag_scene_id_;
+    quint64 drag_source_revision_{};
+    quint64 project_source_revision_{};
 };
 
 enum class ProjectItemKind
@@ -149,6 +183,8 @@ enum class ProjectItemKind
     scene,
     prefab,
     asset,
+    component_source,
+    component_manifest,
     manifest,
 };
 
@@ -194,6 +230,8 @@ public:
     [[nodiscard]] static QString item_path(const QModelIndex& index);
     [[nodiscard]] static QString asset_type(const QModelIndex& index);
     [[nodiscard]] static QString asset_id(const QModelIndex& index);
+    [[nodiscard]] const QString& drag_project_id() const noexcept { return drag_project_id_; }
+    [[nodiscard]] quint64 drag_revision() const noexcept { return drag_revision_; }
     [[nodiscard]] QStringList mimeTypes() const override;
     [[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
     [[nodiscard]] Qt::DropActions supportedDragActions() const override;
@@ -205,6 +243,8 @@ private:
 
     QHash<QString, QList<QPersistentModelIndex>> asset_rows_by_id_;
     QHash<QString, QPersistentModelIndex> asset_rows_by_path_;
+    QString drag_project_id_;
+    quint64 drag_revision_{};
 };
 
 enum class ConsoleColumn
@@ -275,5 +315,9 @@ public:
     void setModelData(
         QWidget* editor,
         QAbstractItemModel* model,
+        const QModelIndex& index) const override;
+    void paint(
+        QPainter* painter,
+        const QStyleOptionViewItem& option,
         const QModelIndex& index) const override;
 };

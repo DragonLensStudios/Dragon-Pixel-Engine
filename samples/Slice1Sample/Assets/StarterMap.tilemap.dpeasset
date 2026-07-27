@@ -1,0 +1,17 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v2/asset-metadata.schema.json",
+  "format": "dpe.asset",
+  "formatVersion": 2,
+  "engineVersion": "0.3.0-slice2",
+  "assetId": "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
+  "assetType": "tilemap",
+  "source": "Tiles/StarterMap.dpetilemap",
+  "dependencies": [
+    "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6"
+  ],
+  "importSettings": {
+    "chunkSize": 32
+  },
+  "importerDiagnostics": [],
+  "previewDiagnostics": []
+}

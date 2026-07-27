@@ -19,7 +19,7 @@ Before planning, reviewing, or changing architecture or implementation:
 2. Read the Design and Prompt/Result documents completely.
 3. Confirm their design revision fields match this file.
 
-The current synchronized design revision is `DPE-ARCH-0007`, last reviewed 2026-07-25. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
+The current synchronized design revision is `DPE-ARCH-0014`, last reviewed 2026-07-27. If either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict.
 
 The first-structure prompt is immutable historical evidence. The Notes file is a living intake/context record and may receive user-supplied additions, but those additions must be mirrored. Neither file overrides the current Design or Prompt/Result documents.
 
@@ -89,21 +89,31 @@ Implementation progress that does not change architecture should update normal r
 - Production viewport acceptance must use scene-driven MonoGame/KNI graphics-device frames, revision-correlated picking, and input-to-present evidence. Synthetic frames may remain diagnostic fixtures but cannot satisfy a rendering gate.
 - Keep Box2D and Jolt private behind engine-owned physics interfaces and neutral DTO/C ABI batches. Backend handles and runtime state are transient and never serialized.
 - Linked prefab sources, mappings, normalized overrides, and fallbacks are distinct from locally owned entity records. Runtime snapshots flatten provenance, and every prefab write uses validated command and recovery paths.
+- Route project creation, upgrade, archive/restore, general asset import, migration, build, packaging, plugin, update, and support-bundle workflows through their accepted editor services and validated operation transactions. Use resolved containment, isolated staging, cancellation, structured diagnostics, audit correlation, and recoverable commit/rollback boundaries.
+- Keep template, importer, migration, build, packaging, project-plugin, and analyzer code out of the editor process. The editor consumes validated manifests and structured results; installed project/runtime modules load only in disposable workers.
+- Keep project-source editing outside the editor process. Project Explorer may index only stable contained source files beneath declared component roots; Rider integration regenerates disposable IDE state, launches with an argument vector, and never implies build, reload, lifecycle execution, or direct scene mutation.
+- Keep `GameObjectController` a backward-compatible authoring adapter over the worker-only component contracts. Its stable GUID, input/time state, and shared `Vector3` Transform are runtime-only; dirty controller transforms may affect disposable rendering and picking but never write through to authoring files, and Stop/reload/crash must discard them.
+- Keep release artifacts relocatable. Resolve resources from the install root or approved per-user application-data roots; do not ship source/build-machine absolute paths or developer credentials.
+- Apply updates through the external verified helper with signed/hash-bound manifests, side-by-side staging, and last-known-good rollback. The running editor may not overwrite its own installation.
+- Keep crash/support evidence local and user-initiated by default. Preview and redact bundle content, exclude secrets/project content/prompts by default, and do not enable network telemetry without a separate accepted architecture decision and granular opt-in.
+- Use one generated product-version source across native, managed, Python, schemas, protocols, packages, and update manifests before release. Contract-specific versions and capability negotiation remain explicit.
 
 ## Current Work Boundary
 
-The active work item is the mirrored plan `Dragon Pixel Engine Functional Editor Slice 1 Closure and Complete Slice 2 Plan.md`. It expands implementation to complete Slice 2 while preserving every original Slice 1 gate.
+The active master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. The current implementation increment is the mirrored `Dragon Pixel Engine New Project Asset Workflow Prefab Hierarchy and Multi-Inspector Plan.md`. Together they authorize gate-preserving completion of the DPE-ARCH-0014 Project Hub/minimal-template, asset-v3/Project Browser, linked-prefab drag, ordered Hierarchy multi-operation, and multiple lockable Inspector work without claiming the still-open POC F/H/M/O or slice gates. Other narrower plans remain historical evidence and are superseded for active tracking only.
 
 Proceed in evidence-backed increments:
 
-1. Repair the Windows path-with-spaces launcher, absolute frame pacing, and POC B input-to-present instrumentation. macOS currently passes 14 of 15 tests but fails the unchanged 1280×720/30 FPS viewport gate.
-2. Complete POCs E-H and keep the corresponding ADRs Proposed until their three-platform evidence passes.
-3. Implement service-backed document/command/project foundations and real scene-driven framework rendering/picking.
-4. Implement private Box2D/Jolt physics and linked nested prefabs through the accepted contracts.
-5. Complete the Qt Slice 2 hierarchy, typed Inspector, Project Explorer, unified 2D/3D Scene View, workspaces, Console, accessibility, and designer workflows.
-6. Close Slice 1 only with its original three-platform acceptance. Close Slice 2 only when the documented 2D/3D nested-prefab and physics designer scenarios pass without JSON editing.
+1. Preserve the completed `DPE-ARCH-0010` fluid workspace/direct attachment/lifecycle, `DPE-ARCH-0011` Rider source-authoring, `DPE-ARCH-0012` managed-controller/runtime-transform, and `DPE-ARCH-0013` configurable input-map/rebinding increments while implementing `DPE-ARCH-0014` without weakening editor/worker ownership, portable action contracts, or Stop/discard neutralization. Repair the intermittent atomic-publication recovery defect before claiming a new authoritative full Windows matrix.
+2. Close Slice 1 without changing its original thresholds: complete aggregate POC J Qt-event-to-paint evidence, repair the macOS POC B failure, and pass the current strict Release/native-sanitizer and foundational matrices on Windows, macOS, and Ubuntu.
+3. Close Slice 2 by completing POCs E-L, the accepted editor-service split, real Scene/Game/input/tile/physics/prefab paths, complete designer workflows, accessibility, dependency/distribution evidence, and three-platform matrices without JSON editing.
+4. Complete Slice 3 through POCs M-R: start with safe declarative 2D/3D project creation and recovery, then project-v4 lifecycle/settings/upgrades/archive, asset-v3 import/cache integrity, reversible MonoGame/KNI migration, declared worker builds, relocatable packaging, plugin management, verified updates/rollback, and the bounded Unity bridge.
+5. Complete Slice 4 through POC S: one product-version source, frozen performance/memory budgets, long-running and corruption recovery, complete compatibility fixtures, clean install/update/rollback/uninstall, security/license/privacy/accessibility reviews, documentation/reference-project reproduction, and final three-platform release-candidate evidence.
+6. Close each slice only when every acceptance statement has direct durable evidence. Mark the active plan complete and publish `1.0.0` only after all applicable gates pass.
 
-Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, or broaden into Slice 3 project lifecycle/packaging/Unity work.
+The last complete Windows baseline passes 45 of 45 strict Release tests and 45 of 45 MSVC AddressSanitizer tests; focused DPE-ARCH-0010 editor/component, DPE-ARCH-0011 Rider source-authoring, DPE-ARCH-0012 managed-controller/runtime-transform, and DPE-ARCH-0013 input-map/rebinding Release/sanitizer aliases pass. The DPE-ARCH-0013 production-style bundle, including the Inspector/input-settings/`MyMover` follow-up, passes its packaged MonoGame self-test with all 183 manifest records verified; no physical-controller or current Ubuntu/macOS DPE-ARCH-0013 evidence has run. DPE-ARCH-0014 implementation evidence has not yet been established. The intermittent atomic-publication recovery defect blocks a new authoritative complete matrix. Aggregate POC J Qt-event-to-paint timing remains open, Ubuntu's latest full evidence predates DPE-ARCH-0008, macOS retains the 14-of-15 POC B failure, POCs M-S are unimplemented, every ADR remains Proposed, and KNI remains experimental.
+
+Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, promote an ADR without its named gate, claim a slice from partial/platform-local evidence, or broaden beyond the documented 1.0 scope into Unreal, AAA rendering, networking, visual scripting, a marketplace, or general IDE behavior.
 
 ## Repository Practices
 

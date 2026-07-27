@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QDirIterator>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -30,6 +31,8 @@ using json = nlohmann::ordered_json;
 
 constexpr auto wrapper_prefab_id = "f0000000-0000-4000-8000-000000000001";
 constexpr auto wrapper_root_id = "f0000000-0000-4000-8000-000000000002";
+constexpr std::size_t maximum_prefab_depth = 32;
+constexpr std::size_t maximum_prefab_entities = 100000;
 
 QString diagnostic_text(const diagnostic& value)
 {
@@ -130,6 +133,49 @@ bool write_atomic(const QString& path, const QByteArray& bytes, QString& error)
     return true;
 }
 
+QString apply_backup_path(const QString& source_path)
+{
+    return source_path + QStringLiteral(".dpebak");
+}
+
+QString apply_recovery_marker_path(const QString& source_path)
+{
+    return source_path + QStringLiteral(".dpeapply");
+}
+
+QByteArray sha256_hex(const QByteArray& bytes)
+{
+    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
+}
+
+QByteArray apply_recovery_marker(const QByteArray& before, const QByteArray& after)
+{
+    return QByteArray::fromStdString(json{
+        {"afterSha256", sha256_hex(after).toStdString()},
+        {"beforeSha256", sha256_hex(before).toStdString()},
+        {"format", "dpe.prefab-apply-recovery"},
+        {"formatVersion", 1},
+    }.dump(2) + "\n");
+}
+
+bool source_revision_is_current(const instance_record& instance, const document& source_document)
+{
+    return instance.source_revision.empty()
+        || instance.source_revision == dragonpixel::prefab::compute_revision(source_document);
+}
+
+void remove_recovery_artifact(
+    const QString& path,
+    QStringList& diagnostics,
+    const QString& diagnostic_code)
+{
+    if (QFileInfo::exists(path) && !QFile::remove(path))
+    {
+        diagnostics.push_back(QStringLiteral("%1: Could not remove recovery artifact %2.")
+                                  .arg(diagnostic_code, path));
+    }
+}
+
 bool path_within(const QString& root, const QString& candidate)
 {
     if (root.isEmpty())
@@ -200,6 +246,125 @@ void PrefabService::refresh_sources(QStringList* diagnostics)
         return;
     }
 
+    const auto append_diagnostic = [&](QString value) {
+        if (diagnostics != nullptr)
+        {
+            diagnostics->push_back(std::move(value));
+        }
+    };
+    QStringList recovery_markers;
+    QDirIterator recovery_iterator{
+        project_root_,
+        {QStringLiteral("*.dpeprefab.dpeapply")},
+        QDir::Files,
+        QDirIterator::Subdirectories};
+    while (recovery_iterator.hasNext())
+    {
+        recovery_markers.push_back(QDir::cleanPath(recovery_iterator.next()));
+    }
+    recovery_markers.sort(Qt::CaseInsensitive);
+    for (const auto& marker_path : recovery_markers)
+    {
+        auto source_path = marker_path;
+        source_path.chop(QStringLiteral(".dpeapply").size());
+        const auto backup_path = apply_backup_path(source_path);
+        if (!path_within(project_root_, marker_path)
+            || !path_within(project_root_, source_path)
+            || !path_within(project_root_, backup_path))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_OUTSIDE_PROJECT: Pending Apply evidence resolved outside the project root and was not read or modified: %1")
+                                  .arg(marker_path));
+            continue;
+        }
+        QFile marker{marker_path};
+        if (!marker.open(QIODevice::ReadOnly))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_MARKER_INVALID: Pending Apply marker %1 was unreadable.")
+                                  .arg(marker_path));
+            continue;
+        }
+        const auto marker_json = json::parse(marker.readAll().toStdString(), nullptr, false);
+        marker.close();
+        if (marker_json.is_discarded() || !marker_json.is_object()
+            || marker_json.value("format", std::string{}) != "dpe.prefab-apply-recovery"
+            || marker_json.value("formatVersion", 0) != 1
+            || !marker_json.contains("beforeSha256") || !marker_json["beforeSha256"].is_string()
+            || !marker_json.contains("afterSha256") || !marker_json["afterSha256"].is_string())
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_MARKER_INVALID: Pending Apply marker %1 was malformed or incompatible.")
+                                  .arg(marker_path));
+            continue;
+        }
+        QFile backup{backup_path};
+        if (!backup.open(QIODevice::ReadOnly))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_BACKUP_MISSING: Pending Apply marker %1 has no readable recovery copy.")
+                                  .arg(marker_path));
+            continue;
+        }
+        const auto before = backup.readAll();
+        backup.close();
+        const auto expected_before = marker_json["beforeSha256"].get<std::string>();
+        const auto expected_after = marker_json["afterSha256"].get<std::string>();
+        if (sha256_hex(before).toStdString() != expected_before)
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_BACKUP_MISMATCH: Recovery copy %1 did not match its recorded hash; no source was changed.")
+                                  .arg(backup_path));
+            continue;
+        }
+        bool already_restored = false;
+        if (QFileInfo::exists(source_path))
+        {
+            QFile current{source_path};
+            if (!current.open(QIODevice::ReadOnly))
+            {
+                append_diagnostic(QStringLiteral(
+                    "DPE.PREFAB.RECOVERY_CONFLICT: Current prefab source %1 was unreadable; no recovery was attempted.")
+                                      .arg(source_path));
+                continue;
+            }
+            const auto current_hash = sha256_hex(current.readAll()).toStdString();
+            current.close();
+            already_restored = current_hash == expected_before;
+            if (!already_restored && current_hash != expected_after)
+            {
+                append_diagnostic(QStringLiteral(
+                    "DPE.PREFAB.RECOVERY_CONFLICT: Current prefab source %1 no longer matched the interrupted Apply; no recovery was attempted.")
+                                      .arg(source_path));
+                continue;
+            }
+        }
+        QString error;
+        if (!already_restored && !write_atomic(source_path, before, error))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_RESTORE_FAILED: Could not restore %1: %2")
+                                  .arg(source_path, error));
+            continue;
+        }
+        if (!QFile::remove(marker_path))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_CLEANUP_FAILED: Restored %1 but could not remove its pending marker.")
+                                  .arg(source_path));
+            continue;
+        }
+        if (QFileInfo::exists(backup_path) && !QFile::remove(backup_path))
+        {
+            append_diagnostic(QStringLiteral(
+                "DPE.PREFAB.RECOVERY_CLEANUP_FAILED: Restored %1 but could not remove its recovery copy.")
+                                  .arg(source_path));
+        }
+        append_diagnostic(QStringLiteral(
+            "DPE.PREFAB.RECOVERY_RESTORED: Restored the prefab source before-image for interrupted Apply %1.")
+                              .arg(source_path));
+    }
+
     QStringList paths;
     QDirIterator iterator{
         project_root_,
@@ -214,29 +379,38 @@ void PrefabService::refresh_sources(QStringList* diagnostics)
     for (const auto& path : paths)
     {
         QStringList local_diagnostics;
-        QFile file{path};
-        if (!file.open(QIODevice::ReadOnly))
+        if (!path_within(project_root_, path))
         {
-            local_diagnostics.push_back(
-                QStringLiteral("DPE.PREFAB.READ_FAILED: %1").arg(file.errorString()));
+            local_diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.OUTSIDE_PROJECT: Indexed prefab source resolved outside the project root and was ignored: %1")
+                                            .arg(path));
         }
         else
         {
-            const auto loaded = dragonpixel::prefab::read_json(file.readAll().toStdString());
-            for (const auto& item : loaded.diagnostics)
+            QFile file{path};
+            if (!file.open(QIODevice::ReadOnly))
             {
-                local_diagnostics.push_back(diagnostic_text(item));
+                local_diagnostics.push_back(
+                    QStringLiteral("DPE.PREFAB.READ_FAILED: %1").arg(file.errorString()));
             }
-            if (loaded.value)
+            else
             {
-                const auto [found, inserted] = sources_.emplace(
-                    loaded.value->prefab_id,
-                    SourceEntry{std::move(*loaded.value), path});
-                if (!inserted)
+                const auto loaded = dragonpixel::prefab::read_json(file.readAll().toStdString());
+                for (const auto& item : loaded.diagnostics)
                 {
-                    local_diagnostics.push_back(QStringLiteral(
-                        "DPE.PREFAB.DUPLICATE_ID: %1 and %2 declare the same prefabId")
-                            .arg(found->second.path, path));
+                    local_diagnostics.push_back(diagnostic_text(item));
+                }
+                if (loaded.value)
+                {
+                    const auto [found, inserted] = sources_.emplace(
+                        loaded.value->prefab_id,
+                        SourceEntry{std::move(*loaded.value), path});
+                    if (!inserted)
+                    {
+                        local_diagnostics.push_back(QStringLiteral(
+                            "DPE.PREFAB.DUPLICATE_ID: %1 and %2 declare the same prefabId")
+                                                        .arg(found->second.path, path));
+                    }
                 }
             }
         }
@@ -351,6 +525,7 @@ PrefabHydrationResult PrefabService::hydrate(const dragonpixel::scene::scene& st
     std::vector<entity> entities{stored_scene.entities().begin(), stored_scene.entities().end()};
     std::unordered_set<uuid, dragonpixel::core::uuid_hash> ids;
     bool identity_collision = false;
+    bool unresolved_without_fallback = false;
     for (const auto& item : entities)
     {
         ids.insert(item.id);
@@ -374,10 +549,48 @@ PrefabHydrationResult PrefabService::hydrate(const dragonpixel::scene::scene& st
         {
             continue;
         }
-        const auto resolved = dragonpixel::prefab::resolve(*instance, provider);
+        dragonpixel::prefab::resolve_result resolved;
+        const auto* current_source = source(instance->source_asset_id);
+        if (current_source != nullptr && !source_revision_is_current(*instance, current_source->document))
+        {
+            resolved.entities = instance->fallback_entities;
+            resolved.used_fallback = true;
+            result.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.SOURCE_REVISION_MISMATCH: Source %1 changed from revision %2 to %3; the last resolved fallback was retained until Repair/Rebase.")
+                                             .arg(
+                                                 QString::fromStdString(instance->source_asset_id.to_string()),
+                                                 QString::fromStdString(instance->source_revision),
+                                                 QString::fromStdString(dragonpixel::prefab::compute_revision(
+                                                     current_source->document))));
+        }
+        else
+        {
+            resolved = dragonpixel::prefab::resolve(*instance, provider);
+        }
         for (const auto& item : resolved.diagnostics)
         {
             result.diagnostics.push_back(diagnostic_text(item));
+        }
+        if (has_errors(resolved.diagnostics))
+        {
+            if (instance->fallback_entities.empty())
+            {
+                unresolved_without_fallback = true;
+                result.diagnostics.push_back(QStringLiteral(
+                    "DPE.PREFAB.CANDIDATE_REJECTED: Prefab resolution failed and no last-known-good fallback was available."));
+                continue;
+            }
+            resolved.entities = instance->fallback_entities;
+            resolved.used_fallback = true;
+            result.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.RESOLUTION_FALLBACK: Prefab resolution failed validation; the complete last-known-good fallback was retained instead of partial materialization."));
+        }
+        if (resolved.used_fallback && resolved.entities.empty())
+        {
+            unresolved_without_fallback = true;
+            result.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.CANDIDATE_REJECTED: The prefab source was unavailable or incompatible and no fallback entities were available."));
+            continue;
         }
         for (const auto& materialized : resolved.entities)
         {
@@ -393,10 +606,13 @@ PrefabHydrationResult PrefabService::hydrate(const dragonpixel::scene::scene& st
         }
     }
 
-    if (identity_collision)
+    if (identity_collision || unresolved_without_fallback)
     {
-        result.diagnostics.push_back(QStringLiteral(
-            "DPE.PREFAB.CANDIDATE_REJECTED: The scene was not opened because accepting a linked/local identity collision could lose local data on save."));
+        if (identity_collision)
+        {
+            result.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.CANDIDATE_REJECTED: The scene was not opened because accepting a linked/local identity collision could lose local data on save."));
+        }
         ownership_.clear();
         return result;
     }
@@ -425,6 +641,36 @@ dragonpixel::scene::scene PrefabService::persistent_copy(
     dragonpixel::scene::scene_document_extras extras;
     extras.physics = authoring_scene.physics_settings();
     extras.prefab_instances = authoring_scene.prefab_instances();
+    if (extras.prefab_instances.is_array())
+    {
+        for (std::size_t index = 0; index < extras.prefab_instances.size(); ++index)
+        {
+            auto parsed = parse_instance(extras.prefab_instances[index]);
+            if (!parsed)
+            {
+                continue;
+            }
+            std::unordered_set<uuid, dragonpixel::core::uuid_hash> linked_ids;
+            for (const auto& mapping : parsed->entity_mappings)
+            {
+                linked_ids.insert(mapping.instance_entity_id);
+            }
+            for (const auto& fallback : parsed->fallback_entities)
+            {
+                linked_ids.insert(fallback.id);
+            }
+            std::vector<entity> fallback;
+            for (const auto& candidate : authoring_scene.entities())
+            {
+                if (linked_ids.contains(candidate.id))
+                {
+                    fallback.push_back(candidate);
+                }
+            }
+            parsed->fallback_entities = std::move(fallback);
+            extras.prefab_instances[index] = instance_json(*parsed, &extras.prefab_instances[index]);
+        }
+    }
     extras.has_explicit_sibling_order = true;
     return {authoring_scene.id(), authoring_scene.name(), std::move(local_entities), std::move(extras)};
 }
@@ -449,6 +695,7 @@ void PrefabService::rebuild_ownership(const json& instances)
                 index,
                 parsed->instance_id,
                 parsed->source_asset_id,
+                parsed->source_revision,
                 mapping.source_entity_id,
                 mapping.nested_path,
                 mapping.instance_entity_id == parsed->root_entity_id,
@@ -463,6 +710,7 @@ void PrefabService::rebuild_ownership(const json& instances)
                     index,
                     parsed->instance_id,
                     parsed->source_asset_id,
+                    parsed->source_revision,
                     fallback.id,
                     {},
                     fallback.id == parsed->root_entity_id,
@@ -586,7 +834,11 @@ bool PrefabService::source_available_for_entity(const uuid& entity_id) const
     {
         return false;
     }
-    return source(found->second.source_asset_id) != nullptr;
+    const auto* current_source = source(found->second.source_asset_id);
+    return current_source != nullptr
+        && (found->second.source_revision.empty()
+            || found->second.source_revision
+                == dragonpixel::prefab::compute_revision(current_source->document));
 }
 
 bool PrefabService::has_overrides_for_entity(const uuid& entity_id) const
@@ -766,41 +1018,97 @@ PrefabCommandResult PrefabService::augment_commands(
     return result;
 }
 
-void PrefabService::allocate_mappings(
+bool PrefabService::allocate_mappings(
     const document& source_document,
     std::vector<uuid> path,
     instance_record& instance,
     QStringList& diagnostics) const
 {
-    for (const auto& source_entity : source_document.entities)
-    {
-        const auto exists = std::any_of(instance.entity_mappings.begin(), instance.entity_mappings.end(),
-            [&](const auto& mapping) {
-                return mapping.source_entity_id == source_entity.id && mapping.nested_path == path;
-            });
-        if (!exists)
-        {
-            instance.entity_mappings.push_back({path, source_entity.id, uuid::random_v4()});
-        }
-    }
-    for (const auto& nested : source_document.prefab_instances)
-    {
-        auto nested_path = path;
-        nested_path.push_back(nested.instance_id);
-        const auto* dependency = source(nested.source_asset_id);
-        if (dependency != nullptr)
-        {
-            allocate_mappings(dependency->document, std::move(nested_path), instance, diagnostics);
-            continue;
-        }
-        diagnostics.push_back(QStringLiteral(
-            "DPE.PREFAB.MISSING_SOURCE: Allocating stable fallback mappings for unavailable nested source %1.")
-                .arg(QString::fromStdString(nested.source_asset_id.to_string())));
-        for (const auto& fallback : nested.fallback_entities)
-        {
-            instance.entity_mappings.push_back({nested_path, fallback.id, uuid::random_v4()});
-        }
-    }
+    std::size_t entity_count = 0;
+    std::vector<uuid> dependency_stack;
+    std::function<bool(const document&, std::vector<uuid>, std::size_t)> visit =
+        [&](const document& current, std::vector<uuid> current_path, std::size_t depth) {
+            if (depth > maximum_prefab_depth)
+            {
+                diagnostics.push_back(QStringLiteral(
+                    "DPE.PREFAB.DEPTH_LIMIT: Prefab mapping allocation exceeded the configured nesting depth at %1.")
+                                          .arg(QString::fromStdString(current.prefab_id.to_string())));
+                return false;
+            }
+            if (std::find(dependency_stack.begin(), dependency_stack.end(), current.prefab_id)
+                != dependency_stack.end())
+            {
+                diagnostics.push_back(QStringLiteral(
+                    "DPE.PREFAB.CYCLE: Prefab mapping allocation encountered a direct or indirect dependency cycle at %1.")
+                                          .arg(QString::fromStdString(current.prefab_id.to_string())));
+                return false;
+            }
+            dependency_stack.push_back(current.prefab_id);
+            for (const auto& source_entity : current.entities)
+            {
+                if (entity_count >= maximum_prefab_entities)
+                {
+                    diagnostics.push_back(QStringLiteral(
+                        "DPE.PREFAB.ENTITY_LIMIT: Prefab mapping allocation exceeded the configured entity limit at %1.")
+                                              .arg(QString::fromStdString(current.prefab_id.to_string())));
+                    dependency_stack.pop_back();
+                    return false;
+                }
+                ++entity_count;
+                const auto exists = std::any_of(
+                    instance.entity_mappings.begin(), instance.entity_mappings.end(), [&](const auto& mapping) {
+                        return mapping.source_entity_id == source_entity.id
+                            && mapping.nested_path == current_path;
+                    });
+                if (!exists)
+                {
+                    instance.entity_mappings.push_back(
+                        {current_path, source_entity.id, uuid::random_v4()});
+                }
+            }
+            for (const auto& nested : current.prefab_instances)
+            {
+                auto nested_path = current_path;
+                nested_path.push_back(nested.instance_id);
+                const auto* dependency = source(nested.source_asset_id);
+                if (dependency != nullptr)
+                {
+                    if (!visit(dependency->document, std::move(nested_path), depth + 1))
+                    {
+                        dependency_stack.pop_back();
+                        return false;
+                    }
+                    continue;
+                }
+                diagnostics.push_back(QStringLiteral(
+                    "DPE.PREFAB.MISSING_SOURCE: Allocating stable fallback mappings for unavailable nested source %1.")
+                                          .arg(QString::fromStdString(nested.source_asset_id.to_string())));
+                for (const auto& fallback : nested.fallback_entities)
+                {
+                    if (entity_count >= maximum_prefab_entities)
+                    {
+                        diagnostics.push_back(QStringLiteral(
+                            "DPE.PREFAB.ENTITY_LIMIT: Nested prefab fallback mapping allocation exceeded the configured entity limit."));
+                        dependency_stack.pop_back();
+                        return false;
+                    }
+                    ++entity_count;
+                    const auto exists = std::any_of(
+                        instance.entity_mappings.begin(), instance.entity_mappings.end(), [&](const auto& mapping) {
+                            return mapping.source_entity_id == fallback.id
+                                && mapping.nested_path == nested_path;
+                        });
+                    if (!exists)
+                    {
+                        instance.entity_mappings.push_back(
+                            {nested_path, fallback.id, uuid::random_v4()});
+                    }
+                }
+            }
+            dependency_stack.pop_back();
+            return true;
+        };
+    return visit(source_document, std::move(path), 0);
 }
 
 std::vector<command> PrefabService::materialization_commands(
@@ -876,11 +1184,14 @@ PrefabOperationResult PrefabService::instantiate(
     instance_record instance;
     instance.instance_id = uuid::random_v4();
     instance.source_asset_id = entry->document.prefab_id;
-    instance.source_revision = entry->document.revision.empty()
-        ? dragonpixel::prefab::compute_revision(entry->document)
-        : entry->document.revision;
+    instance.source_revision = dragonpixel::prefab::compute_revision(entry->document);
     instance.placement_parent_id = placement_parent;
-    allocate_mappings(entry->document, {}, instance, result.diagnostics);
+    if (!allocate_mappings(entry->document, {}, instance, result.diagnostics))
+    {
+        result.message = QStringLiteral(
+            "Prefab mapping allocation rejected an unsafe dependency graph before scene mutation.");
+        return result;
+    }
     const auto root_mapping = std::find_if(instance.entity_mappings.begin(), instance.entity_mappings.end(),
         [&](const auto& mapping) {
             return mapping.nested_path.empty() && mapping.source_entity_id == entry->document.root_entity_id;
@@ -1173,7 +1484,10 @@ std::vector<PrefabApplyLevel> PrefabService::apply_levels_for_entity(const uuid&
         return result;
     }
     const auto* source_entry = source(owner->second.source_asset_id);
-    if (source_entry == nullptr)
+    if (source_entry == nullptr
+        || (!owner->second.source_revision.empty()
+            && owner->second.source_revision
+                != dragonpixel::prefab::compute_revision(source_entry->document)))
     {
         return result;
     }
@@ -1181,8 +1495,18 @@ std::vector<PrefabApplyLevel> PrefabService::apply_levels_for_entity(const uuid&
         QStringLiteral("Root source — %1").arg(QFileInfo{source_entry->path}.completeBaseName()),
         {},
     });
-    std::function<void(const document&, std::vector<uuid>, QString)> visit =
-        [&](const document& current, std::vector<uuid> path, QString label) {
+    bool safe = true;
+    std::vector<uuid> dependency_stack;
+    std::function<void(const document&, std::vector<uuid>, QString, std::size_t)> visit =
+        [&](const document& current, std::vector<uuid> path, QString label, std::size_t depth) {
+            if (!safe || depth > maximum_prefab_depth
+                || std::find(dependency_stack.begin(), dependency_stack.end(), current.prefab_id)
+                    != dependency_stack.end())
+            {
+                safe = false;
+                return;
+            }
+            dependency_stack.push_back(current.prefab_id);
             for (const auto& nested : current.prefab_instances)
             {
                 auto nested_path = path;
@@ -1195,17 +1519,23 @@ std::vector<PrefabApplyLevel> PrefabService::apply_levels_for_entity(const uuid&
                 const auto nested_label = label + QStringLiteral(" / ")
                     + QFileInfo{dependency->path}.completeBaseName();
                 result.push_back({nested_label, nested_path});
-                visit(dependency->document, std::move(nested_path), nested_label);
+                visit(dependency->document, std::move(nested_path), nested_label, depth + 1);
             }
+            dependency_stack.pop_back();
         };
-    visit(source_entry->document, {}, result.front().label);
+    visit(source_entry->document, {}, result.front().label, 0);
+    if (!safe)
+    {
+        result.clear();
+    }
     return result;
 }
 
 PrefabOperationResult PrefabService::apply(
     dragonpixel::scene::scene& current_scene,
     const uuid& selected_entity_id,
-    std::span<const uuid> nesting_path)
+    std::span<const uuid> nesting_path,
+    PrefabApplyFault injected_fault)
 {
     PrefabOperationResult result;
     const auto index = instance_index_for_entity(selected_entity_id);
@@ -1224,6 +1554,14 @@ PrefabOperationResult PrefabService::apply(
     if (outer_source == nullptr)
     {
         result.message = QStringLiteral("Apply is disabled while the prefab source is missing.");
+        return result;
+    }
+    if (!source_revision_is_current(*instance, outer_source->document))
+    {
+        result.message = QStringLiteral(
+            "Apply is disabled because the prefab source revision changed; use Repair/Rebase first.");
+        result.diagnostics.push_back(QStringLiteral(
+            "DPE.PREFAB.SOURCE_REVISION_MISMATCH: Apply cannot overwrite a source that changed outside this instance."));
         return result;
     }
     const SourceEntry* target = outer_source;
@@ -1432,7 +1770,32 @@ PrefabOperationResult PrefabService::apply(
         }
     }
 
-    QFile old_file{target->path};
+    const auto target_path = target->path;
+    const auto backup_path = apply_backup_path(target_path);
+    const auto marker_path = apply_recovery_marker_path(target_path);
+    if (!path_within(project_root_, target_path)
+        || !path_within(project_root_, backup_path)
+        || !path_within(project_root_, marker_path))
+    {
+        result.message = QStringLiteral("Prefab Apply recovery paths must remain below the project root.");
+        result.diagnostics.push_back(QStringLiteral(
+            "DPE.PREFAB.APPLY_OUTSIDE_PROJECT: Source or recovery evidence resolved outside the project root."));
+        return result;
+    }
+    const auto artifact_exists = [](const QString& path) {
+        const QFileInfo info{path};
+        return info.exists() || info.isSymLink();
+    };
+    if (artifact_exists(backup_path) || artifact_exists(marker_path))
+    {
+        result.message = QStringLiteral(
+            "Prefab Apply found pre-existing recovery evidence and refused to overwrite it.");
+        result.diagnostics.push_back(QStringLiteral(
+            "DPE.PREFAB.APPLY_RECOVERY_ARTIFACT_CONFLICT: Resolve or preserve the existing .dpebak/.dpeapply evidence before retrying Apply."));
+        return result;
+    }
+
+    QFile old_file{target_path};
     if (!old_file.open(QIODevice::ReadOnly))
     {
         result.message = QStringLiteral("Could not read the current prefab source before atomic Apply.");
@@ -1440,33 +1803,97 @@ PrefabOperationResult PrefabService::apply(
     }
     const auto old_bytes = old_file.readAll();
     old_file.close();
-    const auto target_path = target->path;
     QString error;
     const auto new_bytes = QByteArray::fromStdString(dragonpixel::prefab::write_json(*applied.source));
-    if (!write_atomic(target_path + QStringLiteral(".dpebak"), old_bytes, error)
-        || !write_atomic(target_path, new_bytes, error))
+    if (injected_fault == PrefabApplyFault::backup_write)
     {
-        result.message = QStringLiteral("Atomic prefab Apply failed: %1").arg(error);
+        error = QStringLiteral("Injected failure while writing the prefab recovery copy.");
+    }
+    if (!error.isEmpty() || !write_atomic(backup_path, old_bytes, error))
+    {
+        result.message = QStringLiteral("Atomic prefab Apply failed before source mutation: %1").arg(error);
+        result.diagnostics.push_back(QStringLiteral("DPE.PREFAB.APPLY_BACKUP_WRITE_FAILED: %1").arg(error));
+        return result;
+    }
+    if (injected_fault == PrefabApplyFault::recovery_marker_write)
+    {
+        error = QStringLiteral("Injected failure while writing the prefab Apply recovery marker.");
+    }
+    if (!error.isEmpty()
+        || !write_atomic(marker_path, apply_recovery_marker(old_bytes, new_bytes), error))
+    {
+        remove_recovery_artifact(
+            backup_path, result.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+        result.message = QStringLiteral("Atomic prefab Apply failed before source mutation: %1").arg(error);
+        result.diagnostics.push_back(QStringLiteral("DPE.PREFAB.APPLY_MARKER_WRITE_FAILED: %1").arg(error));
+        return result;
+    }
+    if (injected_fault == PrefabApplyFault::source_write)
+    {
+        error = QStringLiteral("Injected failure while committing the prefab source.");
+    }
+    if (!error.isEmpty() || !write_atomic(target_path, new_bytes, error))
+    {
+        remove_recovery_artifact(
+            marker_path, result.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+        remove_recovery_artifact(
+            backup_path, result.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+        result.message = QStringLiteral("Atomic prefab Apply failed while committing the source: %1").arg(error);
+        result.diagnostics.push_back(QStringLiteral("DPE.PREFAB.APPLY_SOURCE_WRITE_FAILED: %1").arg(error));
         return result;
     }
 
     const auto target_id = applied.source->prefab_id;
     const auto old_document = sources_.at(target_id).document;
     sources_.at(target_id).document = *applied.source;
-    auto replaced = replace_instance(
-        current_scene,
-        *index,
-        std::move(applied.remaining_instance),
-        QStringLiteral("Applied overrides to explicit prefab level %1").arg(QFileInfo{target_path}.completeBaseName()));
+    PrefabOperationResult replaced;
+    if (injected_fault == PrefabApplyFault::scene_transaction
+        || injected_fault == PrefabApplyFault::scene_transaction_and_rollback_write)
+    {
+        replaced.message = QStringLiteral("Injected prefab scene transaction failure.");
+        replaced.diagnostics.push_back(QStringLiteral(
+            "DPE.PREFAB.APPLY_SCENE_TRANSACTION_FAILED: Injected failure before scene mutation."));
+    }
+    else
+    {
+        replaced = replace_instance(
+            current_scene,
+            *index,
+            std::move(applied.remaining_instance),
+            QStringLiteral("Applied overrides to explicit prefab level %1")
+                .arg(QFileInfo{target_path}.completeBaseName()));
+    }
     if (!replaced.succeeded)
     {
         QString restore_error;
-        write_atomic(target_path, old_bytes, restore_error);
-        sources_.at(target_id).document = old_document;
-        replaced.diagnostics.push_back(QStringLiteral(
-            "DPE.PREFAB.APPLY_ROLLBACK: Scene transaction failed; the source recovery copy was restored."));
+        const auto restored = injected_fault != PrefabApplyFault::scene_transaction_and_rollback_write
+            && write_atomic(target_path, old_bytes, restore_error);
+        if (restored)
+        {
+            sources_.at(target_id).document = old_document;
+            remove_recovery_artifact(
+                marker_path, replaced.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+            remove_recovery_artifact(
+                backup_path, replaced.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+            replaced.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.APPLY_ROLLBACK: Scene transaction failed; the exact source before-image was restored."));
+        }
+        else
+        {
+            if (restore_error.isEmpty())
+            {
+                restore_error = QStringLiteral("Injected failure while restoring the prefab source before-image.");
+            }
+            replaced.diagnostics.push_back(QStringLiteral(
+                "DPE.PREFAB.APPLY_ROLLBACK_FAILED: Scene transaction failed and immediate source restore failed (%1); the recovery marker and exact backup were retained for startup recovery.")
+                                                   .arg(restore_error));
+        }
         return replaced;
     }
+    remove_recovery_artifact(
+        marker_path, replaced.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
+    remove_recovery_artifact(
+        backup_path, replaced.diagnostics, QStringLiteral("DPE.PREFAB.RECOVERY_CLEANUP_FAILED"));
     source_journal_.push_back({
         current_scene.history_position(), target_path, old_bytes, new_bytes, true});
     return replaced;
@@ -1485,9 +1912,12 @@ PrefabOperationResult PrefabService::revert_selected(
     }
     auto instance = parse_instance(
         current_scene.prefab_instances()[owner->second.instance_index], &result.diagnostics);
-    if (!instance || source(instance->source_asset_id) == nullptr)
+    const auto* current_source = instance ? source(instance->source_asset_id) : nullptr;
+    if (!instance || current_source == nullptr
+        || !source_revision_is_current(*instance, current_source->document))
     {
-        result.message = QStringLiteral("Revert is disabled while the prefab source is missing or incompatible.");
+        result.message = QStringLiteral(
+            "Revert is disabled while the prefab source is missing, incompatible, or at a different revision.");
         return result;
     }
     std::vector<std::size_t> indexes;
@@ -1525,9 +1955,12 @@ PrefabOperationResult PrefabService::revert_all(
         return result;
     }
     auto instance = parse_instance(current_scene.prefab_instances()[*index], &result.diagnostics);
-    if (!instance || source(instance->source_asset_id) == nullptr)
+    const auto* current_source = instance ? source(instance->source_asset_id) : nullptr;
+    if (!instance || current_source == nullptr
+        || !source_revision_is_current(*instance, current_source->document))
     {
-        result.message = QStringLiteral("Revert All is disabled while the prefab source is missing or incompatible.");
+        result.message = QStringLiteral(
+            "Revert All is disabled while the prefab source is missing, incompatible, or at a different revision.");
         return result;
     }
     if (instance->overrides.empty())
@@ -1569,7 +2002,12 @@ PrefabOperationResult PrefabService::repair_rebase(
     }
 
     auto allocated = *current;
-    allocate_mappings(current_source->document, {}, allocated, result.diagnostics);
+    if (!allocate_mappings(current_source->document, {}, allocated, result.diagnostics))
+    {
+        result.message = QStringLiteral(
+            "Repair/Rebase rejected an unsafe prefab dependency graph before scene mutation.");
+        return result;
+    }
     std::vector<dragonpixel::prefab::rebase_allocation> allocations;
     for (const auto& mapping : allocated.entity_mappings)
     {
@@ -1631,10 +2069,10 @@ PrefabOperationResult PrefabService::unpack(
     if (!completely)
     {
         const auto* outer_source = source(outer->source_asset_id);
-        if (outer_source == nullptr)
+        if (outer_source == nullptr || !source_revision_is_current(*outer, outer_source->document))
         {
             result.message = QStringLiteral(
-                "Unpack at one level requires the source. Unpack Completely remains available from fallback data.");
+                "Unpack at one level requires the matching source revision. Unpack Completely remains available from fallback data.");
             return result;
         }
         for (const auto& nested : outer_source->document.prefab_instances)

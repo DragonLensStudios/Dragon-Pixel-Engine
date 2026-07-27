@@ -2,7 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Last reviewed:** 2026-07-27
+> **Design revision:** `DPE-ARCH-0014`
 
 ## Context
 
@@ -49,6 +50,10 @@ Slice 2 requires reusable hierarchies that remain linked to their source, suppor
 
 Linked nested prefabs retain reuse and source intent without leaking framework-specific or prefab-specific concepts into runtime adapters. Stable path-qualified mappings preserve selection and references across rebases. Fallbacks and unresolved overrides make failures recoverable but increase file size and require explicit repair UX. Apply is deliberately constrained because cross-boundary scene references would make a reusable source invalid outside its originating scene.
 
++## DPE-ARCH-0014 refinement
+
+The first public drag workflow accepts one locally owned Hierarchy root and creates a linked prefab in the selected contained Project Browser folder; the complete subtree is included and ambiguous, linked, or cross-project selections are rejected before staging. Dragging a prefab to Scene View instantiates it at scene-root world origin; dragging to a Hierarchy row instantiates it as a child at local origin. Versioned payloads carry project/scene identity, stable source identity, kind, and revision so stale or foreign drags cannot resolve by path alone. Hierarchy and Inspector expose linked/override state while all Apply/Revert/Repair/Unpack behavior retains this ADR's source, mapping, override, and recovery ownership. Dedicated Prefab Mode remains deferred.
+
 ## Validation and acceptance gate
 
 POC F must pass on Windows 11 x64, macOS 14+ arm64, and Ubuntu 24.04 x64 before this ADR can be Accepted. It must prove:
@@ -60,11 +65,11 @@ POC F must pass on Windows 11 x64, macOS 14+ arm64, and Ubuntu 24.04 x64 before 
 - direct and indirect cycle rejection plus depth/entity-count guards; and
 - atomic multi-document success, injected staging/commit failures, rollback, startup recovery, and exact Undo restoration.
 
-Current Windows and Ubuntu evidence (2026-07-25): native `s2.linked_prefabs`/`poc_f.linked_prefabs` tests cover deterministic prefab-v1 bytes, three-level materialization, path-qualified stable mappings, nested property/rename overrides, explicit source Apply, rebase allocation, selected/all Revert, complete Unpack, missing-source fallback, cycle rejection, and opaque preservation. Editor-service `s2.prefab_editor_service`/`poc_f.prefab_editor_workflows` tests cover Instantiate, persistent provenance through save/reload, Create from Selection, explicit-level Apply, Revert, missing-source Unpack Completely, scene-reference rejection, exact source before/after journaling for Undo/Redo, external source conflict protection, and source rollback when scene rematerialization fails.
+Current Windows and historical Ubuntu evidence (2026-07-25): native `s2.linked_prefabs`/`poc_f.linked_prefabs` tests cover deterministic prefab-v1 bytes, three-level materialization, duplicate nested sources, path-qualified stable mappings, nested property/rename overrides, explicit source Apply, rebase allocation, selected/all Revert, complete Unpack, missing/newer/incompatible-source fallback, direct and indirect cycle rejection, depth/entity-count guards, and opaque preservation. Editor-service `s2.prefab_editor_service`/`poc_f.prefab_editor_workflows` tests cover Instantiate, persistent provenance through save/reload, Create from Selection, explicit-level Apply, Revert, fallback Unpack Completely, scene-reference rejection, exact source before/after journaling for Undo/Redo, external source conflict protection, injected source/scene commit failures, rollback, and deterministic startup recovery.
 
-The complete Windows Release matrix passed **36/36 tests in 118.39 seconds**, and the complete MSVC AddressSanitizer matrix passed **36/36 tests in 134.93 seconds**. Ubuntu Release passed **36/36 tests in 102.20 seconds**, and Ubuntu Clang AddressSanitizer passed **36/36 tests in 101.97 seconds**.
+The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices passed **36/36**; no current POC F matrix exists for Ubuntu or macOS.
 
-The gate remains incomplete. Nested-level Apply does not yet cascade child source hashes/revisions through containing prefab sources; Create from Selection requires a locally owned subtree; Apply rejects instance-added entities until durable source-ID allocation is implemented; not every override form has a dedicated case; and the complete newer/incompatible-source, three-level public Qt, partial-Unpack, injected multi-document failure/startup-recovery, and accessibility workflows are not proven. No current POC F Release/sanitizer evidence exists for macOS. This ADR remains `Proposed` until the remaining workflow and macOS matrices pass.
+The gate remains incomplete. Nested-level Apply does not yet cascade child source hashes/revisions through containing prefab sources; Create from Selection requires a locally owned subtree; Apply rejects instance-added entities until durable source-ID allocation is implemented; not every override form has a dedicated case; and partial Unpack, the complete three-level public Qt/accessibility scenario, and platform-specific failure recovery remain unproven. This ADR remains `Proposed`.
 
 ## Related decisions
 

@@ -1,4 +1,5 @@
 #include "EditorWindow.h"
+#include "EditorRuntimePaths.h"
 
 #include <QApplication>
 #include <QCryptographicHash>
@@ -28,11 +29,29 @@ QByteArray file_hash(const QString& path)
 
 int main(int argc, char* argv[])
 {
+    const auto startup_trace = qEnvironmentVariableIsSet("DPE_STARTUP_TRACE");
+    const auto trace = [startup_trace](const char* message) {
+        if (startup_trace)
+        {
+            std::cerr << "DPE startup: " << message << '\n' << std::flush;
+        }
+    };
+    trace("creating QApplication");
     QApplication application(argc, argv);
+    trace("QApplication created");
     application.setApplicationName(QStringLiteral("Dragon Pixel Engine Editor"));
     application.setOrganizationName(QStringLiteral("Dragon Pixel Engine"));
     const auto arguments = application.arguments();
-    QString initial_document = QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT);
+    QString initial_document;
+    const auto self_test_requested = arguments.contains(QStringLiteral("--self-test"))
+        || arguments.contains(QStringLiteral("--self-test-crash"));
+    if (self_test_requested || qEnvironmentVariableIsSet("DPE_DEFAULT_SAMPLE_PROJECT"))
+    {
+        initial_document = dragonpixel::editor::runtime_paths::file(
+            "DPE_DEFAULT_SAMPLE_PROJECT",
+            QStringLiteral("samples/Slice1Sample/DragonPixelProject.json"),
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT));
+    }
     const auto project_index = arguments.indexOf(QStringLiteral("--project"));
     if (project_index >= 0 && project_index + 1 < arguments.size())
     {
@@ -43,7 +62,9 @@ int main(int argc, char* argv[])
     {
         initial_document = arguments[scene_index + 1];
     }
+    trace("constructing EditorWindow");
     EditorWindow window{initial_document};
+    trace("EditorWindow constructed");
     const auto initial_hash = file_hash(initial_document);
     const auto scene_path = window.authoring_scene_path();
     const auto scene_hash = file_hash(scene_path);
@@ -56,7 +77,9 @@ int main(int argc, char* argv[])
     const auto self_test_index = arguments.indexOf(QStringLiteral("--self-test"));
     if (self_test_index >= 0 && self_test_index + 1 < arguments.size())
     {
+        trace("starting self-test");
         window.start_self_test(arguments[self_test_index + 1]);
+        trace("self-test started");
         auto* poll = new QTimer(&application);
         QObject::connect(poll, &QTimer::timeout, &application, [&application, &window, &sources_unchanged] {
             if (window.self_test_ready() && sources_unchanged())
@@ -73,6 +96,7 @@ int main(int argc, char* argv[])
             }
             application.exit(passed ? 0 : 1);
         });
+        trace("entering self-test event loop");
         return application.exec();
     }
 
@@ -103,6 +127,8 @@ int main(int argc, char* argv[])
         return application.exec();
     }
 
+    trace("showing editor");
     window.show();
+    trace("entering editor event loop");
     return application.exec();
 }

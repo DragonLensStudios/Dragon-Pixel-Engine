@@ -2,7 +2,7 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Design revision:** `DPE-ARCH-0006`
+> **Design revision:** `DPE-ARCH-0009`
 
 ## Context
 
@@ -28,6 +28,6 @@ The model prioritizes authoring, interoperability, migration, prefab reuse, and 
 
 POC C must prove native/managed records share IDs/schema, stable-ID renames avoid migration, real schema changes require migration, and missing/newer records round-trip opaquely. POC F must prove three-level nested prefab materialization, duplicate nested sources, stable mappings, all override classes, rebase conflict recovery, and lossless fallback behavior. Domain tests must prove composite component uniqueness, ownership, lifecycle, hierarchy ordering, rollback, and flattened snapshot identity.
 
-Current evidence (2026-07-25): Windows and Ubuntu now pass UUID identity, hierarchy and sibling ordering, entity/component enabled state, native/managed records, command validation, transaction rollback, opaque-record preservation, `dpe.scene` version 3, and the current POC F linked-prefab ownership suite. That suite covers three-level materialization, duplicate nested sources, stable mappings, normalized override operations, cycle/depth/entity guards, missing-source fallback, rebase, apply/revert, and unpack behavior. The full matrices pass on Windows Release (36/36 in 118.39 seconds), Windows MSVC AddressSanitizer (36/36 in 134.93 seconds), Ubuntu Release (36/36 in 102.20 seconds), and Ubuntu Clang AddressSanitizer (36/36 in 101.97 seconds).
+Current evidence (2026-07-25): Windows and historical Ubuntu coverage passes UUID identity, hierarchy and sibling ordering, entity/component enabled state, native/managed records, command validation, transaction rollback, opaque-record preservation, `dpe.scene` version 3, and linked-prefab ownership tests. Current Windows POC F adds missing/newer/incompatible fallback, direct/indirect cycles, depth/entity guards, injected Apply rollback/startup recovery, and complete unpack. The Windows strict Release and MSVC AddressSanitizer matrices both pass 45/45; Ubuntu's latest pre-DPE-ARCH-0008 Release/Clang-ASan matrices pass 36/36 but do not cover the expansion.
 
 Current evidence still does not close every POC F acceptance case, including deeper apply-target semantics, newer-source recovery, and exhaustive multi-document failure injection, and the current POC F matrix has not run on macOS arm64. This ADR therefore remains `Proposed`.

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v3/asset-metadata.schema.json",
+  "title": "Dragon Pixel Engine asset metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "assetId", "assetType", "source", "sourceOwnership", "sourceHash", "importHash", "importer", "cacheKey", "dependencies", "dependencyRevisions", "importSettings", "recoveryState"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v3/asset-metadata.schema.json" },
+    "format": { "const": "dpe.asset" },
+    "formatVersion": { "const": 3 },
+    "engineVersion": { "type": "string", "minLength": 1 },
+    "assetId": { "type": "string", "format": "uuid" },
+    "assetType": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "sourceOwnership": { "enum": ["copied", "linked", "generated"] },
+    "sourceHash": { "type": "string" },
+    "importHash": { "type": "string" },
+    "importer": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    },
+    "cacheKey": { "type": "string" },
+    "dependencies": { "type": "array", "items": { "type": "string", "format": "uuid" }, "uniqueItems": true },
+    "dependencyRevisions": { "type": "array", "items": { "type": "object" } },
+    "importSettings": { "type": "object" },
+    "recoveryState": { "type": "object" },
+    "importerDiagnostics": { "type": "array", "items": { "type": "object" } },
+    "previewDiagnostics": { "type": "array", "items": { "type": "object" } }
+  }
+}

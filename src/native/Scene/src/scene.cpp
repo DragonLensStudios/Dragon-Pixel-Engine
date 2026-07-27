@@ -3,6 +3,7 @@
 #include <dragonpixel/metadata/builtin_ids.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <string_view>
@@ -142,6 +143,54 @@ void remap_known_references(
             remap_known_references(iterator.value(), remaps);
         }
     }
+}
+
+bool set_json_path(
+    nlohmann::ordered_json& root,
+    const std::vector<std::string>& path,
+    const nlohmann::ordered_json& value)
+{
+    if (path.empty())
+    {
+        return false;
+    }
+    auto* cursor = &root;
+    for (std::size_t path_index = 0; path_index < path.size(); ++path_index)
+    {
+        const auto& segment = path[path_index];
+        const auto is_leaf = path_index + 1 == path.size();
+        if (cursor->is_object())
+        {
+            if (!cursor->contains(segment) && !is_leaf)
+            {
+                return false;
+            }
+            if (is_leaf)
+            {
+                (*cursor)[segment] = value;
+                return true;
+            }
+            cursor = &(*cursor)[segment];
+            continue;
+        }
+        if (!cursor->is_array())
+        {
+            return false;
+        }
+        std::size_t parsed{};
+        const auto [end, error] = std::from_chars(segment.data(), segment.data() + segment.size(), parsed);
+        if (error != std::errc{} || end != segment.data() + segment.size() || parsed >= cursor->size())
+        {
+            return false;
+        }
+        if (is_leaf)
+        {
+            (*cursor)[parsed] = value;
+            return true;
+        }
+        cursor = &(*cursor)[parsed];
+    }
+    return false;
 }
 
 std::unordered_set<core::uuid, core::uuid_hash> collect_subtree(
@@ -561,6 +610,28 @@ command_result scene::apply_untracked(const command& value)
                 return failure("DPE.SCENE.OPAQUE_OR_MISSING_COMPONENT", "Opaque or missing components cannot be edited.");
             }
             component->enabled = concrete.enabled;
+            return {true, std::nullopt};
+        }
+        else if constexpr (std::is_same_v<command_type, set_component_property_path_command>)
+        {
+            auto* target = find_entity_mutable(concrete.entity_id);
+            if (target == nullptr)
+            {
+                return failure("DPE.SCENE.MISSING_ENTITY", "Entity does not exist.");
+            }
+            const auto component = std::find_if(target->components.begin(), target->components.end(), [&](const auto& item) {
+                return item.type_id == concrete.type_id;
+            });
+            if (component == target->components.end() || component->opaque)
+            {
+                return failure("DPE.SCENE.OPAQUE_OR_MISSING_COMPONENT", "Opaque or missing components cannot be edited.");
+            }
+            const auto property = component->properties.find(concrete.property_id);
+            if (property == component->properties.end()
+                || !set_json_path(*property, concrete.path, concrete.value))
+            {
+                return failure("DPE.SCENE.INVALID_PROPERTY_PATH", "Nested property path could not be applied.");
+            }
             return {true, std::nullopt};
         }
         else if constexpr (std::is_same_v<command_type, set_prefab_instances_command>)

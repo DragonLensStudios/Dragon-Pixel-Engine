@@ -23,7 +23,39 @@ public sealed record RenderTransform(
 
 public sealed record RenderSprite(string AssetId, RenderColor Color, int Layer);
 
+public sealed record RenderAsset(
+    string AssetId,
+    string AssetType,
+    string MediaType,
+    string ContentHash,
+    byte[] ImmutableBytes);
+
 public sealed record RenderMesh(string AssetId, RenderColor BaseColor);
+
+public sealed record RenderTileCell(
+    int X,
+    int Y,
+    string TileId,
+    RenderColor Color,
+    int SourceX,
+    int SourceY,
+    int SourceWidth,
+    int SourceHeight,
+    bool FlipX,
+    bool FlipY,
+    int RotationQuarterTurns);
+
+public sealed record RenderTileLayer(string Name, bool Visible, int Order, IReadOnlyList<RenderTileCell> Cells);
+
+public sealed record RenderTilemap(
+    string AssetId,
+    string TextureAssetId,
+    byte[] TexturePng,
+    float CellWidth,
+    float CellHeight,
+    RenderColor Tint,
+    int BaseLayer,
+    IReadOnlyList<RenderTileLayer> Layers);
 
 public sealed record RenderCamera(
     bool Primary,
@@ -56,6 +88,11 @@ public sealed record RenderCollider(
     RenderVector3 Offset,
     bool Sensor);
 
+public sealed record RenderInputMotion2D(
+    string HorizontalAction,
+    string VerticalAction,
+    float Speed);
+
 public sealed record RenderEntity(
     string Id,
     string Name,
@@ -64,9 +101,11 @@ public sealed record RenderEntity(
     RenderTransform Transform,
     RenderSprite? Sprite,
     RenderMesh? Mesh,
+    RenderTilemap? Tilemap,
     RenderCamera? Camera,
     RenderLight? Light,
     IReadOnlyList<RenderCollider> Colliders,
+    RenderInputMotion2D? InputMotion,
     float RotatorDegreesPerSecond);
 
 public sealed record RenderScene(
@@ -74,6 +113,7 @@ public sealed record RenderScene(
     string Name,
     long SnapshotRevision,
     IReadOnlyList<RenderEntity> Entities,
+    IReadOnlyDictionary<string, RenderAsset> Assets,
     IReadOnlyList<string> Diagnostics)
 {
     public static RenderScene Empty { get; } = new(
@@ -81,6 +121,7 @@ public sealed record RenderScene(
         "Empty",
         0,
         Array.Empty<RenderEntity>(),
+        new Dictionary<string, RenderAsset>(StringComparer.Ordinal),
         Array.Empty<string>());
 }
 
@@ -111,6 +152,7 @@ public sealed record FrameworkRenderRequest(
     long CameraRevision,
     long CommandRevision,
     long InputRevision,
+    IReadOnlyDictionary<string, float> InputActions,
     long FrameRevision);
 
 public sealed record FrameworkFrame(

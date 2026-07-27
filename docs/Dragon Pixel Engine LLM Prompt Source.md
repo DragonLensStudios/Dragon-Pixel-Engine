@@ -1,9 +1,9 @@
 # Dragon Pixel Engine LLM Prompt Source
 
 > **Document role:** Prompt and generated-result provenance  
-> **Design revision:** `DPE-ARCH-0007`
-> **Result revision:** `RESULT-DPE-ARCH-0007`
-> **Last reviewed:** 2026-07-25  
+> **Design revision:** `DPE-ARCH-0014`
+> **Result revision:** `RESULT-DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-27
 > **Design paths:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md` and `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`  
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine LLM Prompt Source.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine LLM Prompt Source.md`
@@ -30,10 +30,18 @@ This is the second Dragon Pixel Engine living document. It preserves the request
 | `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0002` | Current notes including the documentation-mirroring request and normalized final LF | `54AF7F76159831B94CBCA5317E05849570CCC3CEA0598119FC5B293248B991B0` |
 | `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0005` | Living intake including the request to complete Slice 1 | `DA2238DA74375D8A59EA4B313EF435C4DDABB75776702FC853EBA2D868E603C0` |
 | `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0006` | Mirrored living intake including the functional-editor request | `9C494B09D58E052ED27F73C7B75CC447B7463C7C984F8DCDC40F6DC45C98BC6E` |
+| `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0008` | Mirrored intake including the structured Inspector, tile, and Scene/Game request | `A88F590FD9441A103FD444B022946DD439F5268F3F59CFB82A346870006E1954` |
+| `Plans/Dragon Pixel Inspector Tile Authoring and Scene Game View Plan.md` | Accepted DPE-ARCH-0008 execution plan and Windows execution evidence | `C12638CB6CE108EF91F3FE852C513BA85BDAECAFA6980317279F05651B3C88EC` |
+| `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0009` | Mirrored intake including the request to complete Slices 1-4 and the full design-defined 1.0 feature set | `7861953CC92A06E0678E7C4099B82825AE25150D1D8A9E7751FF7A84A0020B6E` |
+| `Dragon Pixel Engine Notes.md` at `DPE-ARCH-0010` | Mirrored intake including the fluid panel-grid, attachable script, explicit lifespan, object creation, and Scene View manipulation request | `F956A431C0F029C19648CE08CEC72A6C83315D99ADD93491B84AF3A6BE8C839A` |
+| `Plans/Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md` at creation | Active gate-preserving Slices 1-4 master delivery plan and fresh Windows baseline | `EB9FCF2E261A85D5124C635B6F40B2E88A577E71051A3B13A9F7B8F8E7EC2CEA` |
 | Dragon Pixel Engine repository | Repository state inspected before research | Git commit `b48360e59f55fd827d9513405c9fef42178b92be` |
 | `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0005` | Prior implementation-conformance result | SHA-256 `C1A566DD292ADA58DF328C30DA0EDFF859D26334674C13CF401DFBDB676283AF` |
 | `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0006` | Expanded authoritative functional-editor architecture with implementation evidence current through 2026-07-25 | SHA-256 `05A47EFE171613AE7301D56F6608981A253535F773F532B3B86202CBCD53EBA4` |
 | `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0007` | Inspector/component/input architecture and corrected input-evidence interpretation | SHA-256 `44B428F1033ADFC941F97249BD0A7677957FA223908EBABA94A16FB2F0275C24` |
+| `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0008` | Structured objects/interfaces, worker modules, tile authoring, split Scene/Game architecture, and Windows implementation evidence | SHA-256 `62FE4C17B22857A5E267B72C2A4D67109F372662563CDA26970693BF606F3380` |
+| `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0009` | Full Slices 1-4/1.0 delivery architecture, project lifecycle/migration/package/plugin/Unity/release contracts, ADRs through 0023, POCs M-S, and fresh Windows evidence | SHA-256 `C02AD39F673AAFAA72D56CBD3B976FE6BB86EE9F6BDAFFCD451718863EE72A6D` |
+| `Dragon Pixel Engine Design Document.md` at `DPE-ARCH-0010` | Fluid full-grid Qt workspace plus backward-compatible managed/native full project-component lifecycle contract | SHA-256 `497E246E24FCAD41DF1FDA2E113D6D689CF094B744CDEBFB949B3598176A8A4B` |
 
 At the time of research, the repository contained only `README.md` and `LICENSE.md`; no engine implementation or prior `AGENTS.md` existed.
 
@@ -393,7 +401,7 @@ The complete approved execution plan is preserved byte-identically at:
 
 This annotation updates evidence for `RESULT-DPE-ARCH-0006`; it does not change the immutable Original Prompt, accepted architecture, design/result revision, 2026-07-24 compatibility review date, ADR gates, or acceptance thresholds.
 
-- The current Windows 11 x64 worktree passes 36 of 36 strict Release tests in 118.39 seconds and 36 of 36 MSVC AddressSanitizer tests in 134.93 seconds.
+- The current Windows 11 x64 worktree passes the expanded 42-of-42 strict Release matrix in 183.73 seconds and 42-of-42 MSVC AddressSanitizer matrix in 215.54 seconds.
 - The current Ubuntu 24.04 x64 worktree passes 36 of 36 strict Release tests in 102.20 seconds and 36 of 36 Clang AddressSanitizer tests in 101.97 seconds. Its registered POCs E-H also pass.
 - Manual Windows QA used a disposable `out/dev` sample and verified the typed Inspector, indexed Project Explorer with thumbnails and status, one-transaction preset creation plus Undo, isolated Simulate, actual MonoGame/KNI preview and play output, pause, and stop.
 - The evidence refresh adds queued graphics-thread one-pixel ID readback instead of a full ID-target `GetData` on every frame, a persistent seqlock reader with header-derived presented FPS, Unix position-independent code, and managed-child AddressSanitizer preload handling.
@@ -429,6 +437,118 @@ Current verbose viewport measurements are:
 - Embedded Play input is a framework-neutral full action state sent from the focused Qt viewport to the play worker through negotiated `runtimeInput`. Focus loss, Pause, Stop, crash, and capture release neutralize state. A managed Input Mover provides the first visible runtime-only proof through both adapters.
 - The older revision-correlated latency result is corrected: it is viewport-command-to-present evidence because no render-affecting input was consumed. POC J must prove real Qt input changes actual MonoGame/KNI pixels and picks before latency acceptance.
 
+## Structured Inspector, Tile Authoring, and Scene/Game Request and Result
+
+### Request accepted 2026-07-25
+
+The user approved the `Dragon Pixel Inspector, Tile Authoring, and Scene/Game View Plan`: implement a Unity-familiar typed component-card Inspector; nested, collection, polymorphic, and interface-filtered values; generated and worker-executed C#/C++ project components; independently dockable Scene and live Game views; and a reusable orthogonal TileSet/Tilemap authoring MVP with contained PNG intake, command-based tools, adapter rendering, and Box2D collision.
+
+### Result `RESULT-DPE-ARCH-0008`
+
+- Metadata v4 is completed with recursive value shapes, object/contract descriptors, component policy/module identity, and language-symmetric generation. Known values use typed drawers and path commands; opaque payloads remain read-only and preserved.
+- Explicit project component builds produce content-addressed managed/native worker modules under `.dragonpixel/Cache`. The editor reads manifests but never loads project code; workers load managed factories and `dpe_component_plugin_v1` modules with contained lifecycle/input/diagnostics. Ordinary Windows launches bootstrap the Visual Studio C++ environment automatically.
+- Independently dockable Scene and Game panels use named, revisioned outputs and independent mappings. Game uses a live primary-camera preview outside Play and an isolated Play worker during Play; Scene remains available. Focus-owned normalized input is neutralized on focus loss, Pause, Stop, and crash.
+- `dpe.tileset` v1 and `dpe.tilemap` v1 define stable tiles, sparse layers/chunks, contained PNG slicing, transactional palette tools, atomic persistence, flattened runtime data, embedded immutable PNG bindings, MonoGame/KNI tile rendering, and static Box2D lowering.
+- The Windows implementation adds an `InputMotion2D` proof whose `move.x` action changes actual MonoGame and KNI device pixels and whose neutral revision is presented without changing authoring data.
+- Final Windows evidence is **42/42 Release tests in 183.73 seconds** and **42/42 MSVC AddressSanitizer tests in 215.54 seconds**. This validates the registered Windows scope for POCs I/K and the named-view/input implementation, but does not close their three-platform gates. Ubuntu and macOS expanded runs, single-preview-worker simultaneous-output evidence, complete adapter tile-pixel/pick/collision evidence, and full accessibility/manual designer review remain open.
+
+## Slices 1-4 Version 1.0 Completion Request and Result
+
+### Request accepted 2026-07-25
+
+The user requested that `C:\Projects\Documentation\Engines\Dragon Pixel Engine` remain the living-document root, that repository `AGENTS.md` governance be followed, and that the active goal expand from Slice 1/2 closure to finishing Slices 1 through 4 with the complete, fully functional Dragon Pixel Engine 1.0 feature set defined by the Design Document.
+
+### Result `RESULT-DPE-ARCH-0009`
+
+- The active durable tracker becomes `Plans/Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. Earlier in-progress plans are superseded for active tracking only; no unfinished gate is marked complete or weakened.
+- Slice acceptance remains evidence-sequential. Slice 1 retains the unchanged three-platform viewport, sanitizer, lifecycle, ownership, rendering, and data gates. Slice 2 retains the complete real-device, designer, prefab, physics, input, tile, multi-view, accessibility, distribution, and KNI gates.
+- Slice 3 is activated with project-v4 lifecycle contracts, declarative 2D/3D templates, project discovery/settings/upgrades/archive/restore, asset-v3 import/cache ownership, reversible sibling MonoGame/KNI migration, declared worker builds, relocatable packages, plugin management, staged updates/rollback, and the bounded Unity bridge.
+- Slice 4 is activated with one product-version source, frozen performance/memory budgets, long-running and corruption/recovery qualification, compatibility fixtures and policy, clean install/update/rollback/uninstall, signing/notarization/provenance/license review, accessibility, privacy-safe support bundles, documentation, and final release-candidate evidence.
+- Missing ADR-0009 and ADR-0011 are created. Existing ADR-0016/0017 are added to the Design inventory, and ADRs 0018-0023 define lifecycle, migration, asset import, package/update, compatibility, and crash/privacy boundaries. All 23 ADRs remain `Proposed`; scope acceptance promotes none of them.
+- POCs M-S gate project lifecycle, migration, asset/cache integrity, plugin trust, Unity AOT interoperability, package/install/update/rollback, and complete 1.0 release qualification.
+- A fresh Windows 11 x64 baseline passes **42/42 strict Release tests in 192.18 seconds** and **42/42 MSVC AddressSanitizer tests in 222.45 seconds** with no sanitizer report. This supersedes the prior timing record for current Windows evidence only; Ubuntu/macOS, earlier Slice 1/2 blockers, KNI's experimental status, and POCs M-S remain open.
+- `1.0.0` may not be claimed until every applicable slice and release gate has direct durable evidence. Unreal, AAA rendering, networking, a marketplace, visual scripting, general IDE behavior, and full Unity integration remain non-goals.
+
+## Fluid Workspace and Component Lifespan Request and Result
+
+### Request accepted 2026-07-26
+
+The user requested that every editor panel be placeable through a fluid connected grid, specifically reporting that the reserved center area prevents correct window positioning. The user also requested more attachable script-like components, an explicit component lifespan and abstraction, functional object creation, Scene View manipulation, and continued completion of the editor.
+
+### Result `RESULT-DPE-ARCH-0010`
+
+- The empty central placeholder is removed. All built-in panels participate in the full `QMainWindow` dock grid with nested splits, tab groups, floating, grouped drag, animation, all-area placement, deterministic reset, and versioned per-user save/restore.
+- Add Component exposes New C# Script and New C++ Component. Contained generation refreshes JSON-only editor metadata and attaches the new stable type to selected GameObjects through one validated transaction; generated records remain editable but explicitly unbuilt until Build Components succeeds in disposable workers.
+- Existing `IProjectComponent` and native component ABI v1 remain compatible. The accepted full-lifespan extension adds managed enable/fixed/late/render/disable hooks and a size-tagged native ABI v2 phase dispatcher with v1 fallback.
+- Worker dispatch is ordered as create, enable, bounded 60 Hz fixed update, variable update, late update, render submission, disable, and destroy. At most four catch-up steps run per presented update; excess time is diagnosed and dropped. Stage failures disable and clean up only the affected instance.
+- Project code remains excluded from the editor process and may not mutate the authoring scene. Editor object creation, component attachment, and Scene View gizmos remain command-backed and undoable; runtime script state remains disposable on Stop/crash.
+- Current Windows implementation proves the full-grid layout, deterministic reset/versioned restore, direct selected-GameObject script attachment, generated managed/native lifecycle sources, ordered v2 dispatch, native v1 fallback, bounded fixed-step drop, stage-failure containment, and disable-before-destroy cleanup. The relevant Release and MSVC AddressSanitizer editor/runtime/generator aliases pass; the Windows-only evidence does not close POC I, a slice, or any ADR.
+- POC I and ADR-0014 remain open until ordered managed/native lifecycle, compatibility, failure, cleanup, packaging, and three-platform evidence passes. This revision does not promote KNI or any ADR and does not close a slice.
+
+## Rider Script-Editing Request and Result
+
+### Request accepted 2026-07-26
+
+The user requested C# script editing by opening the project solution in JetBrains Rider, a Unity-familiar Inspector right-click edit action, source-file visibility in Project Explorer, and an end-to-end workflow for creating and editing scripts/components.
+
+### Result `RESULT-DPE-ARCH-0011`
+
+- Project Explorer treats stable contained `.cs`, `.cpp`, `.cc`, `.cxx`, `.h`, and `.hpp` files under declared component roots as visible Component Source entries. Newly generated sources appear after the same detached project-index rebuild that activates their metadata.
+- A bounded `ScriptEditorService` regenerates a disposable Rider solution/project below `.dragonpixel/Ide/Rider`. It includes all validated component sources, uses the current `DragonPixel.Contracts` reference for managed editing, and is never authoritative project state.
+- C# Inspector cards expose **Edit Script in Rider**; C++ cards expose **Edit Component Source in Rider**. Activating a Component Source row in Project Explorer performs the same handoff. The service opens the generated solution and selected file at line 1 through Rider's documented command-line interface.
+- Rider resolution supports explicit configuration, platform command/Toolbox discovery, and normal installation locations. Launch uses an argument vector and detached process ownership; missing tools, source containment failures, or workspace-generation failures are structured editor diagnostics.
+- Editing never loads, reflects, compiles, or executes project code in Dragon Pixel Editor. Build Components remains explicit and supervised; Preview/Play workers remain the only processes that consume validated runtime modules.
+- POC I and ADR-0014 remain `Proposed` until the source-index/workspace/launch actions and the existing component-runtime gates pass on Windows, macOS, and Linux. Focused Windows proof does not close a slice, promote KNI, or constitute general IDE support.
+
+## Managed GameObject Controller Request and Result
+
+### Request accepted 2026-07-26
+
+The user requested a managed C# structure centered on a `GameObjectController` base class and lifespan interfaces, with `Enabled`, `Disabled`, `Update`, and `FixedUpdate`; a stable GUID and `Vector3`-based Transform on every controller; no lifecycle implementation row in Inspector; and a `MyMover` script that moves its attached GameObject with WASD or arrow keys.
+
+### Result `RESULT-DPE-ARCH-0012`
+
+- Add the author-facing `IGameObjectControllerLifecycle` and abstract `GameObjectController` without removing or changing the existing `IProjectComponent` and `IProjectComponentLifecycle` compatibility contracts. The base class adapts worker dispatch to concise parameterless overrides.
+- Every controller receives its entity `Guid`, a shared worker-owned `Transform` with `Vector3` position/Euler-rotation/scale, the current immutable input state, and elapsed/variable/fixed timing.
+- A worker shares one transform among the managed scripts on an entity and overlays dirty controller transforms onto the disposable runtime render scene after simulation. Real rendering and picking consume the result; saved authoring JSON is never changed and runtime state is discarded on reload/Stop/crash.
+- Generated C# scripts derive from `GameObjectController`. The mover implementation consumes existing `move.x`/`move.y` actions (WASD and arrow bindings), normalizes diagonals, reads its serialized Speed property, and applies delta-time-scaled translation.
+- Inspector retains Script Source and exposed serialized fields but removes the synthetic Lifecycle row. Rider editing remains on the component context action and Project Explorer source activation.
+- Managed transform writes on physics-controlled entities are final render/pick overrides in this increment; an explicit physics-control contract is required before claiming authoritative body motion. Native transform-control parity remains open under POC I.
+- POC I and ADR-0014 remain `Proposed` until base dispatch, GUID/transform/input behavior, render/pick displacement, discard/recovery, compatibility, generation, Inspector behavior, packaging, and three-platform evidence pass.
+
+## Configurable Input Map Request and Result
+
+### Request accepted 2026-07-26
+
+The user requested `MyMover` to behave like `Input Motion 2D` by consuming captured input and moving its GameObject, plus a simple configurable input system for keyboard, mouse, and gamepad with persistent rebinding and named control maps.
+
+### Result `RESULT-DPE-ARCH-0013`
+
+- Add project-owned `dpe.inputmap` format version 1 documents referenced by normal `input-map` asset sidecars, so the configuration is visible in Project Explorer and remains language/framework neutral.
+- Each input map contains stable named control maps, uniquely named actions, and stable bindings expressed as canonical paths such as `keyboard/w`, `mouse/left`, and `gamepad/left-x`. Scales and dead zones combine deterministically into the existing full-state action protocol.
+- Keep the focused Qt Game view as capture owner. Qt provides keyboard and mouse samples; SDL 3 provides standardized hot-plug-aware gamepad buttons, sticks, triggers, and d-pad input on the three desktop baselines. No toolkit or framework input enum crosses the durable or managed boundary.
+- Add an Input Map editor that selects and manages maps/actions/bindings and persists rebindings only through a validated, atomic, compare-before-write `InputMapService`. Invalid or incompatible changes preserve both the last valid runtime map and the authoritative file.
+- Ship a default Gameplay map where `move.x`/`move.y` combine WASD, arrows, the left stick, and d-pad; `jump`, `look.x`/`look.y`, and `fire` cover representative keyboard, mouse, and gamepad controls. `InputMotion2D` and `MyMover` consume the same `move.x`/`move.y` actions, so scripts remain device-agnostic.
+- Retain an in-memory compatibility map for projects without an input-map asset, and neutralize complete input state on focus/capture/lifecycle/device-map boundaries. Text/IME, touch, locked raw-relative pointer mode, rumble/sensors, and cloud profiles remain deferred.
+- ADR-0015 and POC J remain `Proposed` until schema/recovery/UI/device/rebinding/runtime/pixel/pick/timing evidence passes on Windows, macOS, and Linux. Focused Windows implementation cannot close a slice or promote KNI.
+
+## New Project and Daily Authoring Workflow Request and Result
+
+### Request accepted 2026-07-27
+
+The user approved implementation of a Unity-familiar New Project and daily-authoring workflow: Project Hub, minimal 2D/3D projects and clean scenes, a two-pane manageable Project Browser, copied/linked image import, recoverable asset removal, linked-prefab drag paths, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors that edit shared components transactionally.
+
+### Result `RESULT-DPE-ARCH-0014`
+
+- Add a no-project Project Hub and a contained `ProjectLifecycleService` for declarative minimal 2D/3D template creation, dry-run validation, deterministic IDs, staging/commit recovery, recent projects, and clean scene creation.
+- Implement the accepted project-v4 and template-v1 contracts without silently rewriting project versions 1 through 3. New scenes remain scene v3.
+- Expand `AssetService` and asset-v3 for copied/read-only-linked ownership, image import, stable hashes and identities, safe rename/move/duplicate, dependency impact, operation-owned trash, exact restore, and immutable runtime bindings. Initial renderable external content is PNG/JPEG sprites.
+- Replace the read-only Project Explorer surface with a service-backed two-pane Project Browser and public command/keyboard/drag actions. Component source identity remains owned by the existing component and Rider workflows.
+- Version drag payloads and support OS-to-Project import, Project internal moves, sprite/prefab-to-Scene or Hierarchy creation, compatible asset-field assignment, and locally owned Hierarchy-root-to-Project linked-prefab creation.
+- Add ordered `SelectionService` state, atomic top-level Hierarchy multi-drag/reorder, and transactional multi-delete/duplicate/enable/group behavior.
+- Make Inspector a reusable dock. Extra Inspectors can be independently locked to stable scene/entity identities; layout/count persists but locks reopen cleared. Shared-component edits retain explicit mixed state, all-target validation, one transaction, and exact Undo.
+- Preserve scene-v3, prefab-v1, metadata-v4, runtime snapshot-v4, C ABI, managed lifecycle, Rider, and input-map compatibility. POCs F/H/M/O, all affected ADRs, slice closure, cross-platform support, and KNI remain open until complete evidence passes.
+
 ## Research Manifest
 
 Research used primary vendor/project documentation and source on 2026-07-24:
@@ -451,7 +571,14 @@ Research used primary vendor/project documentation and source on 2026-07-24:
 | Jolt baseline | Jolt 5.6.0 is the pinned 3D physics release for this revision | [Jolt 5.6.0](https://github.com/jrouwe/JoltPhysics/releases/tag/v5.6.0) |
 | Qt input/focus | Focused widgets receive key press/release events and focus loss must be handled explicitly | [Qt `QWidget`](https://doc.qt.io/qt-6/qwidget.html), [Qt `QKeyEvent`](https://doc.qt.io/qt-6/qkeyevent.html) |
 | MonoGame input | Framework input APIs expose polled keyboard state, but the embedded Qt surface still owns visible focus | [MonoGame `Keyboard`](https://docs.monogame.net/api/Microsoft.Xna.Framework.Input.Keyboard.html), [input management](https://docs.monogame.net/articles/tutorials/building_2d_games/11_input_management/) |
+| Qt mouse input | Widget mouse events expose button, position, motion, and wheel deltas while the focused Game view remains capture owner | [Qt `QMouseEvent`](https://doc.qt.io/qt-6/qmouseevent.html), [Qt `QWheelEvent`](https://doc.qt.io/qt-6/qwheelevent.html) |
+| Standard gamepads | SDL 3 exposes positional gamepad buttons/axes, enumeration, hot plugging, and explicit polling across supported desktop platforms | [SDL gamepad API](https://wiki.libsdl.org/SDL3/CategoryGamepad), [`SDL_GetGamepads`](https://wiki.libsdl.org/SDL3/SDL_GetGamepads), [`SDL_UpdateGamepads`](https://wiki.libsdl.org/SDL3/SDL_UpdateGamepads) |
+| SDL licensing | SDL uses the zlib license and must be carried into dependency/license inventories and redistributed bundles | [SDL license](https://www.libsdl.org/license.php) |
 | C# generation/loading | Roslyn supports compile-time generation; dynamic loading belongs in isolated `AssemblyLoadContext` consumers, not the editor | [Roslyn SDK](https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/), [`AssemblyLoadContext`](https://learn.microsoft.com/en-us/dotnet/core/dependency-loading/understanding-assemblyloadcontext) |
+| Relocatable CMake installation | Current CMake guidance recommends relative install destinations and supports runtime-dependency installation across Windows, Linux, and macOS | [CMake `install()`](https://cmake.org/cmake/help/latest/command/install.html) |
+| Windows package integrity | Windows package signing uses SignTool and a valid signing certificate; verification remains part of the clean-package gate | [Microsoft package deployment](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/), [SignTool package signing](https://learn.microsoft.com/en-us/windows/msix/package/sign-app-package-using-signtool) |
+| macOS direct distribution | Directly distributed macOS software uses distribution signing and the Apple notarization workflow; Dragon Pixel records signing/notarization as POC R evidence | [Distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) |
+| Unity AOT boundary | IL2CPP is Unity's ahead-of-time scripting backend, so the bridge prototype requires generated/AOT-safe behavior and link-preservation evidence | [Unity 6.3 IL2CPP](https://docs.unity3d.com/6000.3/Documentation/Manual/il2cpp-introduction.html) |
 
 Additional primary specifications for the selected durable boundaries are JSON-RPC 2.0, RFC 8259 JSON, RFC 9562 UUIDs, and Khronos glTF 2.0. The expanded source list is maintained in the design document.
 
@@ -459,34 +586,44 @@ Additional primary specifications for the selected durable boundaries are JSON-R
 
 ### Result identity
 
-- **Result:** `RESULT-DPE-ARCH-0007`
-- **Design:** `DPE-ARCH-0007`
-- **Disposition:** Accepted Inspector/component/input increment within the active functional-editor work. Slice 1 and Slice 2 remain unaccepted; macOS POC B, current macOS expanded/AddressSanitizer evidence, POCs I-J, full designer/nested-prefab/accessibility matrices, arbitrary project script execution, and KNI support remain open.
+- **Result:** `RESULT-DPE-ARCH-0014`
+- **Design:** `DPE-ARCH-0014`
+- **Disposition:** Accepted the bounded Project Hub/minimal-template, project-v4/template-v1, asset-v3/two-pane-browser, linked-prefab drag, ordered Hierarchy multi-operation, and multiple lockable Inspector implementation contract while preserving command ownership, worker isolation, older-format compatibility, and all existing POC/platform gates. Slice 1 and Slice 2 remain unaccepted; POCs F/H/M/O, physical input/timing, current cross-platform evidence, later Slice 3/4 workflows, macOS POC B, accessibility/distribution matrices, and KNI support remain open.
 
 ### Implementation evidence result
 
-The current Windows 11 x64 worktree passes all 36 registered strict Release tests in 118.39 seconds and all 36 registered MSVC AddressSanitizer tests in 134.93 seconds. The current Ubuntu 24.04 x64 worktree passes all 36 registered strict Release tests in 102.20 seconds and all 36 registered Clang AddressSanitizer tests in 101.97 seconds. Registered POCs E-H pass on both platforms.
+The current Windows 11 x64 worktree passes all 45 registered strict Release tests; the persisted CTest log contains 45 pass markers, zero failures, and 294.56 seconds of recorded test execution. The refreshed Windows MSVC AddressSanitizer build passes 45/45 in 368.80 seconds; its duplicate full Qt interaction registrations complete in 95.78 and 91.47 seconds under the sanitizer-only 180-second harness cap. The most recent Ubuntu 24.04 x64 evidence predates DPE-ARCH-0008 and passes all 36 then-registered strict Release tests in 102.20 seconds and all 36 then-registered Clang AddressSanitizer tests in 101.97 seconds. Current POC I/J and project-index/prefab/transaction hardening have Windows evidence only. POCs M-S have no complete implementation evidence.
 
 The current combined POC B and independent POC E measurements are:
 
 | Platform and run | Adapter | Presented FPS | Median viewport-command-to-present | Control response | Crash recovery | Device/readback | Publish |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Windows combined POC B | MonoGame | 60.0 | 15.6 ms | 466.4 ms | 683.2 ms | 3.1 ms | 0.1 ms |
-| Windows combined POC B | KNI | 40.0 | 46.6 ms | 153.5 ms | 757.7 ms | 23.3 ms | 0.1 ms |
-| Windows independent POC E | MonoGame | 60.1 | 15.7 ms | 399.7 ms | 638.4 ms | 2.6 ms | 0.1 ms |
-| Windows independent POC E | KNI | 40.7 | 46.7 ms | 152.4 ms | 728.5 ms | 23.1 ms | 0.1 ms |
+| Windows combined POC B | MonoGame | 64.1 | 15.4 ms | 566.3 ms | 933.0 ms | 2.5 ms | 0.1 ms |
+| Windows combined POC B | KNI | 32.1 | 32.4 ms | 253.2 ms | 1213.4 ms | 22.6 ms | 0.1 ms |
+| Windows independent POC E | MonoGame | 64.0 | 15.5 ms | 601.7 ms | 1084.2 ms | 2.9 ms | 0.2 ms |
+| Windows independent POC E | KNI | 32.0 | 31.0 ms | 245.2 ms | 778.4 ms | 22.2 ms | 0.1 ms |
 | Ubuntu combined POC B | MonoGame | 61.7 | 16.3 ms | 306.2 ms | 492.1 ms | 8.5 ms | 0.2 ms |
 | Ubuntu combined POC B | KNI | 32.3 | 55.1 ms | 315.1 ms | 534.4 ms | 26.6 ms | 0.2 ms |
 | Ubuntu independent POC E | MonoGame | 61.6 | 16.4 ms | 349.1 ms | 487.6 ms | 6.8 ms | 0.1 ms |
 | Ubuntu independent POC E | KNI | 33.3 | 55.2 ms | 353.1 ms | 544.7 ms | 28.0 ms | 0.1 ms |
 
-These values are now classified as viewport-command-to-present evidence. The tested `viewportInput` request advances a revision but does not change rendered state, so it cannot prove gameplay input consumption. Control response and crash recovery remain lifecycle timings; device/readback and publish expose pipeline cost. POC J must replace the latency claim with a real action-to-first-reflecting-frame measurement. MonoGame and KNI continue to run independently.
+These values remain classified as viewport-command-to-present evidence. Separately, Windows POC J now forwards immutable full-state Game-view snapshots with focus/capture and edge counters, validates them transactionally, neutralizes on every lifecycle boundary, fails closed through a Play-worker restart on rejected state, and proves `InputMotion2D` changes actual MonoGame/KNI pixels and retained-ID pick location without changing authoring JSON. The remaining latency gate is the aggregate real Qt key-event-to-first-reflecting-Qt-paint median/tail measurement. Control response and crash recovery remain lifecycle timings; MonoGame and KNI continue to run independently.
 
 The implemented foundation includes portable C++ core, scene, metadata, serialization, command/transaction, and C ABI modules; `.NET Standard 2.1` contracts; .NET 10 interop and worker packages; deterministic scene and metadata format-version-2 schemas; UUID component identities; entity/component enabled state; canonical project/scene/asset filenames; separate MonoGame and KNI adapters; authenticated named-pipe/Unix-socket JSON-RPC control; shared-memory BGRA8 frames; and a Qt 6.11 Widgets editor with Scene, Hierarchy, Project/Assets, Inspector, and Console docks.
 
 The foundational Windows and historical Ubuntu editor tests load the same sample, reject project-root traversal, execute an atomic multi-command edit, save and fully close/reopen a project, expose native/managed metadata plus read-only opaque diagnostics, display 2D and 3D content, supervise distinct preview and play processes, preserve authoring data across play/stop, and recover from a forced play-worker crash without losing preview. They also run an external Python client through capability negotiation, inspection, dry-run, validated mutation, rejection, cancellation, and token-redacted audit paths. Windows exercises authenticated named pipes and Ubuntu exercises Unix-domain sockets. Direct framework probes create real MonoGame and KNI graphics devices, render a sprite and cube to a render target, and verify readback content.
 
-Current manual Windows QA opens a writable disposable sample under `out/dev`, uses the typed Inspector and indexed Project Explorer with thumbnails/import/dependency/structural status, creates a preset as one undoable transaction, runs isolated Simulate, displays actual MonoGame and KNI preview/play output, and exercises pause and stop. This useful Windows workflow evidence does not complete the full 2D/3D designer, linked nested-prefab, or accessibility acceptance matrices.
+Current Windows hardening validates the originally selected project location before recovery, preserves the active session on candidate failure, applies one portable path/alias registry to roots, documents, and asset sources, and requires `startupScene` to lie under a declared scene root. Native multi-file saves use a SHA-256-bound crash journal with rollback/startup recovery under hostile fixtures. Prefabs preserve missing/newer/incompatible fallbacks and reject cycles/depth/entity explosions. Component generation is rooted and build-identity-addressed; workers require exact manifests, placement/tool/contracts/artifact hashes, contain initialization/property/lifecycle-stage failures, publish factories atomically, expose immutable input, dispatch the optional managed/native-v2 full lifespan, and preserve native v1 compatibility. The Qt editor now uses the entire nested/tabbed/floating dock grid and directly attaches generated scripts/components to selected GameObjects through validated commands.
+
+DPE-ARCH-0011 Windows implementation indexes stable contained C#/C++ source/header and component-metadata files in Project Explorer, filters them as Scripts / Components, and refreshes immediately after generation. `ScriptEditorService` regenerates `.dragonpixel/Ide/Rider/DragonPixel.ProjectComponents.sln` plus its project atomically, references `DragonPixel.Contracts`, includes all validated sources/manifests, rejects missing/outside/linked inputs, discovers the local Rider executable, and routes the solution plus selected `--line 1` file through detached argument-vector launches. Qt automation injects the launcher, so it proves Project Explorer and Inspector actions without opening Rider. The five focused aliases pass Release in 83.89 seconds and MSVC AddressSanitizer in 104.67 seconds. This is Windows-only partial POC I evidence.
+
+DPE-ARCH-0012 Windows implementation adds `IGameObjectControllerLifecycle`, `GameObjectController`, `GameObjectInput`, and the shared `Transform`; preserves the legacy runtime interfaces; binds stable GUID identity; and overlays only dirty managed transforms onto the disposable render/pick scene after physics. Generated scripts and the user's exact `MyMover` read `move.x`/`move.y`, normalize diagonal movement, parse Inspector Speed, and translate by delta time. Inspector no longer renders lifecycle as serialized data. Focused Release runtime/generator/UI evidence passes, with the registered UI run at 83.13 seconds; the matching five MSVC AddressSanitizer aliases pass 5/5 in 143.15 seconds. The exact writable project builds with zero warnings/errors, the refreshed 157-entry developer bundle hash-verifies, and its packaged MonoGame self-test exits zero. A newly observed locked-Rider publication failure was repaired without terminating Rider: default bundle refresh now preserves the writable sample and updates engine/runtime payloads in place, while `-ResetSample` remains explicit. Actual-device managed-controller pixel/pick evidence, full Stop/crash lifecycle coverage, native transform parity, packaging, and Ubuntu/macOS remain open.
+
+DPE-ARCH-0013 Windows implementation replaces the Game view's hard-coded binding table with a project-owned `dpe.inputmap` v1 asset, one validated `InputMapService`, Qt keyboard/mouse capture, an SDL 3.4.12 standard-gamepad adapter, compatibility fallback, and an Input Map editor for named maps, actions, bindings, and persistent rebinding. The sample map drives both `InputMotion2D` and `MyMover` through the existing `move.x`/`move.y` action protocol and also defines representative jump, look, and fire actions. Five focused Release aliases pass 5/5 in 94.67 seconds and the matching MSVC AddressSanitizer aliases pass 5/5 in 116.79 seconds, covering deterministic preservation, validation, containment, atomic conflict-safe saves, custom keyboard/mouse/gamepad evaluation, analog dead zones, transient and lifecycle neutralization, project indexing/loading, and dialog interaction. The refreshed 179-entry production bundle hash-verifies and passes the packaged MonoGame self-test while preserving the user's `MyMover.cs`; its editor, manifest, default-map, mover, and SDL hashes are recorded in the active plan. Physical-controller/hot-plug evidence, aggregate Qt input-to-paint timing, current Ubuntu/macOS runs, and complete POC J runtime device-pixel/pick correlation remain open.
+
+The 2026-07-26 Inspector/input-settings follow-up remains within DPE-ARCH-0012/0013. It adds embedded high-contrast checked/mixed Inspector indicators; an explicit **Edit > Project Settings > Input...** route; control-map enabled state, action rename, and full binding path/scale/dead-zone editing; and generated/sample C# movers with editable Horizontal Action, Vertical Action, and Speed fields matching `Input Motion 2D`. C# creation schedules an isolated component build automatically, and the sample no longer writes movement values every frame. A new exact-source .NET test compiles and executes the canonical `MyMover` with custom action names and proves GUID/lifecycle/Transform/reset behavior. Ten focused Release aliases pass 10/10 in 133.55 seconds and their MSVC AddressSanitizer counterparts pass 10/10 in 157.17 seconds; final UI reruns pass in 87.61/108.35 seconds. The writable project builds with zero warnings/errors, the packaged MonoGame self-test passes, and all 183 bundle records verify. Physical-gamepad, aggregate Qt input-to-paint, current Ubuntu/macOS, and remaining POC J gates stay open.
+
+Current manual Windows QA opens a writable disposable sample under `out/dev`, uses the typed Inspector and indexed Project Explorer with thumbnails/import/dependency/structural status, creates a preset as one undoable transaction, runs isolated Simulate, displays actual MonoGame and KNI preview/play output, and exercises pause and stop. DPE-ARCH-0011 additionally requires Project Explorer component-source visibility and a contained detached Rider handoff from Inspector/Project actions; its focused implementation evidence is recorded in the active plan. This useful Windows workflow evidence does not complete the full 2D/3D designer, linked nested-prefab, source-authoring cross-platform, or accessibility acceptance matrices.
 
 macOS 14+ arm64 remains the last unclosed platform. Its prior result is 14 of 15 tests, and `poc_b.worker_viewport` fails at 1280×720 because end-to-end presented throughput is below 30 FPS. There is no current macOS POCs E-H or AddressSanitizer rerun. Consequently Slice 1 is not accepted. Slice 2 also remains unaccepted because the current macOS gate and the complete designer, linked-prefab, and accessibility scenarios are unfinished. KNI remains experimental; passing Windows and Ubuntu evidence is not its required three-platform support matrix.
 
@@ -495,6 +632,14 @@ macOS 14+ arm64 remains the last unclosed platform. Its prior result is 14 of 15
 Dragon Pixel Engine is a C++20/Qt standalone editor and native engine core for Windows, macOS, and Linux. It provides first-class 2D and 3D authoring, one language-neutral entity/component model, C# and C++ component implementations, and managed runtime adapters for MonoGame and KNI. Unity is limited to AOT-safe `.NET Standard 2.1` contracts and a small bridge prototype; Unreal implementation, broad Unity parity, automatic semantic migration, unrestricted embedded Python, and AAA rendering are excluded from 1.0.
 
 Version 1.0 is defined by a stable end-to-end project workflow, not raw feature count. A user must be able to create or migrate a project, author scenes visually, run and debug it, save/recover it safely, build/package it, and upgrade it across supported versions.
+
+### Full version 1.0 delivery boundary result
+
+The active plan now covers all four slices while preserving their acceptance order. Slice 3 introduces `IProjectLifecycleService`, `IMigrationService`, `IBuildService`, `IPackageService`, `IPluginService`, `IUpdateService`, and `ISupportBundleService`, plus project-v4, template-v1, asset-v3, migration-plan-v1, plugin-v1, build-result-v1, release/update-v1, and support-bundle-v1 contracts. Each filesystem/process workflow uses dry-run validation, resolved containment, isolated staging, cancellation, structured diagnostics, audit correlation, and recoverable commit/rollback boundaries.
+
+Built-in 2D/3D templates are declarative and non-executable. Migration preserves the original MonoGame/KNI tree and commits only to a new sibling destination. Importers, project builds, plugins, migration evaluation, and packagers run out of process. Installed resources are relocatable, packages carry dependency/license/provenance identities, and updates are applied by an external helper using verified side-by-side staging and last-known-good rollback.
+
+Unity remains a `.NET Standard 2.1` contracts-and-bridge prototype tested through Mono and IL2CPP-compatible paths; it is not a supported full integration. Crash/support evidence is local and opt-in by default, previewed and redacted before export, with no default telemetry channel. The `1.0.0` version, compatibility policy, performance/memory budgets, clean packages, security/license/privacy/accessibility reviews, reference projects, and documentation-reproduction evidence are release gates rather than implementation aspirations.
 
 ### Architecture result
 
@@ -518,7 +663,7 @@ The canonical space is right-handed, Y-up, negative-Z-forward, meter/second base
 
 Authoritative project, scene, prefab, asset, workspace, and migration data use deterministic UTF-8 JSON with document and component schema versions. Import caches are disposable. Unknown or newer components remain opaque, visible, and structurally preserved during load/save. Renames retain stable IDs; true schema changes use explicit ordered migrations. Saves validate first, write and flush a sibling temporary file, atomically replace the target where possible, and retain bounded recovery data.
 
-The implemented baseline remains scene format version 2. This revision accepts explicit migrations to project v2, scene v3, prefab v1, asset v2, metadata v3, and runtime snapshot v3. Scene v3 adds sibling ordering, physics settings, and linked prefab instances; prefab v1 stores local records, nested instances, canonical revisions, stable mappings, normalized overrides, and fallback materializations. Known and opaque data must remain lossless through every migration.
+The current implemented authoring expansion includes project v3, scene v3, prefab v1, asset v2, component metadata v4, TileSet/Tilemap v1, and runtime snapshot v4 paths within the registered Windows scope. DPE-ARCH-0009 accepts explicit planned migrations to project v4 and asset v3 plus new template, migration-plan, plugin, build-result, release/update, and support-bundle version-1 contracts. Known and opaque data must remain lossless through every supported migration; newer/incompatible documents are preserved read-only or rejected without silent rewrite.
 
 The Qt shell uses dockable Scene, Hierarchy, Project/Assets, Inspector, and Console panels backed by project, scene, selection, command, metadata, asset, runtime-session, and diagnostics services. All mutations are commands/transactions. Undo/redo, panels, migration, plugins, Python, and AI use the same validation path. Standard Qt controls are preferred for accessibility; custom viewport/gizmo controls must expose keyboard and assistive behavior.
 
@@ -546,10 +691,10 @@ Plugins have versioned manifests, explicit runtime type, platform/architecture s
 
 - **Slice 1:** foundational ADRs/POCs, cross-platform builds, core identity/scene/metadata/serialization/commands, C ABI, workers, MonoGame/KNI adapters, Qt shell/panels, basic 2D/3D viewport, and edit/play/pause/stop.
 - **Slice 2:** service-backed 2D/3D/Debug workspaces; typed and validated multi-selection Inspector; browse/open/assign asset workflows and previews; drag/drop; a unified 2D/3D Scene View with picking and gizmos; command-based undo/redo; linked nested prefabs; custom drawers; baseline lighting; live Box2D/Jolt physics; structured Console navigation; and real Qt interaction/accessibility evidence.
-- **Slice 3:** templates, project lifecycle, read-only migration and reversible generation, SDK/dependency checks, backups/recovery, packaging, plugin/update management, and the Unity bridge prototype.
-- **Slice 4:** performance, crash/data integrity, security/license review, accessibility, compatibility policy, packaging/distribution, long-running projects, real migrations, documentation, and 1.0 release gates.
+- **Slice 3:** project-v4/templates, creation/discovery/settings/upgrades/archive/restore, asset-v3 import/cache integrity, read-only migration and reversible sibling generation, SDK/dependency checks, declared worker builds, relocatable packaging, plugin/update management, and the bounded Unity bridge prototype.
+- **Slice 4:** one version source, frozen performance/memory budgets, crash/data integrity and privacy-safe support bundles, security/license review, accessibility, public compatibility policy, clean install/update/rollback/uninstall, long-running projects, real migrations, documentation/reference-project reproduction, and final 1.0 release gates.
 
-Current roadmap evidence (2026-07-25): Windows and Ubuntu each pass the current 36-test strict Release and AddressSanitizer matrices, and their registered POCs E-H pass. Manual Windows QA demonstrates meaningful Slice 1/Slice 2 implementation progress, including the typed Inspector, indexed/thumbnails/status Project Explorer, undoable preset creation, isolated Simulate, and real MonoGame/KNI preview/play controls. Slice 1 remains open because the macOS POC B defect and current macOS AddressSanitizer baseline are unresolved. Slice 2 remains open because current macOS POCs E-H and the full 2D/3D designer, linked-prefab, and accessibility acceptance workflows are incomplete.
+Current roadmap evidence (2026-07-25): the Windows strict Release and MSVC AddressSanitizer matrices both pass 45/45; ASan completes in 368.80 seconds. The worker uses a 64 Hz absolute pacing lattice and the final 1280×720 combined POC B run measures MonoGame at 64.1 FPS and KNI at 32.1 FPS without changing the ≥30 FPS gate. Windows now automates full-state input with real pixel/pick displacement, hardened project/component paths, SHA-bound transaction recovery, and stronger prefab fallback/guards in addition to the prior editor/tile/multi-view scope. The prior Ubuntu worktree passes its pre-DPE-ARCH-0008 36-test Release/Clang-ASan matrices; current Ubuntu/macOS expanded evidence is absent. Slice 1 remains open because macOS POC B/current platform matrices and aggregate POC J Qt-paint latency are unresolved. Slice 2 remains open because POCs I/K/L across Ubuntu/macOS, full POCs J-L, designer/service/accessibility/distribution work, and several hardening races remain unfinished. Slices 3/4 and POCs M-S remain open.
 
 ### Risk and prototype result
 
@@ -576,13 +721,28 @@ DPE-ARCH-0007 adds two focused gates:
 9. POC I: metadata-v4/project-v3 component discovery, C#/C++ source and generation parity, worker-only module execution, editor-process exclusion, lifecycle ownership, and lossless unavailable-module behavior.
 10. POC J: real embedded Play input capture, neutralization, worker consumption, actual MonoGame/KNI pixel/pick changes, and honest correlated latency.
 
-Current POCs E-H status (2026-07-25): their registered tests pass on Windows and Ubuntu. Independent POC E measures MonoGame at 60.1 FPS/15.7 ms and KNI at 40.7 FPS/46.7 ms on Windows, and MonoGame at 61.6 FPS/16.4 ms and KNI at 33.3 FPS/55.2 ms on Ubuntu. This two-platform evidence does not close any three-platform gate. No current macOS POCs E-H or AddressSanitizer result exists, and the full linked-prefab designer/recovery and keyboard/accessibility matrices remain unfinished. Cross-platform divergence, linked-prefab recovery/usability, and accessibility therefore remain active risks; KNI remains experimental.
+DPE-ARCH-0008 adds two focused gates:
+
+11. POC K: deterministic TileSet/Tilemap formats, contained PNG slicing, public Qt tile tools, save/recovery, adapter pixels/picking, and Box2D collision.
+12. POC L: simultaneous named Scene/Game outputs, unique-primary diagnostics, independent resizing/revisions, Play isolation, input ownership, and crash recovery.
+
+DPE-ARCH-0009 adds seven full-lifecycle and release gates:
+
+13. POC M: declarative project templates, creation, discovery/settings, project-v4 upgrades, archive/restore, containment, and injected recovery.
+14. POC N: read-only representative MonoGame/KNI migration, explicit decisions, sibling generation, verification, source-tree integrity, and rollback.
+15. POC O: copied/linked/generated asset ownership, importer isolation, stable sidecars/cache keys, filesystem safety, recovery, and adapter consumption.
+16. POC P: plugin manifests/integrity/permissions, dependency conflicts, transactional lifecycle, worker isolation, quarantine, compatibility, and licensing.
+17. POC Q: Unity 6.3 `.NET Standard 2.1` bridge through Mono and IL2CPP-compatible paths with AOT/link preservation and portable-contract purity.
+18. POC R: relocatable package/install/update/rollback/uninstall, signing/notarization, provenance, notices, Qt materials, and clean-machine verification.
+19. POC S: frozen performance/memory budgets, long-running and corruption recovery, compatibility fixtures, security/privacy, accessibility, and documentation-driven release qualification.
+
+Current POCs E-S status (2026-07-25): registered POCs E-H pass on Windows and historical Ubuntu. Current independent Windows POC E measures MonoGame at 64.0 FPS/15.5 ms viewport-command-to-present and KNI at 32.0 FPS/31.0 ms; the older Ubuntu run measures MonoGame at 61.6 FPS/16.4 ms and KNI at 33.3 FPS/55.2 ms. Windows additionally passes the current Release and MSVC-ASan registrations for POC I generation/cache/runtime modules and partial POC J full-state/pixel/pick/recovery behavior. This does not close any three-platform gate or the POC J Qt-paint latency gate. No current macOS POCs E-H or sanitizer result exists; Ubuntu/macOS have not run the expanded POCs I/K/L suite; full POCs J-L and the linked-prefab designer, keyboard, and accessibility matrices remain unfinished; and POCs M-S are unimplemented. Cross-platform divergence, multi-output topology, tile adapter/collision acceptance, linked-prefab usability, lifecycle/package/update/plugin/Unity/release qualification, and accessibility remain active risks; KNI remains experimental.
 
 The first post-POC implementation is `S1.0 Architecture Bootstrap`: build scaffolding, native core/scene/metadata/serialization/C ABI modules, portable contracts/interops/headless worker, one native and one managed component, one world/scene, JSON round-trip, schemas, and tests. It explicitly excludes the Qt shell and general renderer.
 
-S1.0 and the subsequent editor/runtime vertical slice are implemented and current on Windows and Ubuntu, where the 36-test Release/AddressSanitizer matrices pass. DPE-ARCH-0006 authorizes completing the user-operable editor and Slice 2 while preserving the open cross-platform gates. Slice 1 remains open until the macOS POC B defect and current macOS expanded/AddressSanitizer evidence are resolved. Slice 2 remains open until current macOS POCs E-H and the complete 2D/3D, linked-prefab, physics, designer, and accessibility workflows pass without JSON editing.
+S1.0 and the subsequent editor/runtime vertical slice are implemented on Windows and on the prior Ubuntu baseline. Windows now passes the expanded 45-test strict Release and 45-test MSVC AddressSanitizer matrices; Ubuntu's last evidence is the pre-DPE-ARCH-0008 36-test matrices. DPE-ARCH-0009 authorizes gate-preserving completion of Slices 1-4 and the design-defined `1.0.0`. Slice 1 remains open until the macOS POC B defect, POC J aggregate Qt-paint latency, and current Ubuntu/macOS expanded/AddressSanitizer evidence are resolved. Slice 2 remains open until current Ubuntu/macOS coverage and the complete 2D/3D, linked-prefab, physics, input, tiles, multi-view, designer, accessibility, and distribution workflows pass without JSON editing. Slices 3/4 remain open until POCs M-S and every lifecycle/release acceptance statement pass.
 
-The authoritative design document contains the exact ownership rules, module tables, file conventions, panel services, risk register, prototype metrics, 12 ADRs, slice acceptance criteria, and `S1.0` definition of done for this result.
+The authoritative design document contains the exact ownership rules, module tables, file conventions, editor/lifecycle/release services, risk register, prototype metrics, 23 ADRs, 19 POCs, four-slice acceptance criteria, and `S1.0` definition of done for this result.
 
 ## Revision History
 
@@ -595,3 +755,10 @@ The authoritative design document contains the exact ownership rules, module tab
 | `RESULT-DPE-ARCH-0005` | `DPE-ARCH-0005` | 2026-07-24 | Recorded scene-v2 and stable-ID conformance, transactions, canonical project lifecycle, distinct preview/play supervision, opaque Inspector diagnostics, initial external Python automation, and the then-current passing 15-test Windows/Ubuntu Release/ASan matrices; retained macOS and KNI support gates |
 | `RESULT-DPE-ARCH-0006` | `DPE-ARCH-0006` | 2026-07-24 | Accepted the work scope for Slice 1 closure plus complete Slice 2; recorded macOS 14/15 and POC B measurement defects; added real rendering/picking, command/editor services, format revisions, Box2D/Jolt physics, linked nested prefabs, Qt interaction/accessibility, and POCs E-H |
 | `RESULT-DPE-ARCH-0007` | `DPE-ARCH-0007` | 2026-07-25 | Accepted the Unity-familiar Inspector/custom-component/embedded-input increment; corrected unsafe mixed editing and the revision-echo latency claim; added project-v3/metadata-v4 boundaries and POCs I-J |
+| `RESULT-DPE-ARCH-0008` | `DPE-ARCH-0008` | 2026-07-25 | Accepted structured object/interface drawers, explicit worker-executed project components, named Scene/Game outputs, orthogonal tile formats/tools/runtime lowering, and POCs K-L; implemented the registered Windows scope and recorded final 42/42 Release plus 42/42 MSVC-ASan evidence while retaining all three-platform gates |
+| `RESULT-DPE-ARCH-0009` | `DPE-ARCH-0009` | 2026-07-25 | Activated gate-preserving completion of Slices 1-4 and full 1.0; added project-v4 lifecycle/templates, safe import/migration, build/package/update/plugin/Unity/release contracts, ADRs through 0023, POCs M-S, fresh Windows 42/42 Release plus 42/42 MSVC-ASan evidence, and explicit prohibition on a 1.0 claim before all gates pass |
+| `RESULT-DPE-ARCH-0010` | `DPE-ARCH-0010` | 2026-07-26 | Accepted the fluid full-grid dock workspace, direct generated-script/component attachment, backward-compatible managed lifecycle extension, size-tagged native component ABI v2 with v1 fallback, bounded fixed dispatch, and stage-specific cleanup without changing isolation or slice gates |
+| `RESULT-DPE-ARCH-0011` | `DPE-ARCH-0011` | 2026-07-26 | Accepted contained component-source indexing, disposable Rider solution generation, Inspector/Project edit actions, deterministic detached Rider launch, and continued worker-only project-code execution |
+| `RESULT-DPE-ARCH-0012` | `DPE-ARCH-0012` | 2026-07-26 | Accepted the backward-compatible managed `GameObjectController` lifecycle surface, stable GUID, shared worker-owned `Vector3` Transform, input/time access, disposable runtime render/pick overlays, generated mover behavior, and Inspector lifecycle-row removal |
+| `RESULT-DPE-ARCH-0013` | `DPE-ARCH-0013` | 2026-07-26 | Accepted project-owned configurable input maps, named control maps, persistent rebinding, Qt keyboard/mouse capture, SDL 3 standard-gamepad support, and shared device-neutral movement actions for `InputMotion2D` and `MyMover` |
+| `RESULT-DPE-ARCH-0014` | `DPE-ARCH-0014` | 2026-07-27 | Accepted the Project Hub and minimal templates/clean scenes, project-v4/template-v1 implementation, asset-v3 and recoverable two-pane Project Browser operations, immutable imported-image bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors |

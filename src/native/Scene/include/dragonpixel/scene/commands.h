@@ -121,6 +121,20 @@ struct set_component_property_command final
     nlohmann::ordered_json value;
 };
 
+// Addresses a value below a component's stable root property. Object members
+// use their stable property ID, polymorphic envelopes use "properties" followed
+// by the stable property ID, dictionary members use their key, and list members
+// use a zero-based decimal index. Validation always evaluates the rebuilt root
+// value before any authoring state is changed.
+struct set_component_property_path_command final
+{
+    core::uuid entity_id;
+    std::string type_id;
+    std::string property_id;
+    std::vector<std::string> path;
+    nlohmann::ordered_json value;
+};
+
 struct set_prefab_instances_command final
 {
     nlohmann::ordered_json instances = nlohmann::ordered_json::array();
@@ -140,5 +154,6 @@ using command = std::variant<
     reorder_component_command,
     set_component_enabled_command,
     set_component_property_command,
+    set_component_property_path_command,
     set_prefab_instances_command>;
 }

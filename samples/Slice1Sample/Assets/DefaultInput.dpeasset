@@ -1,0 +1,13 @@
+{
+  "$schema": "https://dragonpixel.dev/schemas/v2/asset-metadata.schema.json",
+  "format": "dpe.asset",
+  "formatVersion": 2,
+  "engineVersion": "0.3.0-slice2",
+  "assetId": "b2986cda-25db-48a2-a465-b0c3f0dd2683",
+  "assetType": "input-map",
+  "source": "Input/DefaultGameplay.dpeinputmap",
+  "dependencies": [],
+  "importSettings": {},
+  "importerDiagnostics": [],
+  "previewDiagnostics": []
+}

@@ -4,9 +4,11 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -14,6 +16,7 @@ namespace
 {
 using dragonpixel::core::uuid;
 using dragonpixel::prefab::document;
+using dragonpixel::prefab::instance_record;
 using dragonpixel::scene::command;
 using dragonpixel::scene::component_record;
 using dragonpixel::scene::entity;
@@ -32,6 +35,22 @@ uuid id(const char* value)
     const auto parsed = uuid::parse(value);
     require(parsed.has_value(), "Prefab editor test UUID was invalid.");
     return *parsed;
+}
+
+std::filesystem::path filesystem_path(const QString& value)
+{
+#if defined(Q_OS_WIN)
+    return std::filesystem::path{value.toStdWString()};
+#else
+    return std::filesystem::path{value.toStdString()};
+#endif
+}
+
+bool create_file_symlink(const QString& target, const QString& link)
+{
+    std::error_code error;
+    std::filesystem::create_symlink(filesystem_path(target), filesystem_path(link), error);
+    return !error;
 }
 
 component_record transform()
@@ -83,6 +102,24 @@ document read_source(const QString& path)
         std::string_view{bytes.constData(), static_cast<std::size_t>(bytes.size())});
     require(loaded.value.has_value(), "Temporary prefab source did not parse.");
     return *loaded.value;
+}
+
+void write_document(const QString& path, const document& value)
+{
+    QDir{}.mkpath(QFileInfo{path}.absolutePath());
+    QFile file{path};
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+        "Could not create temporary prefab document.");
+    const auto bytes = QByteArray::fromStdString(dragonpixel::prefab::write_json(value));
+    require(file.write(bytes) == bytes.size(), "Could not write temporary prefab document.");
+}
+
+void write_bytes(const QString& path, const QByteArray& bytes)
+{
+    QFile file{path};
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate),
+        "Could not replace temporary prefab bytes.");
+    require(file.write(bytes) == bytes.size(), "Could not replace temporary prefab bytes.");
 }
 
 QString write_source(const QString& root)
@@ -169,13 +206,83 @@ void instantiate_override_save_reload_and_fallback()
     const auto hydrated = missing_source_service.hydrate(fallback_scene);
     require(hydrated.scene.has_value()
             && hydrated.scene->find_entity(instance_root) != nullptr
+            && hydrated.scene->find_entity(instance_root)->name == "Overridden Cube"
+            && hydrated.scene->prefab_instances() == fallback_scene.prefab_instances()
             && !missing_source_service.source_available_for_entity(instance_root),
-        "Missing source did not materialize its last successful fallback.");
+        "Missing source did not materialize and preserve its exact last successful fallback.");
     auto missing_source_scene = std::move(*hydrated.scene);
     const auto unpacked = missing_source_service.unpack(missing_source_scene, instance_root, true);
     require(unpacked.succeeded && missing_source_scene.prefab_instances().empty()
             && missing_source_service.persistent_copy(missing_source_scene).entities().size() == 2,
         "Unpack Completely did not recover missing-source fallback entities as local state.");
+}
+
+void newer_and_incompatible_sources_retain_exact_fallback_until_rebase()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "Could not create source compatibility test directory.");
+    const auto source_path = write_source(temporary.path());
+    const auto metadata = dragonpixel::metadata::registry::slice_one_defaults();
+    PrefabService service;
+    service.set_metadata(&metadata);
+    service.set_project_root(temporary.path());
+    scene authoring{id("99999999-9999-4999-8999-999999999991"), "Source compatibility Scene"};
+    const auto instantiated = service.instantiate(authoring, source_path, std::nullopt);
+    require(instantiated.succeeded, "Source compatibility fixture did not instantiate.");
+    const auto root_id = instantiated.selection.front();
+    const std::vector<command> rename{
+        dragonpixel::scene::rename_entity_command{root_id, "Last Known Good"},
+    };
+    const auto augmented = service.augment_commands(authoring, rename);
+    require(augmented.succeeded
+            && authoring.apply_transaction(augmented.commands, "Stage exact fallback").succeeded,
+        "Could not stage the exact fallback override.");
+    service.synchronize(authoring);
+    const auto stored = service.persistent_copy(authoring);
+
+    auto newer = read_source(source_path);
+    newer.entities.front().name = "Externally Newer";
+    newer.revision = dragonpixel::prefab::compute_revision(newer);
+    write_document(source_path, newer);
+
+    PrefabService stale_service;
+    stale_service.set_metadata(&metadata);
+    stale_service.set_project_root(temporary.path());
+    auto stale_hydration = stale_service.hydrate(stored);
+    require(stale_hydration.scene.has_value()
+            && stale_hydration.scene->find_entity(root_id) != nullptr
+            && stale_hydration.scene->find_entity(root_id)->name == "Last Known Good"
+            && stale_hydration.scene->prefab_instances() == stored.prefab_instances()
+            && !stale_service.source_available_for_entity(root_id)
+            && stale_hydration.diagnostics.join('\n').contains(
+                QStringLiteral("DPE.PREFAB.SOURCE_REVISION_MISMATCH")),
+        "A newer source did not preserve the exact fallback and provenance envelope.");
+    auto stale_scene = std::move(*stale_hydration.scene);
+    const auto rejected_apply = stale_service.apply(stale_scene, root_id, {});
+    const auto rejected_revert = stale_service.revert_all(stale_scene, root_id);
+    require(!rejected_apply.succeeded && !rejected_revert.succeeded,
+        "Apply or Revert remained enabled against a newer source revision.");
+    const auto rebased = stale_service.repair_rebase(stale_scene, root_id);
+    require(rebased.succeeded && stale_service.source_available_for_entity(root_id)
+            && stale_scene.find_entity(root_id) != nullptr
+            && stale_scene.find_entity(root_id)->name == "Last Known Good",
+        "Explicit Repair/Rebase did not accept the newer source while preserving a surviving override.");
+
+    auto incompatible = nlohmann::ordered_json::parse(file_bytes(source_path).toStdString());
+    incompatible["formatVersion"] = 2;
+    write_bytes(source_path, QByteArray::fromStdString(incompatible.dump(2) + "\n"));
+    PrefabService incompatible_service;
+    incompatible_service.set_metadata(&metadata);
+    incompatible_service.set_project_root(temporary.path());
+    const auto incompatible_hydration = incompatible_service.hydrate(stored);
+    require(incompatible_hydration.scene.has_value()
+            && incompatible_hydration.scene->find_entity(root_id) != nullptr
+            && incompatible_hydration.scene->find_entity(root_id)->name == "Last Known Good"
+            && incompatible_hydration.scene->prefab_instances() == stored.prefab_instances()
+            && !incompatible_service.source_available_for_entity(root_id)
+            && incompatible_hydration.diagnostics.join('\n').contains(
+                QStringLiteral("DPE.PREFAB.UNSUPPORTED_FORMAT")),
+        "An incompatible source did not preserve the exact fallback and provenance envelope.");
 }
 
 void apply_localizes_references_and_journals_source_history()
@@ -300,6 +407,90 @@ void apply_localizes_references_and_journals_source_history()
         "Apply did not reject a linked GameObject reparented under scene-local state.");
 }
 
+document simple_prefab_document(const std::string& name)
+{
+    document value;
+    value.prefab_id = uuid::random_v4();
+    value.root_entity_id = uuid::random_v4();
+    value.entities = {
+        entity{value.root_entity_id, name, std::nullopt, {transform()}, true, 0},
+    };
+    return value;
+}
+
+instance_record nested_prefab_reference(const document& target)
+{
+    instance_record value;
+    value.instance_id = uuid::random_v4();
+    value.source_asset_id = target.prefab_id;
+    value.root_entity_id = uuid::random_v4();
+    return value;
+}
+
+void cycle_and_depth_are_rejected_before_scene_mutation()
+{
+    QTemporaryDir cycle_temporary;
+    require(cycle_temporary.isValid(), "Could not create cycle test directory.");
+    auto cycle_a = simple_prefab_document("Cycle A");
+    auto cycle_b = simple_prefab_document("Cycle B");
+    cycle_a.prefab_instances.push_back(nested_prefab_reference(cycle_b));
+    cycle_b.prefab_instances.push_back(nested_prefab_reference(cycle_a));
+    cycle_a.revision = dragonpixel::prefab::compute_revision(cycle_a);
+    cycle_b.revision = dragonpixel::prefab::compute_revision(cycle_b);
+    const auto cycle_a_path = QDir{cycle_temporary.path()}.filePath(
+        QStringLiteral("Prefabs/CycleA.dpeprefab"));
+    const auto cycle_b_path = QDir{cycle_temporary.path()}.filePath(
+        QStringLiteral("Prefabs/CycleB.dpeprefab"));
+    write_document(cycle_a_path, cycle_a);
+    write_document(cycle_b_path, cycle_b);
+
+    PrefabService cycle_service;
+    cycle_service.set_project_root(cycle_temporary.path());
+    scene cycle_scene{id("99999999-9999-4999-8999-999999999992"), "Cycle Scene"};
+    const auto cycle_history = cycle_scene.history_position();
+    const auto cycle_result = cycle_service.instantiate(cycle_scene, cycle_a_path, std::nullopt);
+    require(!cycle_result.succeeded
+            && cycle_result.diagnostics.join('\n').contains(QStringLiteral("DPE.PREFAB.CYCLE"))
+            && cycle_scene.entities().empty() && cycle_scene.prefab_instances().empty()
+            && cycle_scene.history_position() == cycle_history,
+        "A cyclic prefab graph was not rejected before scene mutation.");
+
+    QTemporaryDir depth_temporary;
+    require(depth_temporary.isValid(), "Could not create depth-limit test directory.");
+    std::vector<document> chain;
+    chain.reserve(34);
+    for (int index = 0; index < 34; ++index)
+    {
+        chain.push_back(simple_prefab_document("Depth " + std::to_string(index)));
+    }
+    for (std::size_t index = 0; index + 1 < chain.size(); ++index)
+    {
+        chain[index].prefab_instances.push_back(nested_prefab_reference(chain[index + 1]));
+    }
+    QString first_path;
+    for (std::size_t index = 0; index < chain.size(); ++index)
+    {
+        chain[index].revision = dragonpixel::prefab::compute_revision(chain[index]);
+        const auto path = QDir{depth_temporary.path()}.filePath(
+            QStringLiteral("Prefabs/Depth%1.dpeprefab").arg(index, 2, 10, QLatin1Char{'0'}));
+        write_document(path, chain[index]);
+        if (index == 0)
+        {
+            first_path = path;
+        }
+    }
+    PrefabService depth_service;
+    depth_service.set_project_root(depth_temporary.path());
+    scene depth_scene{id("99999999-9999-4999-8999-999999999993"), "Depth Scene"};
+    const auto depth_history = depth_scene.history_position();
+    const auto depth_result = depth_service.instantiate(depth_scene, first_path, std::nullopt);
+    require(!depth_result.succeeded
+            && depth_result.diagnostics.join('\n').contains(QStringLiteral("DPE.PREFAB.DEPTH_LIMIT"))
+            && depth_scene.entities().empty() && depth_scene.prefab_instances().empty()
+            && depth_scene.history_position() == depth_history,
+        "A prefab graph beyond the expansion-depth limit was not rejected before scene mutation.");
+}
+
 void create_source_undo_redo_and_apply_failure_are_atomic()
 {
     QTemporaryDir temporary;
@@ -358,6 +549,233 @@ void create_source_undo_redo_and_apply_failure_are_atomic()
     require(!rejected.succeeded && file_bytes(source_path) == source_before
             && rejected.diagnostics.join('\n').contains(QStringLiteral("DPE.PREFAB.APPLY_ROLLBACK")),
         "A failed scene rematerialization did not restore the prefab source before-image.");
+    require(!QFileInfo::exists(source_path + QStringLiteral(".dpeapply"))
+            && !QFileInfo::exists(source_path + QStringLiteral(".dpebak")),
+        "Successful immediate Apply rollback left stale recovery artifacts.");
+}
+
+void injected_apply_failures_and_startup_recovery_preserve_both_documents()
+{
+    const auto metadata = dragonpixel::metadata::registry::slice_one_defaults();
+    for (const auto& suffix : {QStringLiteral(".dpebak"), QStringLiteral(".dpeapply")})
+    {
+        QTemporaryDir temporary;
+        require(temporary.isValid(), "Could not create recovery-artifact collision test directory.");
+        const auto source_path = write_source(temporary.path());
+        const auto source_before = file_bytes(source_path);
+        PrefabService service;
+        service.set_metadata(&metadata);
+        service.set_project_root(temporary.path());
+        scene authoring{uuid::random_v4(), "Recovery Artifact Collision Scene"};
+        const auto instantiated = service.instantiate(authoring, source_path, std::nullopt);
+        require(instantiated.succeeded, "Recovery-artifact collision fixture did not instantiate.");
+        const auto root_id = instantiated.selection.front();
+        const std::vector<command> rename{
+            dragonpixel::scene::rename_entity_command{root_id, "Collision Override"},
+        };
+        const auto augmented = service.augment_commands(authoring, rename);
+        require(augmented.succeeded
+                && authoring.apply_transaction(augmented.commands, "Stage artifact collision").succeeded,
+            "Could not stage a recovery-artifact collision override.");
+        service.synchronize(authoring);
+        const auto instances_before = authoring.prefab_instances();
+        const auto history_before = authoring.history_position();
+        const auto artifact_path = source_path + suffix;
+        const auto sentinel = QByteArrayLiteral("foreign recovery evidence\n");
+        write_bytes(artifact_path, sentinel);
+
+        const auto rejected = service.apply(authoring, root_id, {});
+        require(!rejected.succeeded && file_bytes(source_path) == source_before
+                && file_bytes(artifact_path) == sentinel
+                && authoring.prefab_instances() == instances_before
+                && authoring.history_position() == history_before
+                && rejected.diagnostics.join('\n').contains(
+                    QStringLiteral("DPE.PREFAB.APPLY_RECOVERY_ARTIFACT_CONFLICT")),
+            "Apply overwrote pre-existing recovery evidence or changed a document.");
+    }
+
+    struct FailureCase final
+    {
+        PrefabApplyFault fault;
+        const char* diagnostic;
+    };
+    const std::vector<FailureCase> failures{
+        {PrefabApplyFault::backup_write, "DPE.PREFAB.APPLY_BACKUP_WRITE_FAILED"},
+        {PrefabApplyFault::recovery_marker_write, "DPE.PREFAB.APPLY_MARKER_WRITE_FAILED"},
+        {PrefabApplyFault::source_write, "DPE.PREFAB.APPLY_SOURCE_WRITE_FAILED"},
+        {PrefabApplyFault::scene_transaction, "DPE.PREFAB.APPLY_SCENE_TRANSACTION_FAILED"},
+    };
+    for (const auto& failure : failures)
+    {
+        QTemporaryDir temporary;
+        require(temporary.isValid(), "Could not create injected Apply failure test directory.");
+        const auto source_path = write_source(temporary.path());
+        const auto source_before = file_bytes(source_path);
+        PrefabService service;
+        service.set_metadata(&metadata);
+        service.set_project_root(temporary.path());
+        scene authoring{uuid::random_v4(), "Injected Apply Scene"};
+        const auto instantiated = service.instantiate(authoring, source_path, std::nullopt);
+        require(instantiated.succeeded, "Injected Apply fixture did not instantiate.");
+        const auto root_id = instantiated.selection.front();
+        const std::vector<command> rename{
+            dragonpixel::scene::rename_entity_command{root_id, "Injected Override"},
+        };
+        const auto augmented = service.augment_commands(authoring, rename);
+        require(augmented.succeeded
+                && authoring.apply_transaction(augmented.commands, "Stage injected Apply").succeeded,
+            "Could not stage an override for injected Apply.");
+        service.synchronize(authoring);
+        const auto instances_before = authoring.prefab_instances();
+        const auto history_before = authoring.history_position();
+
+        const auto rejected = service.apply(authoring, root_id, {}, failure.fault);
+        require(!rejected.succeeded && file_bytes(source_path) == source_before
+                && authoring.prefab_instances() == instances_before
+                && authoring.history_position() == history_before
+                && authoring.find_entity(root_id) != nullptr
+                && authoring.find_entity(root_id)->name == "Injected Override"
+                && rejected.diagnostics.join('\n').contains(QString::fromLatin1(failure.diagnostic))
+                && !QFileInfo::exists(source_path + QStringLiteral(".dpeapply"))
+                && !QFileInfo::exists(source_path + QStringLiteral(".dpebak")),
+            "An injected Apply boundary failure changed a document or leaked recovery artifacts.");
+    }
+
+    QTemporaryDir recovery_temporary;
+    require(recovery_temporary.isValid(), "Could not create startup recovery test directory.");
+    const auto recovery_path = write_source(recovery_temporary.path());
+    const auto recovery_before = file_bytes(recovery_path);
+    PrefabService service;
+    service.set_metadata(&metadata);
+    service.set_project_root(recovery_temporary.path());
+    scene authoring{uuid::random_v4(), "Startup Recovery Scene"};
+    const auto instantiated = service.instantiate(authoring, recovery_path, std::nullopt);
+    require(instantiated.succeeded, "Startup recovery fixture did not instantiate.");
+    const auto root_id = instantiated.selection.front();
+    const std::vector<command> rename{
+        dragonpixel::scene::rename_entity_command{root_id, "Recovery Override"},
+    };
+    const auto augmented = service.augment_commands(authoring, rename);
+    require(augmented.succeeded
+            && authoring.apply_transaction(augmented.commands, "Stage startup recovery").succeeded,
+        "Could not stage the startup recovery override.");
+    service.synchronize(authoring);
+    const auto stored = service.persistent_copy(authoring);
+    const auto interrupted = service.apply(
+        authoring,
+        root_id,
+        {},
+        PrefabApplyFault::scene_transaction_and_rollback_write);
+    require(!interrupted.succeeded && file_bytes(recovery_path) != recovery_before
+            && QFileInfo::exists(recovery_path + QStringLiteral(".dpeapply"))
+            && QFileInfo::exists(recovery_path + QStringLiteral(".dpebak"))
+            && interrupted.diagnostics.join('\n').contains(
+                QStringLiteral("DPE.PREFAB.APPLY_ROLLBACK_FAILED")),
+        "An interrupted Apply did not retain exact startup recovery evidence.");
+
+    PrefabService restarted;
+    restarted.set_metadata(&metadata);
+    restarted.set_project_root(recovery_temporary.path());
+    require(file_bytes(recovery_path) == recovery_before
+            && !QFileInfo::exists(recovery_path + QStringLiteral(".dpeapply"))
+            && !QFileInfo::exists(recovery_path + QStringLiteral(".dpebak")),
+        "Startup recovery did not restore the exact source before-image and clear its evidence.");
+    const auto recovered = restarted.hydrate(stored);
+    require(recovered.scene.has_value() && recovered.scene->find_entity(root_id) != nullptr
+            && recovered.scene->find_entity(root_id)->name == "Recovery Override",
+        "Startup source recovery did not preserve the matching saved scene and fallback state.");
+}
+
+void refresh_rejects_symlinked_source_and_recovery_escapes_when_supported()
+{
+    int exercised = 0;
+    {
+        QTemporaryDir project;
+        QTemporaryDir outside;
+        require(project.isValid() && outside.isValid(), "Could not create source containment test directories.");
+        const auto outside_source = write_source(outside.path());
+        const auto outside_before = file_bytes(outside_source);
+        const auto link_path = QDir{project.path()}.filePath(QStringLiteral("Prefabs/Escape.dpeprefab"));
+        QDir{}.mkpath(QFileInfo{link_path}.absolutePath());
+        if (create_file_symlink(outside_source, link_path))
+        {
+            ++exercised;
+            PrefabService service;
+            service.set_project_root(project.path());
+            scene stored{uuid::random_v4(), "Source containment Scene"};
+            const auto hydration = service.hydrate(stored);
+            scene authoring{uuid::random_v4(), "Source containment Instantiate Scene"};
+            const auto instantiated = service.instantiate(authoring, link_path, std::nullopt);
+            require(hydration.scene.has_value()
+                    && hydration.diagnostics.join('\n').contains(
+                        QStringLiteral("DPE.PREFAB.OUTSIDE_PROJECT"))
+                    && !instantiated.succeeded
+                    && instantiated.diagnostics.join('\n').contains(
+                        QStringLiteral("DPE.PREFAB.OUTSIDE_PROJECT"))
+                    && file_bytes(outside_source) == outside_before,
+                "A symlinked source escape was indexed, loaded, or modified.");
+        }
+    }
+    {
+        QTemporaryDir project;
+        QTemporaryDir outside;
+        require(project.isValid() && outside.isValid(), "Could not create backup containment test directories.");
+        const auto source_path = write_source(project.path());
+        const auto source_before = file_bytes(source_path);
+        const auto marker_path = source_path + QStringLiteral(".dpeapply");
+        const auto marker = QByteArrayLiteral("foreign pending marker\n");
+        write_bytes(marker_path, marker);
+        const auto outside_backup = QDir{outside.path()}.filePath(QStringLiteral("OutsideBackup.bin"));
+        const auto backup = QByteArrayLiteral("outside recovery sentinel\n");
+        write_bytes(outside_backup, backup);
+        if (create_file_symlink(outside_backup, source_path + QStringLiteral(".dpebak")))
+        {
+            ++exercised;
+            PrefabService service;
+            service.set_project_root(project.path());
+            scene stored{uuid::random_v4(), "Backup containment Scene"};
+            const auto hydration = service.hydrate(stored);
+            require(hydration.scene.has_value()
+                    && hydration.diagnostics.join('\n').contains(
+                        QStringLiteral("DPE.PREFAB.RECOVERY_OUTSIDE_PROJECT"))
+                    && file_bytes(source_path) == source_before
+                    && file_bytes(marker_path) == marker
+                    && file_bytes(outside_backup) == backup,
+                "Recovery followed or modified a backup symlink outside the project.");
+        }
+    }
+    {
+        QTemporaryDir project;
+        QTemporaryDir outside;
+        require(project.isValid() && outside.isValid(), "Could not create marker containment test directories.");
+        const auto source_path = write_source(project.path());
+        const auto source_before = file_bytes(source_path);
+        const auto backup_path = source_path + QStringLiteral(".dpebak");
+        const auto backup = QByteArrayLiteral("inside recovery sentinel\n");
+        write_bytes(backup_path, backup);
+        const auto outside_marker = QDir{outside.path()}.filePath(QStringLiteral("OutsideMarker.bin"));
+        const auto marker = QByteArrayLiteral("outside marker sentinel\n");
+        write_bytes(outside_marker, marker);
+        if (create_file_symlink(outside_marker, source_path + QStringLiteral(".dpeapply")))
+        {
+            ++exercised;
+            PrefabService service;
+            service.set_project_root(project.path());
+            scene stored{uuid::random_v4(), "Marker containment Scene"};
+            const auto hydration = service.hydrate(stored);
+            require(hydration.scene.has_value()
+                    && hydration.diagnostics.join('\n').contains(
+                        QStringLiteral("DPE.PREFAB.RECOVERY_OUTSIDE_PROJECT"))
+                    && file_bytes(source_path) == source_before
+                    && file_bytes(backup_path) == backup
+                    && file_bytes(outside_marker) == marker,
+                "Recovery followed or modified a marker symlink outside the project.");
+        }
+    }
+    if (exercised == 0)
+    {
+        std::cout << "Prefab containment symlink cases skipped because this host disallows test symlinks.\n";
+    }
 }
 }
 
@@ -366,11 +784,16 @@ int main()
     try
     {
         instantiate_override_save_reload_and_fallback();
+        newer_and_incompatible_sources_retain_exact_fallback_until_rebase();
         apply_localizes_references_and_journals_source_history();
+        cycle_and_depth_are_rejected_before_scene_mutation();
         create_source_undo_redo_and_apply_failure_are_atomic();
-        std::cout << "Prefab editor service passed stable instantiation, override/revert/undo, "
-                     "inverse-reference Apply validation, source history/rollback, saved-local separation, "
-                     "missing-source fallback, and Unpack Completely.\n";
+        injected_apply_failures_and_startup_recovery_preserve_both_documents();
+        refresh_rejects_symlinked_source_and_recovery_escapes_when_supported();
+        std::cout << "Prefab editor service passed stable instantiation, exact missing/newer/incompatible "
+                     "fallback recovery, cycle/depth guards, override/revert/undo, inverse-reference Apply "
+                     "validation, injected atomic source/scene rollback and startup recovery, saved-local "
+                     "separation, and Unpack Completely.\n";
         return 0;
     }
     catch (const std::exception& exception)

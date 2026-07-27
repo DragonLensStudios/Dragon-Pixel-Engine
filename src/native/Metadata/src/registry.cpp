@@ -94,10 +94,88 @@ bool registry::add(component_descriptor descriptor)
     return descriptors_.emplace(key, std::move(descriptor)).second;
 }
 
+bool registry::add_contract(contract_descriptor descriptor)
+{
+    if (!core::uuid::parse(descriptor.contract_id) || descriptor.qualified_name.empty()
+        || descriptor.display_name.empty())
+    {
+        return false;
+    }
+    const auto key = descriptor.contract_id;
+    return contracts_.emplace(key, std::move(descriptor)).second;
+}
+
+bool registry::add_object_type(object_type_descriptor descriptor)
+{
+    if (!core::uuid::parse(descriptor.type_id) || descriptor.qualified_name.empty()
+        || descriptor.display_name.empty() || descriptor.schema_version == 0)
+    {
+        return false;
+    }
+    for (const auto& contract : descriptor.contracts)
+    {
+        if (!core::uuid::parse(contract))
+        {
+            return false;
+        }
+    }
+    std::sort(descriptor.properties.begin(), descriptor.properties.end(), [](const auto& left, const auto& right) {
+        return left.order != right.order ? left.order < right.order : left.property_id < right.property_id;
+    });
+    const auto key = descriptor.type_id;
+    return object_types_.emplace(key, std::move(descriptor)).second;
+}
+
 const component_descriptor* registry::find(std::string_view type_id) const noexcept
 {
     const auto found = descriptors_.find(std::string{type_id});
     return found == descriptors_.end() ? nullptr : &found->second;
+}
+
+const contract_descriptor* registry::find_contract(std::string_view contract_id) const noexcept
+{
+    const auto found = contracts_.find(std::string{contract_id});
+    return found == contracts_.end() ? nullptr : &found->second;
+}
+
+const object_type_descriptor* registry::find_object_type(std::string_view type_id) const noexcept
+{
+    const auto found = object_types_.find(std::string{type_id});
+    return found == object_types_.end() ? nullptr : &found->second;
+}
+
+std::vector<std::reference_wrapper<const object_type_descriptor>> registry::implementations(
+    std::string_view contract_id) const
+{
+    std::vector<std::reference_wrapper<const object_type_descriptor>> result;
+    for (const auto& [type_id, descriptor] : object_types_)
+    {
+        static_cast<void>(type_id);
+        if (std::find(descriptor.contracts.begin(), descriptor.contracts.end(), contract_id)
+            != descriptor.contracts.end())
+        {
+            result.emplace_back(std::cref(descriptor));
+        }
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left.get().display_name < right.get().display_name;
+    });
+    return result;
+}
+
+std::vector<std::reference_wrapper<const object_type_descriptor>> registry::object_types() const
+{
+    std::vector<std::reference_wrapper<const object_type_descriptor>> result;
+    result.reserve(object_types_.size());
+    for (const auto& [type_id, descriptor] : object_types_)
+    {
+        static_cast<void>(type_id);
+        result.emplace_back(std::cref(descriptor));
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        return left.get().type_id < right.get().type_id;
+    });
+    return result;
 }
 
 std::vector<std::reference_wrapper<const component_descriptor>> registry::descriptors() const
@@ -135,6 +213,11 @@ registry registry::slice_one_defaults()
                 R"({"x":1.0,"y":1.0,"z":1.0})", {}, {}, 0.1, {}, {}, false, {}, "Transform",
                 "Local scale. Runtime physics does not support animated scale in Slice 2.", "transform-scale"),
         },
+        "Core",
+        "Required GameObject transform.",
+        false,
+        false,
+        true,
     });
     const auto rotator_added = result.add(component_descriptor{
         std::string{builtin_component_ids::rotator},
@@ -285,10 +368,46 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 6, "65535", 0.0, 65535.0, 1.0),
         },
     });
+    const auto tilemap_2d_added = result.add(component_descriptor{
+        std::string{builtin_component_ids::tilemap_2d}, "DragonPixel.Native.Tilemap2DComponent", "Tilemap 2D", 1, runtime_owner::native,
+        {
+            authoring_property("dpe.tilemap.asset", "Tilemap", value_type::asset_reference, 0, "null",
+                {}, {}, {}, {}, {}, true, "tilemap", "Tiles", "Reusable dpe.tilemap asset.", "asset-reference"),
+            authoring_property("dpe.tilemap.tint", "Tint", value_type::color, 1,
+                R"({"r":1.0,"g":1.0,"b":1.0,"a":1.0})", 0.0, 1.0, 0.01, {}, {}, false, {}, "Tiles",
+                "Linear RGBA tint multiplied with every tile.", "color"),
+            authoring_property("dpe.tilemap.layer", "Render layer", value_type::integer, 2, "0", -32768.0, 32767.0, 1.0,
+                {}, {}, false, {}, "Tiles", "Base ordering layer for tilemap layers."),
+        },
+    });
+    const auto tilemap_collider_2d_added = result.add(component_descriptor{
+        std::string{builtin_component_ids::tilemap_collider_2d}, "DragonPixel.Native.TilemapCollider2DComponent", "Tilemap Collider 2D", 1, runtime_owner::native,
+        {
+            physics_property("dpe.tilemap.collider.sensor", "Sensor", value_type::boolean, 0, "false"),
+            physics_property("dpe.tilemap.collider.friction", "Friction", value_type::number, 1, "0.5", 0.0, 1.0, 0.01),
+            physics_property("dpe.tilemap.collider.restitution", "Restitution", value_type::number, 2, "0.0", 0.0, 1.0, 0.01),
+            physics_property("dpe.tilemap.collider.layer", "Layer", value_type::integer, 3, "0", 0.0, 15.0, 1.0),
+            physics_property("dpe.tilemap.collider.mask", "Mask", value_type::integer, 4, "65535", 0.0, 65535.0, 1.0),
+        },
+    });
+    const auto input_motion_2d_added = result.add(component_descriptor{
+        std::string{builtin_component_ids::input_motion_2d}, "DragonPixel.Native.InputMotion2DComponent", "Input Motion 2D", 1, runtime_owner::native,
+        {
+            authoring_property("dpe.input.horizontal_action", "Horizontal action", value_type::string, 0, "\"move.x\"",
+                {}, {}, {}, {}, {}, false, {}, "Input", "Portable action used for horizontal runtime-only motion."),
+            authoring_property("dpe.input.vertical_action", "Vertical action", value_type::string, 1, "\"move.y\"",
+                {}, {}, {}, {}, {}, false, {}, "Input", "Portable action used for vertical runtime-only motion."),
+            authoring_property("dpe.input.speed", "Speed", value_type::number, 2, "5.0", 0.0, 1000.0, 0.1,
+                "m/s", {}, false, {}, "Input", "Runtime-only speed while the focused Game view supplies actions."),
+        },
+        "Input",
+        "Moves this GameObject in the isolated Play world from focused Game-view actions.",
+    });
     if (!transform_added || !rotator_added || !camera_added || !sprite_added || !mesh_added
         || !material_added || !light_added || !rigid_body_2d_added || !box_collider_2d_added
         || !circle_collider_2d_added || !rigid_body_3d_added || !box_collider_3d_added
-        || !sphere_collider_3d_added)
+        || !sphere_collider_3d_added || !tilemap_2d_added || !tilemap_collider_2d_added
+        || !input_motion_2d_added)
     {
         return registry{};
     }

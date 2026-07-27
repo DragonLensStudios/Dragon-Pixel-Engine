@@ -59,6 +59,7 @@ public:
         const QVector3D& bounds_maximum,
         const QQuaternion& local_rotation);
     void clear_selection_geometry();
+    void focus_on_selection() { focus_selection(); }
 
     [[nodiscard]] ViewMode view_mode() const noexcept { return view_mode_; }
     [[nodiscard]] GizmoTool gizmo_tool() const noexcept { return gizmo_tool_; }
@@ -83,7 +84,13 @@ signals:
     void gizmo_previewed(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void gizmo_committed(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void gizmo_cancelled();
-    void project_item_dropped(const QString& path, const QString& kind, const QString& asset_type, const QString& asset_id);
+    void project_item_dropped(
+        const QString& project_id,
+        qint64 source_revision,
+        const QString& path,
+        const QString& kind,
+        const QString& asset_type,
+        const QString& asset_id);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

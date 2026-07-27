@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dragonpixel.dev/schemas/v1/tileset.schema.json",
+  "title": "Dragon Pixel Engine orthogonal TileSet",
+  "type": "object", "additionalProperties": false,
+  "required": ["$schema", "format", "formatVersion", "engineVersion", "assetId", "name", "textureAssetId", "cellSize", "margin", "spacing", "pixelsPerUnit", "tiles"],
+  "properties": {
+    "$schema": { "const": "https://dragonpixel.dev/schemas/v1/tileset.schema.json" },
+    "format": { "const": "dpe.tileset" }, "formatVersion": { "const": 1 },
+    "engineVersion": { "type": "string", "minLength": 1 }, "assetId": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 }, "textureAssetId": { "type": "string", "format": "uuid" },
+    "cellSize": { "$ref": "#/$defs/size" }, "margin": { "$ref": "#/$defs/size" }, "spacing": { "$ref": "#/$defs/size" },
+    "pixelsPerUnit": { "type": "number", "exclusiveMinimum": 0 },
+    "tiles": { "type": "array", "items": { "$ref": "#/$defs/tile" } }
+  },
+  "$defs": {
+    "size": { "type": "object", "additionalProperties": false, "required": ["x", "y"], "properties": { "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 } } },
+    "tile": { "type": "object", "additionalProperties": false, "required": ["tileId", "name", "source"], "properties": {
+      "tileId": { "type": "string", "format": "uuid" }, "name": { "type": "string", "minLength": 1 },
+      "source": { "type": "object", "additionalProperties": false, "required": ["x", "y", "width", "height"], "properties": { "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 }, "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 } } },
+      "collision": { "type": ["object", "null"], "properties": { "offsetX": { "type": "number" }, "offsetY": { "type": "number" }, "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } }, "required": ["offsetX", "offsetY", "width", "height"], "additionalProperties": false }
+    } }
+  }
+}

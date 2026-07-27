@@ -3,8 +3,11 @@
 > **Audit status:** In progress - Windows and Ubuntu registered matrices verified; macOS and complete Slice 2 acceptance open  
 > **Recorded:** 2026-07-25  
 > **Architecture baseline:** `DPE-ARCH-0006`  
-> **Active plan:** [Dragon Pixel Engine Functional Editor: Slice 1 Closure and Complete Slice 2](../Plans/Dragon%20Pixel%20Engine%20Functional%20Editor%20Slice%201%20Closure%20and%20Complete%20Slice%202%20Plan.md)  
+> **Plan at time of audit:** [Dragon Pixel Engine Functional Editor: Slice 1 Closure and Complete Slice 2](../Plans/Dragon%20Pixel%20Engine%20Functional%20Editor%20Slice%201%20Closure%20and%20Complete%20Slice%202%20Plan.md)
+> **Current active master plan (2026-07-25):** [Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan](../Plans/Dragon%20Pixel%20Engine%20Slices%201-4%20Version%201.0%20Completion%20Plan.md)
 > **Platform evidence represented by this audit:** Windows 11 x64 and Ubuntu 24.04 x64 automated evidence; Windows manual QA
+
+> **Evidence correction, 2026-07-25:** This is a historical 36-test checkpoint. Its tables labeled the revision echo as input-to-present, but that request did not change rendered state; those values are viewport-command-to-present transport evidence only. Current Windows work proves full-state action consumption through real MonoGame/KNI pixel and retained-ID pick displacement, but aggregate Qt key-event-to-first-reflecting-Qt-paint median/tail evidence remains open. The active master plan and current Design/Prompt Result supersede the counts and classifications below without erasing this checkpoint.
 
 ## Outcome
 
@@ -131,3 +134,5 @@ Manual QA used the disposable project under `out/dev`.
 ## Disposition
 
 The Windows functional-editor increment and the registered Windows/Ubuntu matrices are ready for continued development and regression testing. The active execution plan remains **In progress**. No statement in this audit closes Slice 1, closes Slice 2, promotes an ADR based on two-platform evidence, or changes KNI's experimental status.
+
+On 2026-07-25, `DPE-ARCH-0009` superseded the narrower plan for active tracking with the four-slice version 1.0 master plan. This audit remains historical evidence; every open Slice 1/2 handoff item remains binding.
