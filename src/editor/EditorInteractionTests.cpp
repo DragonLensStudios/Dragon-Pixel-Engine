@@ -254,6 +254,7 @@ private slots:
         auto* new_project = window.findChild<QAction*>(QStringLiteral("NewProjectAction"));
         auto* new_scene = window.findChild<QAction*>(QStringLiteral("NewSceneAction"));
         auto* save_as = window.findChild<QAction*>(QStringLiteral("SaveSceneAsAction"));
+        auto* import_tiled = window.findChild<QAction*>(QStringLiteral("ImportTiledTilemapAction"));
 
         QVERIFY(hub != nullptr && hub->isVisible());
         QVERIFY(hub->widget() != nullptr);
@@ -264,6 +265,7 @@ private slots:
         QVERIFY(new_project != nullptr && new_project->isEnabled());
         QVERIFY(new_scene != nullptr && !new_scene->isEnabled());
         QVERIFY(save_as != nullptr && !save_as->isEnabled());
+        QVERIFY(import_tiled != nullptr && !import_tiled->isEnabled());
         QVERIFY(!window.scene_.has_value());
         QVERIFY(window.project_manifest_path_.isEmpty());
     }
@@ -297,6 +299,9 @@ private slots:
         QVERIFY(scene != nullptr && game != nullptr && hierarchy != nullptr && assets != nullptr);
         QVERIFY(inspector != nullptr && console != nullptr && tile_palette != nullptr && onboarding != nullptr);
         QVERIFY(project_hub != nullptr);
+        auto* import_tiled = window.findChild<QAction*>(QStringLiteral("ImportTiledTilemapAction"));
+        QVERIFY(import_tiled != nullptr && import_tiled->isEnabled());
+        QCOMPARE(import_tiled->shortcut(), QKeySequence{QStringLiteral("Ctrl+Alt+T")});
 
         for (auto* dock : {scene, game, hierarchy, assets, inspector, console, tile_palette, onboarding, project_hub})
         {
