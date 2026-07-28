@@ -695,6 +695,11 @@ command_validation_result validate_and_normalize_commands(
             {
                 created_entities.insert(concrete.entity_id);
             }
+            else if constexpr (std::is_same_v<command_type, duplicate_subtree_command>)
+            {
+                for (const auto& remap : concrete.id_remaps)
+                    created_entities.insert(remap.duplicate_id);
+            }
         }, value);
     }
 
@@ -703,7 +708,45 @@ command_validation_result validate_and_normalize_commands(
         const auto& value = commands[command_index];
         std::visit([&](const auto& concrete) {
             using command_type = std::decay_t<decltype(concrete)>;
-            if constexpr (std::is_same_v<command_type, upsert_component_command>)
+            if constexpr (std::is_same_v<command_type, duplicate_subtree_command>)
+            {
+                auto normalized = concrete;
+                normalized.duplicate_root_component_overrides.clear();
+                const auto root_mapping = std::find_if(
+                    concrete.id_remaps.begin(), concrete.id_remaps.end(),
+                    [&](const auto& remap) { return remap.source_id == concrete.root_entity_id; });
+                if (root_mapping == concrete.id_remaps.end())
+                {
+                    add_error(result.diagnostics, "DPE.COMMAND.INCOMPLETE_ID_REMAP",
+                        "Duplicate root component overrides require a root ID mapping.",
+                        command_context(command_index, concrete.root_entity_id, {}));
+                    return;
+                }
+                for (const auto& component : concrete.duplicate_root_component_overrides)
+                {
+                    const auto* descriptor = context.descriptors.find(component.type_id);
+                    if (descriptor == nullptr)
+                    {
+                        add_error(result.diagnostics,
+                            "DPE.COMMAND.COMPONENT_DESCRIPTOR_UNAVAILABLE",
+                            "A duplicate root component override requires an available descriptor.",
+                            command_context(command_index, root_mapping->duplicate_id, component.type_id));
+                        return;
+                    }
+                    auto normalized_component = normalize_upsert(
+                        upsert_component_command{root_mapping->duplicate_id, component},
+                        command_index,
+                        context,
+                        created_entities,
+                        *descriptor,
+                        result.diagnostics);
+                    if (!normalized_component) return;
+                    normalized.duplicate_root_component_overrides.push_back(
+                        std::move(*normalized_component));
+                }
+                result.commands.emplace_back(std::move(normalized));
+            }
+            else if constexpr (std::is_same_v<command_type, upsert_component_command>)
             {
                 const auto* descriptor = context.descriptors.find(concrete.component.type_id);
                 auto& existing = projected_component(

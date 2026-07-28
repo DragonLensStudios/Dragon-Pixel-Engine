@@ -1171,7 +1171,8 @@ std::vector<command> PrefabService::materialization_commands(
 PrefabOperationResult PrefabService::instantiate(
     dragonpixel::scene::scene& current_scene,
     const QString& source_path,
-    const std::optional<uuid>& placement_parent)
+    const std::optional<uuid>& placement_parent,
+    RootCommandFactory root_commands)
 {
     PrefabOperationResult result;
     const auto* entry = load_source_path(source_path, result.diagnostics);
@@ -1234,6 +1235,13 @@ PrefabOperationResult PrefabService::instantiate(
     commands.insert(commands.end(),
         std::make_move_iterator(materialize.begin()),
         std::make_move_iterator(materialize.end()));
+    if (root_commands)
+    {
+        auto placement_commands = root_commands(instance.root_entity_id);
+        commands.insert(commands.end(),
+            std::make_move_iterator(placement_commands.begin()),
+            std::make_move_iterator(placement_commands.end()));
+    }
     const auto previous_history_position = current_scene.history_position();
     const auto applied = current_scene.apply_transaction(commands, "Instantiate linked prefab");
     if (!applied.succeeded)

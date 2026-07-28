@@ -712,11 +712,11 @@ private slots:
             }
             return QPoint{-1, -1};
         };
-        const auto cell_0_0 = point_for_cell({0, 0});
-        const auto cell_1_0 = point_for_cell({1, 0});
-        const auto cell_1_1 = point_for_cell({1, 1});
-        const auto cell_2_0 = point_for_cell({2, 0});
-        const auto cell_3_0 = point_for_cell({3, 0});
+        auto cell_0_0 = point_for_cell({0, 0});
+        auto cell_1_0 = point_for_cell({1, 0});
+        auto cell_1_1 = point_for_cell({1, 1});
+        auto cell_2_0 = point_for_cell({2, 0});
+        auto cell_3_0 = point_for_cell({3, 0});
         QVERIFY(cell_0_0.x() >= 0 && cell_1_0.x() >= 0
             && cell_1_1.x() >= 0 && cell_2_0.x() >= 0
             && cell_3_0.x() >= 0);
@@ -750,6 +750,13 @@ private slots:
         QCOMPARE(window.tile_palette_->active_brush_pattern_at(4, 5).size(), std::size_t{1});
         group_limit->setValue(256);
         brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
+        const auto target_entity_id = window.selected_entity_id();
+        QVERIFY(target_entity_id.has_value());
+        auto* target_pin = window.findChild<QToolButton*>(
+            QStringLiteral("PinActiveTilemapTarget"));
+        QVERIFY(target_pin != nullptr);
+        target_pin->setChecked(true);
+        QCOMPARE(window.tile_scene_target()->entity_id, *target_entity_id);
 
         const auto prefab_source = std::find_if(
             window.project_index_.candidate->entries.cbegin(),
@@ -774,8 +781,6 @@ private slots:
         QApplication::sendEvent(tile_list->viewport(), &prefab_drop);
         QCOMPARE(brush_behavior->currentData().toString(), QStringLiteral("object"));
 
-        const auto target_entity_id = window.selected_entity_id();
-        QVERIFY(target_entity_id.has_value());
         const auto scene_entity_count = window.scene_->entities().size();
         auto* paint_tool = window.findChild<QAction*>(QStringLiteral("TilePaintTool"));
         auto* erase_tool = window.findChild<QAction*>(QStringLiteral("TileEraseTool"));
@@ -812,7 +817,70 @@ private slots:
         QCOMPARE(window.scene_->entities().size(), scene_entity_count);
         QVERIFY(window.scene_->find_entity(placed_id) == nullptr);
 
+        const auto scene_source_proxy = find_text(
+            window.hierarchy_->model(), QStringLiteral("Dragon Sprite (2D)"));
+        QVERIFY(scene_source_proxy.isValid());
+        const auto scene_source_index = window.hierarchy_filter_->mapToSource(scene_source_proxy);
+        std::unique_ptr<QMimeData> scene_source_mime{
+            window.hierarchy_model_->mimeData({scene_source_index})};
+        window.hierarchy_->selectionModel()->select(scene_source_proxy,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        window.hierarchy_->setCurrentIndex(scene_source_proxy);
+        QCoreApplication::processEvents();
+        QCOMPARE(window.selected_entity_id(), std::optional{*dragonpixel::core::uuid::parse(
+            scene_source_index.data(EditorRoles::entity_id).toString().toStdString())});
+        QVERIFY(window.viewport_->tile_edit_enabled());
+        QCOMPARE(window.tile_scene_target()->entity_id, *target_entity_id);
+        QDragEnterEvent scene_source_enter{
+            QPoint{8, 8}, Qt::CopyAction, scene_source_mime.get(),
+            Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(tile_list->viewport(), &scene_source_enter);
+        QDropEvent scene_source_drop{
+            QPointF{8.0, 8.0}, Qt::CopyAction, scene_source_mime.get(),
+            Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(tile_list->viewport(), &scene_source_drop);
+        QCOMPARE(brush_behavior->currentData().toString(), QStringLiteral("object"));
+        paint_tool->trigger();
+        QTest::mouseClick(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_3_0);
+        QCOMPARE(window.scene_->entities().size(), scene_entity_count + 1);
+        const auto copied_object = std::find_if(
+            window.scene_->entities().begin(), window.scene_->entities().end(),
+            [&](const auto& candidate) {
+                return candidate.parent_id == target_entity_id
+                    && std::any_of(candidate.components.begin(), candidate.components.end(),
+                        [&](const auto& component) {
+                            return component.type_id == placement_type
+                                && component.properties.value(
+                                    "dpe.tileobject.source_kind", std::string{})
+                                    == "scene-object";
+                        });
+            });
+        QVERIFY(copied_object != window.scene_->entities().end());
+        erase_tool->trigger();
+        QTest::mouseClick(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_3_0);
+        QCOMPARE(window.scene_->entities().size(), scene_entity_count);
+
         brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
+        const auto target_source = window.hierarchy_model_->index_for_entity(*target_entity_id);
+        const auto target_proxy = window.hierarchy_filter_->mapFromSource(target_source);
+        QVERIFY(target_proxy.isValid());
+        window.hierarchy_->selectionModel()->select(target_proxy,
+            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        window.hierarchy_->setCurrentIndex(target_proxy);
+        target_pin->setChecked(false);
+        QCoreApplication::processEvents();
+        QCOMPARE(window.selected_entity_id(), target_entity_id);
+        QVERIFY(window.viewport_->tile_edit_enabled());
+        const auto restored_target = window.tile_scene_target();
+        QVERIFY(restored_target.has_value());
+        cell_0_0 = point_for_cell({0, 0});
+        cell_1_0 = point_for_cell({1, 0});
+        cell_1_1 = point_for_cell({1, 1});
+        cell_2_0 = point_for_cell({2, 0});
+        cell_3_0 = point_for_cell({3, 0});
+        const auto restored_world = window.viewport_->map_to_world_2d(cell_0_0);
+        QVERIFY(restored_world.has_value());
+        QCOMPARE(EditorWindow::tile_cell_at(*restored_world, *restored_target), QPoint(0, 0));
 
         line_tool->trigger();
         QCOMPARE(window.tile_palette_->active_tool(), TileCanvas::Tool::line);
@@ -883,7 +951,7 @@ private slots:
             0.0F};
         QCOMPARE(EditorWindow::tile_cell_at(
             transformed_target->local_to_world.map(local_sample),
-            *transformed_target), QPoint(2, -1));
+            *transformed_target), QPoint(2, 0));
 
         window.tile_preview_timer_->start();
         const auto snapshot_path = window.runtime_directory_.filePath(

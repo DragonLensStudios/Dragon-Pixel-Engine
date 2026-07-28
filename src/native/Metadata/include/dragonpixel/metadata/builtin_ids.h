@@ -19,5 +19,6 @@ inline constexpr std::string_view box_collider_3d = "bfc9ff93-a892-4c1f-ad8f-f13
 inline constexpr std::string_view sphere_collider_3d = "11f84a3a-b568-4107-ad02-c53a86e50971";
 inline constexpr std::string_view tilemap_2d = "eea820b4-79e4-4dd6-86f8-04c93c3486fb";
 inline constexpr std::string_view tilemap_collider_2d = "43d833f1-6ff4-4fd1-9a62-90d230118e7b";
+inline constexpr std::string_view tile_object_placement_2d = "7edf6876-d677-42a8-a204-2eff41bb45f4";
 inline constexpr std::string_view input_motion_2d = "64348aba-c5a4-42fc-86e6-e99f9640e36d";
 }

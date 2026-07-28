@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
+#include <QFileInfo>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QDoubleSpinBox>
@@ -487,14 +488,24 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     brush_behavior_->addItem(QStringLiteral("Basic"), QStringLiteral("basic"));
     brush_behavior_->addItem(QStringLiteral("Random Selection"), QStringLiteral("random"));
     brush_behavior_->addItem(QStringLiteral("Group Stamp"), QStringLiteral("group"));
+    brush_behavior_->addItem(QStringLiteral("GameObject"), QStringLiteral("object"));
     brush_behavior_->setToolTip(QStringLiteral(
-        "Random Selection chooses deterministically; Group Stamp preserves selected palette offsets."));
+        "Random Selection chooses deterministically; Group Stamp preserves selected palette offsets; "
+        "GameObject places a dropped prefab or copied scene-object subtree."));
     controls->addWidget(brush_behavior_);
     controls->addWidget(new QLabel{QStringLiteral("Active Target"), this});
     layers_ = new QComboBox{this};
     layers_->setObjectName(QStringLiteral("TileLayer"));
     layers_->setAccessibleName(QStringLiteral("Active Tilemap target layer"));
     controls->addWidget(layers_, 1);
+    target_pin_ = new QToolButton{this};
+    target_pin_->setObjectName(QStringLiteral("PinActiveTilemapTarget"));
+    target_pin_->setText(QStringLiteral("Pin"));
+    target_pin_->setCheckable(true);
+    target_pin_->setAccessibleName(QStringLiteral("Pin active Tilemap2D GameObject target"));
+    target_pin_->setToolTip(QStringLiteral(
+        "Keeps painting on the current Tilemap2D GameObject while another Hierarchy object is selected."));
+    controls->addWidget(target_pin_);
     layer_visible_ = new QToolButton{this};
     layer_visible_->setObjectName(QStringLiteral("TileLayerVisible"));
     layer_visible_->setText(QStringLiteral("Visible"));
@@ -628,6 +639,10 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     connect(layers_, &QComboBox::currentIndexChanged, this, [this](int index) {
         canvas_->set_layer(index);
         update_layer_controls();
+        emit authoringStateChanged();
+    });
+    connect(target_pin_, &QToolButton::toggled, this, [this](bool pinned) {
+        target_pin_->setText(pinned ? QStringLiteral("Pinned") : QStringLiteral("Pin"));
         emit authoringStateChanged();
     });
     connect(brush_behavior_, &QComboBox::currentIndexChanged, this,
@@ -800,7 +815,8 @@ bool TilePaletteWidget::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
     {
         auto* drag = static_cast<QDragMoveEvent*>(event);
-        if (drag->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        if (drag->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || drag->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
         {
             drag->acceptProposedAction();
             return true;
@@ -808,13 +824,68 @@ bool TilePaletteWidget::eventFilter(QObject* watched, QEvent* event)
     }
     if (event->type() != QEvent::Drop) return QWidget::eventFilter(watched, event);
     auto* drop = static_cast<QDropEvent*>(event);
+    if (drop->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
+    {
+        const auto payload = QJsonDocument::fromJson(drop->mimeData()->data(
+            QStringLiteral("application/x-dragonpixel-entity"))).object();
+        ObjectBrushSource source;
+        source.kind = ObjectBrushKind::scene_objects;
+        source.project_id = payload.value(QStringLiteral("projectId")).toString();
+        source.scene_id = payload.value(QStringLiteral("sceneId")).toString();
+        source.source_revision = payload.value(QStringLiteral("sourceRevision")).toInteger();
+        for (const auto& value : payload.value(QStringLiteral("items")).toArray())
+        {
+            const auto id = dragonpixel::core::uuid::parse(
+                value.toObject().value(QStringLiteral("id")).toString().toStdString());
+            if (id) source.entity_ids.push_back(*id);
+        }
+        if (payload.value(QStringLiteral("format")).toString() == QStringLiteral("dpe.drag")
+            && payload.value(QStringLiteral("formatVersion")).toInt() == 1
+            && !source.entity_ids.empty())
+        {
+            object_brush_ = std::move(source);
+            brush_behavior_->setCurrentIndex(
+                brush_behavior_->findData(QStringLiteral("object")));
+            status_->setText(QStringLiteral(
+                "GameObject Brush armed with %1 scene selection root(s). Select the Tilemap2D target, then paint.")
+                    .arg(object_brush_->entity_ids.size()));
+            drop->acceptProposedAction();
+        }
+        else status_->setText(QStringLiteral("The dropped scene selection is not a valid GameObject Brush source."));
+        return true;
+    }
     if (!drop->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
         return QWidget::eventFilter(watched, event);
     const auto payload = QJsonDocument::fromJson(drop->mimeData()->data(
         QStringLiteral("application/x-dragonpixel-project-item"))).object();
     if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
-        || payload.value(QStringLiteral("formatVersion")).toInt() != 1
-        || service_->palette() == nullptr)
+        || payload.value(QStringLiteral("formatVersion")).toInt() != 1)
+    {
+        status_->setText(QStringLiteral("The dropped Project Explorer payload is not valid."));
+        return true;
+    }
+    for (const auto& item : payload.value(QStringLiteral("items")).toArray())
+    {
+        const auto object = item.toObject();
+        if (object.value(QStringLiteral("kind")).toString() != QStringLiteral("prefab")) continue;
+        ObjectBrushSource source;
+        source.kind = ObjectBrushKind::prefab;
+        source.source_path = object.value(QStringLiteral("path")).toString();
+        source.project_id = payload.value(QStringLiteral("projectId")).toString();
+        source.source_revision = payload.value(QStringLiteral("sourceRevision")).toInteger();
+        if (!source.source_path.isEmpty())
+        {
+            object_brush_ = std::move(source);
+            brush_behavior_->setCurrentIndex(
+                brush_behavior_->findData(QStringLiteral("object")));
+            status_->setText(QStringLiteral(
+                "GameObject Brush armed with prefab '%1'. Paint on the active Tilemap2D target.")
+                    .arg(QFileInfo{object_brush_->source_path}.completeBaseName()));
+            drop->acceptProposedAction();
+        }
+        return true;
+    }
+    if (service_->palette() == nullptr)
     {
         status_->setText(QStringLiteral("Open a durable Tile Palette before adding dropped assets."));
         return true;
@@ -859,6 +930,13 @@ bool TilePaletteWidget::eventFilter(QObject* watched, QEvent* event)
         }
     drop->acceptProposedAction();
     return true;
+}
+
+std::optional<TilePaletteWidget::ObjectBrushSource> TilePaletteWidget::active_object_brush() const
+{
+    if (brush_behavior_ == nullptr
+        || brush_behavior_->currentData().toString() != QStringLiteral("object")) return std::nullopt;
+    return object_brush_;
 }
 
 bool TilePaletteWidget::load_documents(
@@ -929,8 +1007,15 @@ std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush() cons
         brush_lock_transform_->isChecked()};
 }
 
+bool TilePaletteWidget::target_pinned() const noexcept
+{
+    return target_pin_ != nullptr && target_pin_->isChecked();
+}
+
 std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush_at(int x, int y) const
 {
+    if (brush_behavior_ != nullptr
+        && brush_behavior_->currentData().toString() == QStringLiteral("object")) return std::nullopt;
     auto brush = active_brush();
     const auto* map = service_->tilemap();
     const auto layer_index = active_layer();

@@ -234,6 +234,7 @@ private:
         QMatrix4x4 world_to_local;
         float cell_width{1.0F};
         float cell_height{1.0F};
+        dragonpixel::tiles::tile_grid_settings grid;
     };
     [[nodiscard]] std::optional<TileSceneTarget> tile_scene_target() const;
     [[nodiscard]] static QPoint tile_cell_at(
@@ -247,6 +248,22 @@ private:
     void update_tile_scene_stroke(const QVector3D& world_position);
     void end_tile_scene_stroke(const QVector3D& world_position);
     void cancel_tile_scene_stroke();
+    [[nodiscard]] bool place_tile_object(
+        const TilePaletteWidget::ObjectBrushSource& source,
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell);
+    [[nodiscard]] bool erase_tile_objects(
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell);
+    [[nodiscard]] std::vector<dragonpixel::scene::command> tile_object_placement_commands(
+        const dragonpixel::core::uuid& entity_id,
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell,
+        const QString& source_kind,
+        const QString& source) const;
     void begin_gizmo_preview(AuthoringViewport::GizmoTool tool);
     void preview_gizmo_delta(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void cancel_gizmo_preview();
@@ -367,6 +384,7 @@ private:
     TileCanvas::Tool tile_scene_stroke_tool_{TileCanvas::Tool::paint};
     int tile_scene_stroke_layer_{};
     std::optional<TileDocumentService::Brush> tile_scene_stroke_brush_;
+    std::optional<dragonpixel::core::uuid> pinned_tile_scene_target_;
 
     QAction* save_action_{};
     QAction* new_scene_action_{};

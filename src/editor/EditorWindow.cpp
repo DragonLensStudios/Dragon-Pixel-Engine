@@ -79,6 +79,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <unordered_map>
@@ -2748,6 +2749,7 @@ bool EditorWindow::close_project(bool ask_to_save)
     gizmo_preview_active_ = false;
     gizmo_preview_scene_.reset();
     gizmo_transform_snapshots_.clear();
+    pinned_tile_scene_target_.reset();
     clear_inspector_locks();
     selection_service_.clear(SelectionOrigin::project_lifecycle);
     scene_.reset();
@@ -6607,8 +6609,14 @@ std::optional<EditorWindow::TileSceneTarget> EditorWindow::tile_scene_target() c
         return std::nullopt;
     }
     const auto selected = selected_entity_ids();
-    if (selected.size() != 1) return std::nullopt;
-    const auto* entity = scene_->find_entity(selected.front());
+    const auto target_id = tile_palette_ != nullptr && tile_palette_->target_pinned()
+            && pinned_tile_scene_target_
+        ? pinned_tile_scene_target_
+        : selected.size() == 1
+            ? std::optional<dragonpixel::core::uuid>{selected.front()}
+            : std::nullopt;
+    if (!target_id) return std::nullopt;
+    const auto* entity = scene_->find_entity(*target_id);
     if (entity == nullptr) return std::nullopt;
     const auto tilemap_component = std::find_if(
         entity->components.cbegin(), entity->components.cend(), [](const auto& component) {
@@ -6664,9 +6672,10 @@ std::optional<EditorWindow::TileSceneTarget> EditorWindow::tile_scene_target() c
         return std::nullopt;
     }
     return TileSceneTarget{
-        selected.front(), local_to_world, world_to_local,
+        *target_id, local_to_world, world_to_local,
         static_cast<float>(tileset->cell_size.x / tileset->pixels_per_unit),
-        static_cast<float>(tileset->cell_size.y / tileset->pixels_per_unit)};
+        static_cast<float>(tileset->cell_size.y / tileset->pixels_per_unit),
+        tile_document_service_->tilemap()->grid};
 }
 
 QPoint EditorWindow::tile_cell_at(
@@ -6674,28 +6683,48 @@ QPoint EditorWindow::tile_cell_at(
     const TileSceneTarget& target)
 {
     const auto local = target.world_to_local.map(world_position);
-    return {
-        static_cast<int>(std::floor(local.x() / target.cell_width)),
-        static_cast<int>(std::floor(local.y() / target.cell_height)),
-    };
+    const auto cell = dragonpixel::tiles::unproject_cell(target.grid,
+        {local.x() / target.cell_width, local.y() / target.cell_height});
+    return {cell.x, cell.y};
 }
 
 void EditorWindow::update_tile_scene_overlay(
     const QPoint& cell,
     const TileSceneTarget& target)
 {
+    const auto origin = dragonpixel::tiles::project_cell(
+        target.grid, {cell.x(), cell.y()});
+    const auto next_x = dragonpixel::tiles::project_cell(
+        target.grid, {cell.x() + 1, cell.y()});
+    const auto next_y = dragonpixel::tiles::project_cell(
+        target.grid, {cell.x(), cell.y() + 1});
     const QVector3D local_origin{
-        cell.x() * target.cell_width,
-        cell.y() * target.cell_height,
+        static_cast<float>(origin.x) * target.cell_width,
+        static_cast<float>(origin.y) * target.cell_height,
         0.0F};
     viewport_->set_tile_cell_overlay(
         target.local_to_world.map(local_origin),
-        target.local_to_world.mapVector({target.cell_width, 0.0F, 0.0F}),
-        target.local_to_world.mapVector({0.0F, target.cell_height, 0.0F}));
+        target.local_to_world.mapVector({
+            static_cast<float>(next_x.x - origin.x) * target.cell_width,
+            static_cast<float>(next_x.y - origin.y) * target.cell_height,
+            0.0F}),
+        target.local_to_world.mapVector({
+            static_cast<float>(next_y.x - origin.x) * target.cell_width,
+            static_cast<float>(next_y.y - origin.y) * target.cell_height,
+            0.0F}));
 }
 
 void EditorWindow::update_tile_scene_edit_state()
 {
+    if (tile_palette_ != nullptr && tile_palette_->target_pinned())
+    {
+        if (!pinned_tile_scene_target_)
+        {
+            const auto selected = selected_entity_ids();
+            if (selected.size() == 1) pinned_tile_scene_target_ = selected.front();
+        }
+    }
+    else pinned_tile_scene_target_.reset();
     const auto target = tile_scene_target();
     const auto enabled = target.has_value() && !play_running_
         && viewport_->view_mode() == AuthoringViewport::ViewMode::two_d;
@@ -6712,6 +6741,191 @@ void EditorWindow::update_tile_scene_edit_state()
         return;
     }
     update_tile_scene_overlay(tile_scene_last_cell_.value_or(QPoint{}), *target);
+}
+
+std::vector<dragonpixel::scene::command> EditorWindow::tile_object_placement_commands(
+    const dragonpixel::core::uuid& entity_id,
+    const TileSceneTarget& target,
+    int layer,
+    const QPoint& cell,
+    const QString& source_kind,
+    const QString& source) const
+{
+    if (tile_document_service_ == nullptr || tile_document_service_->tilemap() == nullptr
+        || layer < 0
+        || layer >= static_cast<int>(tile_document_service_->tilemap()->layers.size())) return {};
+    const auto& map = *tile_document_service_->tilemap();
+    const auto projected = dragonpixel::tiles::project_cell(
+        target.grid, {cell.x(), cell.y()});
+    dragonpixel::scene::component_record placement{
+        std::string{dragonpixel::metadata::builtin_component_ids::tile_object_placement_2d},
+        1,
+        dragonpixel::metadata::runtime_owner::native,
+        {
+            {"dpe.tileobject.map", map.asset_id.to_string()},
+            {"dpe.tileobject.layer",
+                map.layers[static_cast<std::size_t>(layer)].layer_id.to_string()},
+            {"dpe.tileobject.cell_x", cell.x()},
+            {"dpe.tileobject.cell_y", cell.y()},
+            {"dpe.tileobject.source_kind", source_kind.toStdString()},
+            {"dpe.tileobject.source", source.toStdString()},
+        },
+        false,
+        nlohmann::ordered_json::object(),
+        true,
+        "DragonPixel.Native.TileObjectPlacement2DComponent",
+    };
+    return {
+        dragonpixel::scene::set_component_property_command{
+            entity_id,
+            std::string{dragonpixel::metadata::builtin_component_ids::transform},
+            "dpe.transform.position",
+            nlohmann::ordered_json{
+                {"x", projected.x * target.cell_width},
+                {"y", projected.y * target.cell_height},
+                {"z", 0.0},
+            }},
+        dragonpixel::scene::upsert_component_command{entity_id, std::move(placement)},
+    };
+}
+
+bool EditorWindow::place_tile_object(
+    const TilePaletteWidget::ObjectBrushSource& source,
+    const TileSceneTarget& target,
+    int layer,
+    const QPoint& cell)
+{
+    if (!scene_ || !project_index_.candidate || source.project_id.isEmpty()
+        || source.project_id != project_index_.candidate->project_id)
+    {
+        append_console(QStringLiteral("GameObject Brush rejected a stale or cross-project source."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        return false;
+    }
+    if (source.kind == TilePaletteWidget::ObjectBrushKind::prefab)
+    {
+        const auto relative_source = QDir{project_root_}.relativeFilePath(source.source_path);
+        auto result = prefab_service_.instantiate(
+            *scene_, source.source_path, target.entity_id,
+            [this, &target, layer, &cell, relative_source](const auto& root_id) {
+                return tile_object_placement_commands(root_id, target, layer, cell,
+                    QStringLiteral("prefab"), QDir::fromNativeSeparators(relative_source));
+            });
+        for (const auto& diagnostic : result.diagnostics)
+            append_console(diagnostic, QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        if (!result.succeeded)
+        {
+            append_console(result.message, QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+            return false;
+        }
+        after_scene_mutation(result.message);
+        return true;
+    }
+
+    if (source.scene_id != QString::fromStdString(scene_->id().to_string())
+        || source.source_revision > static_cast<qint64>(command_revision_)
+        || source.entity_ids.empty())
+    {
+        append_console(QStringLiteral("GameObject Brush rejected a stale or cross-scene selection."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        return false;
+    }
+    std::vector<dragonpixel::scene::command> commands;
+    for (const auto& root_id : source.entity_ids)
+    {
+        const auto* root = scene_->find_entity(root_id);
+        if (root == nullptr || root_id == target.entity_id || editable_transform(*root) == nullptr)
+        {
+            append_console(QStringLiteral(
+                "GameObject Brush source is missing, is the active target, or has no editable Transform."),
+                QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+            return false;
+        }
+        std::vector<dragonpixel::scene::entity_id_remap> remaps;
+        std::vector<dragonpixel::core::uuid> frontier{root_id};
+        for (std::size_t index = 0; index < frontier.size(); ++index)
+        {
+            const auto current = frontier[index];
+            remaps.push_back({current, dragonpixel::core::uuid::random_v4()});
+            for (const auto& entity : scene_->entities())
+                if (entity.parent_id == current) frontier.push_back(entity.id);
+        }
+        const auto duplicate_root_id = remaps.front().duplicate_id;
+        auto placement = tile_object_placement_commands(
+            duplicate_root_id, target, layer, cell, QStringLiteral("scene-object"),
+            QString::fromStdString(root_id.to_string()));
+        if (placement.size() != 2
+            || !std::holds_alternative<dragonpixel::scene::set_component_property_command>(placement[0])
+            || !std::holds_alternative<dragonpixel::scene::upsert_component_command>(placement[1]))
+            return false;
+        auto placed_transform = *editable_transform(*root);
+        const auto& position = std::get<dragonpixel::scene::set_component_property_command>(
+            placement[0]);
+        placed_transform.properties[position.property_id] = position.value;
+        auto marker = std::get<dragonpixel::scene::upsert_component_command>(
+            std::move(placement[1])).component;
+        commands.emplace_back(dragonpixel::scene::duplicate_subtree_command{
+            root_id,
+            std::move(remaps),
+            target.entity_id,
+            std::nullopt,
+            root->name + " Tile Object",
+            false,
+            {std::move(placed_transform), std::move(marker)},
+        });
+    }
+    if (!apply_authoring_transaction(std::move(commands), "Place GameObject Brush selection"))
+    {
+        append_console(QStringLiteral("GameObject Brush placement was rejected without scene mutation."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        return false;
+    }
+    after_scene_mutation(QStringLiteral(
+        "Placed %1 GameObject Brush root(s) with stable grid ownership metadata.")
+            .arg(source.entity_ids.size()));
+    return true;
+}
+
+bool EditorWindow::erase_tile_objects(
+    const TileSceneTarget& target,
+    int layer,
+    const QPoint& cell)
+{
+    if (!scene_ || !tile_document_service_ || !tile_document_service_->tilemap()
+        || layer < 0
+        || layer >= static_cast<int>(tile_document_service_->tilemap()->layers.size())) return false;
+    const auto map_id = tile_document_service_->tilemap()->asset_id.to_string();
+    const auto layer_id = tile_document_service_->tilemap()
+        ->layers[static_cast<std::size_t>(layer)].layer_id.to_string();
+    std::vector<dragonpixel::scene::command> commands;
+    for (const auto& entity : scene_->entities())
+    {
+        if (entity.parent_id != target.entity_id) continue;
+        const auto marker = std::find_if(entity.components.begin(), entity.components.end(),
+            [](const auto& component) {
+                return !component.opaque
+                    && component.type_id
+                        == dragonpixel::metadata::builtin_component_ids::tile_object_placement_2d;
+            });
+        if (marker == entity.components.end()) continue;
+        const auto& properties = marker->properties;
+        if (properties.value("dpe.tileobject.map", std::string{}) == map_id
+            && properties.value("dpe.tileobject.layer", std::string{}) == layer_id
+            && properties.value("dpe.tileobject.cell_x", std::numeric_limits<int>::min()) == cell.x()
+            && properties.value("dpe.tileobject.cell_y", std::numeric_limits<int>::min()) == cell.y())
+            commands.emplace_back(dragonpixel::scene::delete_subtree_command{entity.id});
+    }
+    if (commands.empty()) return false;
+    const auto count = commands.size();
+    if (!apply_authoring_transaction(std::move(commands), "Erase GameObject Brush placements"))
+    {
+        append_console(QStringLiteral("GameObject Brush erase was rejected without scene mutation."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+        return false;
+    }
+    after_scene_mutation(QStringLiteral(
+        "Erased %1 GameObject Brush root(s); unrelated scene objects were preserved.").arg(count));
+    return true;
 }
 
 void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
@@ -6735,6 +6949,14 @@ void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
         return;
     }
     if (tool == TileCanvas::Tool::select) return;
+    if (const auto object_brush = tile_palette_->active_object_brush())
+    {
+        if (tool == TileCanvas::Tool::paint)
+            static_cast<void>(place_tile_object(*object_brush, *target, layer, cell));
+        else if (tool == TileCanvas::Tool::erase)
+            static_cast<void>(erase_tile_objects(*target, layer, cell));
+        return;
+    }
     const auto brush = tile_palette_->active_brush_at(cell.x(), cell.y());
     if (tool != TileCanvas::Tool::erase && !brush) return;
 

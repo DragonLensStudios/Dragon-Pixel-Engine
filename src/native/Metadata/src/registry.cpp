@@ -409,6 +409,34 @@ registry registry::slice_one_defaults()
             physics_property("dpe.tilemap.collider.layer", "Layer", value_type::integer, 3, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.tilemap.collider.mask", "Mask", value_type::integer, 4, "65535", 0.0, 65535.0, 1.0),
         }));
+    const auto tile_object_placement_2d_added = result.add(builtin_component(
+        std::string{builtin_component_ids::tile_object_placement_2d},
+        "DragonPixel.Native.TileObjectPlacement2DComponent",
+        "Tile Object Placement 2D",
+        1,
+        runtime_owner::native,
+        {
+            authoring_property("dpe.tileobject.map", "Tilemap", value_type::asset_reference, 0,
+                "null", {}, {}, {}, {}, {}, true, "tilemap", "Tiles",
+                "Tilemap asset that owns this brush-created object.", "asset-reference"),
+            authoring_property("dpe.tileobject.layer", "Layer ID", value_type::string, 1,
+                R"("")", {}, {}, {}, {}, {}, false, {}, "Tiles",
+                "Stable active-layer identity at placement time."),
+            authoring_property("dpe.tileobject.cell_x", "Cell X", value_type::integer, 2,
+                "0", -1'000'000.0, 1'000'000.0, 1.0, {}, {}, false, {}, "Tiles"),
+            authoring_property("dpe.tileobject.cell_y", "Cell Y", value_type::integer, 3,
+                "0", -1'000'000.0, 1'000'000.0, 1.0, {}, {}, false, {}, "Tiles"),
+            authoring_property("dpe.tileobject.source_kind", "Source kind", value_type::string, 4,
+                R"("scene-object")", {}, {}, {}, {}, {"prefab", "scene-object"}, false, {}, "Tiles"),
+            authoring_property("dpe.tileobject.source", "Source", value_type::string, 5,
+                R"("")", {}, {}, {}, {}, {}, false, {}, "Tiles",
+                "Prefab path or source GameObject UUID retained for diagnostics."),
+        },
+        "Tiles",
+        "Internal placement ownership used by the GameObject Brush so Tilemap erase and move operations never affect unrelated GameObjects.",
+        false,
+        false,
+        false));
     const auto input_motion_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::input_motion_2d}, "DragonPixel.Native.InputMotion2DComponent", "Input Motion 2D", 1, runtime_owner::native,
         {
@@ -425,7 +453,7 @@ registry registry::slice_one_defaults()
         || !material_added || !light_added || !rigid_body_2d_added || !box_collider_2d_added
         || !circle_collider_2d_added || !rigid_body_3d_added || !box_collider_3d_added
         || !sphere_collider_3d_added || !tilemap_2d_added || !tilemap_collider_2d_added
-        || !input_motion_2d_added)
+        || !tile_object_placement_2d_added || !input_motion_2d_added)
     {
         return registry{};
     }

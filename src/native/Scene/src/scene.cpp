@@ -488,6 +488,17 @@ command_result scene::apply_untracked(const command& value)
             {
                 return failure("DPE.SCENE.INVALID_ENTITY", "Duplicate root name cannot be empty.");
             }
+            std::unordered_set<std::string> overridden_component_types;
+            for (const auto& component : concrete.duplicate_root_component_overrides)
+            {
+                if (!core::uuid::parse(component.type_id) || component.qualified_name.empty()
+                    || component.schema_version == 0 || !component.properties.is_object()
+                    || !overridden_component_types.insert(component.type_id).second)
+                {
+                    return failure("DPE.SCENE.INVALID_COMPONENT",
+                        "Duplicate root component overrides must have unique valid identities and object properties.");
+                }
+            }
 
             for (auto& item : entities_)
             {
@@ -512,6 +523,17 @@ command_result scene::apply_untracked(const command& value)
                     duplicate.parent_id = destination_parent;
                     duplicate.sibling_order = static_cast<std::uint32_t>(destination_index);
                     duplicate.name = concrete.duplicate_root_name.value_or(source.name + " Copy");
+                    for (const auto& override_component : concrete.duplicate_root_component_overrides)
+                    {
+                        const auto existing = std::find_if(
+                            duplicate.components.begin(), duplicate.components.end(),
+                            [&](const auto& component) {
+                                return component.type_id == override_component.type_id;
+                            });
+                        if (existing == duplicate.components.end())
+                            duplicate.components.push_back(override_component);
+                        else *existing = override_component;
+                    }
                 }
                 else
                 {

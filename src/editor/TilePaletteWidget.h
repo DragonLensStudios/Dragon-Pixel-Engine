@@ -98,6 +98,22 @@ class TilePaletteWidget final : public QWidget
     Q_OBJECT
 
 public:
+    enum class ObjectBrushKind
+    {
+        prefab,
+        scene_objects,
+    };
+
+    struct ObjectBrushSource final
+    {
+        ObjectBrushKind kind{ObjectBrushKind::prefab};
+        QString source_path;
+        QString project_id;
+        QString scene_id;
+        qint64 source_revision{};
+        std::vector<dragonpixel::core::uuid> entity_ids;
+    };
+
     explicit TilePaletteWidget(TileDocumentService* service, QWidget* parent = nullptr);
     [[nodiscard]] bool load_documents(
         const QString& tilemap_path,
@@ -111,10 +127,12 @@ public:
         const QString& palette_path = {});
     [[nodiscard]] TileCanvas::Tool active_tool() const noexcept;
     [[nodiscard]] int active_layer() const noexcept;
+    [[nodiscard]] bool target_pinned() const noexcept;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush_at(int x, int y) const;
     [[nodiscard]] std::vector<std::pair<QPoint, TileDocumentService::Brush>>
         active_brush_pattern_at(int x, int y) const;
+    [[nodiscard]] std::optional<ObjectBrushSource> active_object_brush() const;
     void select_brush(const TileDocumentService::Brush& brush);
 
 signals:
@@ -140,6 +158,7 @@ private:
     QToolButton* layer_up_{};
     QToolButton* layer_down_{};
     QToolButton* layer_remove_{};
+    QToolButton* target_pin_{};
     QToolButton* flip_x_{};
     QToolButton* flip_y_{};
     QToolButton* rotate_{};
@@ -159,4 +178,5 @@ private:
     QString texture_path_;
     unsigned brush_rotation_{};
     bool rebuilding_{};
+    std::optional<ObjectBrushSource> object_brush_;
 };
