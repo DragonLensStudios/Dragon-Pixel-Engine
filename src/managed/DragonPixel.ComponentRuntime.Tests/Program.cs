@@ -419,6 +419,15 @@ void VerifyCustomTileExtensionSnapshot(string root, ProjectComponentRuntime runt
         ["sceneId"] = "27ed345d-b487-41c1-918b-fbf279be8e28",
         ["name"] = "Custom Tile Extension",
         ["snapshotRevision"] = 9,
+        ["physicsSettings"] = new JsonObject
+        {
+            ["fixedTimeStepSeconds"] = 1.0 / 60.0,
+            ["maxCatchUpTicks"] = 4,
+            ["box2DSolverSubsteps"] = 4,
+            ["joltCollisionSteps"] = 1,
+            ["gravity2D"] = new JsonObject { ["x"] = 0.0, ["y"] = -9.81 },
+            ["gravity3D"] = new JsonObject { ["x"] = 0.0, ["y"] = -9.81, ["z"] = 0.0 },
+        },
         ["tileSets"] = new JsonArray
         {
             new JsonObject
