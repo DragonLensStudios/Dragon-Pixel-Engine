@@ -95,6 +95,9 @@ if(TARGET DragonPixelCAbi)
 endif()
 
 dpe_configure_native_target(DragonPixelEditorLibrary)
+if(MSVC)
+    target_compile_options(DragonPixelEditorLibrary PRIVATE /bigobj)
+endif()
 
 add_executable(DragonPixelEditor
     main.cpp
