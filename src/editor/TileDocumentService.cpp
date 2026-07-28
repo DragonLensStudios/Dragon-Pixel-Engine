@@ -3,12 +3,14 @@
 #include <dragonpixel/serialization/atomic_file.h>
 
 #include <QFile>
+#include <QFileInfo>
 
 #include <algorithm>
 #include <cmath>
 #include <deque>
 #include <filesystem>
 #include <set>
+#include <tuple>
 
 namespace
 {
@@ -25,6 +27,16 @@ std::filesystem::path filesystem_path(const QString& value)
     return std::filesystem::path{value.toStdString()};
 #endif
 }
+
+std::vector<std::pair<int, int>> occupied_positions(const dragonpixel::tiles::tile_layer& layer)
+{
+    std::vector<std::pair<int, int>> result;
+    for (const auto& chunk : layer.chunks)
+        for (const auto& cell : chunk.cells)
+            result.push_back({chunk.x * 32 + static_cast<int>(cell.index % 32U),
+                chunk.y * 32 + static_cast<int>(cell.index / 32U)});
+    return result;
+}
 }
 
 TileDocumentService::TileDocumentService(QObject* parent) : QObject(parent) {}
@@ -32,13 +44,17 @@ TileDocumentService::TileDocumentService(QObject* parent) : QObject(parent) {}
 void TileDocumentService::clear()
 {
     tilemap_.reset();
-    tileset_.reset();
+    tilesets_.clear();
+    palette_.reset();
     stroke_before_.reset();
     undo_.clear();
     redo_.clear();
     tilemap_path_.clear();
     tileset_path_.clear();
+    tileset_paths_.clear();
+    palette_path_.clear();
     saved_encoding_.clear();
+    saved_palette_encoding_.clear();
     error_.clear();
     emit documentChanged();
     emit dirtyChanged(false);
@@ -46,36 +62,110 @@ void TileDocumentService::clear()
 
 bool TileDocumentService::load(const QString& tilemap_path, const QString& tileset_path)
 {
+    return load(tilemap_path, QStringList{tileset_path}, {});
+}
+
+bool TileDocumentService::load(
+    const QString& tilemap_path,
+    const QStringList& tileset_paths,
+    const QString& palette_path)
+{
     QFile tilemap_file{tilemap_path};
-    QFile tileset_file{tileset_path};
-    if (!tilemap_file.open(QIODevice::ReadOnly) || !tileset_file.open(QIODevice::ReadOnly))
+    if (!tilemap_file.open(QIODevice::ReadOnly) || tileset_paths.isEmpty())
     {
         error_ = QStringLiteral("Tilemap or TileSet source could not be opened.");
         emit diagnostic(error_);
         return false;
     }
     const auto map_result = dragonpixel::tiles::read_tilemap(tilemap_file.readAll().toStdString());
-    const auto set_result = dragonpixel::tiles::read_tile_set(tileset_file.readAll().toStdString());
-    if (!map_result.succeeded() || !set_result.succeeded())
+    std::vector<dragonpixel::tiles::tile_set_document> loaded_sets;
+    for (const auto& path : tileset_paths)
     {
-        error_ = QStringLiteral("Tile document validation failed: %1 %2")
-            .arg(QString::fromStdString(map_result.error), QString::fromStdString(set_result.error));
+        QFile file{path};
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            error_ = QStringLiteral("TileSet source could not be opened: %1").arg(path);
+            emit diagnostic(error_);
+            return false;
+        }
+        const auto parsed = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
+        if (!parsed.succeeded())
+        {
+            error_ = QStringLiteral("TileSet validation failed: %1")
+                .arg(QString::fromStdString(parsed.error));
+            emit diagnostic(error_);
+            return false;
+        }
+        const auto duplicate = std::any_of(loaded_sets.begin(), loaded_sets.end(), [&](const auto& set) {
+            return set.asset_id == parsed.document->asset_id;
+        });
+        if (duplicate)
+        {
+            error_ = QStringLiteral("A TileSet dependency was supplied more than once.");
+            emit diagnostic(error_);
+            return false;
+        }
+        loaded_sets.push_back(*parsed.document);
+    }
+    if (!map_result.succeeded())
+    {
+        error_ = QStringLiteral("Tilemap validation failed: %1")
+            .arg(QString::fromStdString(map_result.error));
         emit diagnostic(error_);
         return false;
     }
-    if (std::find(map_result.document->tile_set_dependencies.begin(),
-            map_result.document->tile_set_dependencies.end(), set_result.document->asset_id)
-        == map_result.document->tile_set_dependencies.end())
+    for (const auto& dependency : map_result.document->tile_set_dependencies)
     {
-        error_ = QStringLiteral("The selected TileSet is not a dependency of this tilemap.");
-        emit diagnostic(error_);
-        return false;
+        if (std::none_of(loaded_sets.begin(), loaded_sets.end(), [&](const auto& set) {
+                return set.asset_id == dependency;
+            }))
+        {
+            error_ = QStringLiteral("Every Tilemap TileSet dependency must be loaded.");
+            emit diagnostic(error_);
+            return false;
+        }
+    }
+    std::optional<dragonpixel::tiles::tile_palette_document> loaded_palette;
+    if (!palette_path.isEmpty())
+    {
+        QFile file{palette_path};
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            error_ = QStringLiteral("Tile Palette source could not be opened.");
+            emit diagnostic(error_);
+            return false;
+        }
+        const auto parsed = dragonpixel::tiles::read_tile_palette(file.readAll().toStdString());
+        if (!parsed.succeeded())
+        {
+            error_ = QStringLiteral("Tile Palette validation failed: %1")
+                .arg(QString::fromStdString(parsed.error));
+            emit diagnostic(error_);
+            return false;
+        }
+        for (const auto& dependency : parsed.document->tile_set_dependencies)
+        {
+            if (std::none_of(loaded_sets.begin(), loaded_sets.end(), [&](const auto& set) {
+                    return set.asset_id == dependency;
+                }))
+            {
+                error_ = QStringLiteral("Every Tile Palette TileSet dependency must be loaded.");
+                emit diagnostic(error_);
+                return false;
+            }
+        }
+        loaded_palette = *parsed.document;
     }
     tilemap_ = *map_result.document;
-    tileset_ = *set_result.document;
+    tilesets_ = std::move(loaded_sets);
+    palette_ = std::move(loaded_palette);
     tilemap_path_ = tilemap_path;
-    tileset_path_ = tileset_path;
+    tileset_paths_ = tileset_paths;
+    tileset_path_ = tileset_paths.constFirst();
+    palette_path_ = palette_path;
     saved_encoding_ = QString::fromStdString(dragonpixel::tiles::write_tilemap(*tilemap_));
+    saved_palette_encoding_ = palette_
+        ? QString::fromStdString(dragonpixel::tiles::write_tile_palette(*palette_)) : QString{};
     undo_.clear();
     redo_.clear();
     stroke_before_.reset();
@@ -87,19 +177,35 @@ bool TileDocumentService::load(const QString& tilemap_path, const QString& tiles
 
 bool TileDocumentService::save()
 {
-    const auto encoded = prepare_save();
-    if (!encoded)
+    const auto map_encoded = prepare_save();
+    const auto palette_encoded = palette_ ? prepare_palette_save() : std::optional<std::string>{};
+    if (!map_encoded || (palette_ && !palette_encoded))
     {
         return false;
     }
-    const auto result = dragonpixel::serialization::save_utf8_atomic(filesystem_path(tilemap_path_), *encoded);
+    dragonpixel::serialization::save_result result;
+    if (palette_)
+    {
+        const std::vector<dragonpixel::serialization::utf8_transaction_write> writes{
+            {filesystem_path(tilemap_path_), *map_encoded},
+            {filesystem_path(palette_path_), *palette_encoded},
+        };
+        result = dragonpixel::serialization::save_utf8_transaction(
+            writes, filesystem_path(QFileInfo{tilemap_path_}.absolutePath()));
+    }
+    else
+    {
+        result = dragonpixel::serialization::save_utf8_atomic(
+            filesystem_path(tilemap_path_), *map_encoded);
+    }
     if (!result.succeeded)
     {
         error_ = QStringLiteral("Atomic tilemap save failed: %1").arg(QString::fromStdString(result.error));
         emit diagnostic(error_);
         return false;
     }
-    accept_save(*encoded);
+    accept_save(*map_encoded);
+    if (palette_encoded) accept_palette_save(*palette_encoded);
     return true;
 }
 
@@ -128,16 +234,58 @@ std::optional<std::string> TileDocumentService::prepare_save()
     return encoded;
 }
 
+std::optional<std::string> TileDocumentService::prepare_palette_save()
+{
+    if (stroke_before_)
+    {
+        error_ = QStringLiteral("Finish or cancel the active tile stroke before saving.");
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
+    if (!palette_ || palette_path_.isEmpty())
+    {
+        error_ = QStringLiteral("No loaded Tile Palette is available to save.");
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
+    const auto encoded = dragonpixel::tiles::write_tile_palette(*palette_);
+    const auto parsed = dragonpixel::tiles::read_tile_palette(encoded);
+    if (!parsed.succeeded())
+    {
+        error_ = QStringLiteral("Refusing to save an invalid Tile Palette: %1")
+            .arg(QString::fromStdString(parsed.error));
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
+    return encoded;
+}
+
 void TileDocumentService::accept_save(std::string_view encoded)
 {
     saved_encoding_ = QString::fromUtf8(encoded.data(), static_cast<qsizetype>(encoded.size()));
     error_.clear();
-    emit dirtyChanged(false);
+    emit dirtyChanged(is_dirty());
+}
+
+void TileDocumentService::accept_palette_save(std::string_view encoded)
+{
+    saved_palette_encoding_ = QString::fromUtf8(encoded.data(), static_cast<qsizetype>(encoded.size()));
+    error_.clear();
+    emit dirtyChanged(is_dirty());
 }
 
 bool TileDocumentService::is_dirty() const noexcept
 {
-    return tilemap_ && QString::fromStdString(dragonpixel::tiles::write_tilemap(*tilemap_)) != saved_encoding_;
+    const auto map_dirty = tilemap_
+        && QString::fromStdString(dragonpixel::tiles::write_tilemap(*tilemap_)) != saved_encoding_;
+    return map_dirty || is_palette_dirty();
+}
+
+bool TileDocumentService::is_palette_dirty() const noexcept
+{
+    return palette_
+        && QString::fromStdString(dragonpixel::tiles::write_tile_palette(*palette_))
+            != saved_palette_encoding_;
 }
 
 const dragonpixel::tiles::tilemap_document* TileDocumentService::tilemap() const noexcept
@@ -147,7 +295,12 @@ const dragonpixel::tiles::tilemap_document* TileDocumentService::tilemap() const
 
 const dragonpixel::tiles::tile_set_document* TileDocumentService::tileset() const noexcept
 {
-    return tileset_ ? &*tileset_ : nullptr;
+    return tilesets_.empty() ? nullptr : &tilesets_.front();
+}
+
+const dragonpixel::tiles::tile_palette_document* TileDocumentService::palette() const noexcept
+{
+    return palette_ ? &*palette_ : nullptr;
 }
 
 std::optional<dragonpixel::core::uuid> TileDocumentService::tile_at(int layer_index, int x, int y) const
@@ -178,17 +331,39 @@ std::optional<TileDocumentService::Brush> TileDocumentService::brush_at(
     const auto cell = std::find_if(chunk->cells.begin(), chunk->cells.end(), [&](const auto& value) {
         return value.index == index;
     });
-    return cell == chunk->cells.end()
-        ? std::nullopt
-        : std::optional{Brush{cell->tile_id, cell->flip_x, cell->flip_y,
-              cell->rotation_quarter_turns}};
+    if (cell == chunk->cells.end()) return std::nullopt;
+    auto tile_set_id = cell->tile_set_id;
+    if (tile_set_id.is_nil())
+    {
+        const auto owner = std::find_if(tilesets_.begin(), tilesets_.end(), [&](const auto& set) {
+            return std::any_of(set.tiles.begin(), set.tiles.end(), [&](const auto& tile) {
+                return tile.tile_id == cell->tile_id;
+            });
+        });
+        if (owner != tilesets_.end()) tile_set_id = owner->asset_id;
+    }
+    return Brush{cell->tile_id, cell->flip_x, cell->flip_y,
+        cell->rotation_quarter_turns, tile_set_id, cell->tint, cell->offset,
+        cell->rotation_degrees, cell->scale, cell->elevation,
+        cell->lock_color, cell->lock_transform};
+}
+
+TileDocumentService::WorkspaceState TileDocumentService::snapshot() const
+{
+    return {*tilemap_, palette_};
+}
+
+void TileDocumentService::restore(WorkspaceState state)
+{
+    tilemap_ = std::move(state.tilemap);
+    palette_ = std::move(state.palette);
 }
 
 bool TileDocumentService::commit_document_edit(
-    dragonpixel::tiles::tilemap_document before,
+    WorkspaceState before,
     bool previous_dirty)
 {
-    if (!tilemap_ || before == *tilemap_)
+    if (!tilemap_ || (before.tilemap == *tilemap_ && before.palette == palette_))
     {
         return false;
     }
@@ -233,7 +408,7 @@ bool TileDocumentService::add_layer(
         emit diagnostic(QStringLiteral("Tilemap layer names and stable IDs must be unique."));
         return false;
     }
-    auto before = *tilemap_;
+    auto before = snapshot();
     const auto dirty = is_dirty();
     tilemap_->layers.push_back({id, normalized.toStdString(), true,
         static_cast<unsigned>(tilemap_->layers.size()), {}});
@@ -260,7 +435,7 @@ bool TileDocumentService::rename_layer(int layer_index, const QString& name)
         emit diagnostic(QStringLiteral("Tilemap layer names must be unique."));
         return false;
     }
-    auto before = *tilemap_;
+    auto before = snapshot();
     const auto dirty = is_dirty();
     tilemap_->layers.at(static_cast<std::size_t>(layer_index)).name = normalized.toStdString();
     return commit_document_edit(std::move(before), dirty);
@@ -273,7 +448,7 @@ bool TileDocumentService::set_layer_visible(int layer_index, bool visible)
     {
         return false;
     }
-    auto before = *tilemap_;
+    auto before = snapshot();
     const auto dirty = is_dirty();
     tilemap_->layers.at(static_cast<std::size_t>(layer_index)).visible = visible;
     return commit_document_edit(std::move(before), dirty);
@@ -288,7 +463,7 @@ bool TileDocumentService::move_layer(int layer_index, int destination_index)
     {
         return false;
     }
-    auto before = *tilemap_;
+    auto before = snapshot();
     const auto dirty = is_dirty();
     auto layer = std::move(tilemap_->layers.at(static_cast<std::size_t>(layer_index)));
     tilemap_->layers.erase(tilemap_->layers.begin() + layer_index);
@@ -305,10 +480,190 @@ bool TileDocumentService::remove_layer(int layer_index)
         emit diagnostic(QStringLiteral("A Tilemap must retain at least one layer."));
         return false;
     }
-    auto before = *tilemap_;
+    auto before = snapshot();
     const auto dirty = is_dirty();
     tilemap_->layers.erase(tilemap_->layers.begin() + layer_index);
     normalize_layer_order();
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::add_palette_cell(int u, int v, const Brush& brush)
+{
+    if (!palette_ || stroke_before_ || brush.rotation_quarter_turns > 3) return false;
+    const auto owner = std::find_if(tilesets_.begin(), tilesets_.end(), [&](const auto& set) {
+        return (brush.tile_set_id.is_nil() || set.asset_id == brush.tile_set_id)
+            && std::any_of(set.tiles.begin(), set.tiles.end(), [&](const auto& tile) {
+                return tile.tile_id == brush.tile_id;
+            });
+    });
+    if (owner == tilesets_.end()) return false;
+    const auto occupied = std::any_of(palette_->cells.begin(), palette_->cells.end(), [&](const auto& cell) {
+        return cell.u == u && cell.v == v;
+    });
+    if (occupied) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    if (std::find(palette_->tile_set_dependencies.begin(), palette_->tile_set_dependencies.end(),
+            owner->asset_id) == palette_->tile_set_dependencies.end())
+        palette_->tile_set_dependencies.push_back(owner->asset_id);
+    palette_->cells.push_back({u, v, {owner->asset_id, brush.tile_id},
+        brush.flip_x, brush.flip_y, brush.rotation_quarter_turns, brush.tint});
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::remove_palette_cell(int u, int v)
+{
+    if (!palette_ || stroke_before_) return false;
+    const auto found = std::find_if(palette_->cells.begin(), palette_->cells.end(), [&](const auto& cell) {
+        return cell.u == u && cell.v == v;
+    });
+    if (found == palette_->cells.end()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    palette_->cells.erase(found);
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::move_palette_cell(int from_u, int from_v, int to_u, int to_v)
+{
+    if (!palette_ || stroke_before_ || (from_u == to_u && from_v == to_v)) return false;
+    const auto source = std::find_if(palette_->cells.begin(), palette_->cells.end(), [&](const auto& cell) {
+        return cell.u == from_u && cell.v == from_v;
+    });
+    const auto destination = std::find_if(palette_->cells.begin(), palette_->cells.end(), [&](const auto& cell) {
+        return cell.u == to_u && cell.v == to_v;
+    });
+    if (source == palette_->cells.end() || destination != palette_->cells.end()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    source->u = to_u;
+    source->v = to_v;
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::delete_selection(
+    int layer_index, int min_x, int min_y, int max_x, int max_y)
+{
+    if (!tilemap_ || stroke_before_ || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    bool changed = false;
+    for (int y = std::min(min_y, max_y); y <= std::max(min_y, max_y); ++y)
+        for (int x = std::min(min_x, max_x); x <= std::max(min_x, max_x); ++x)
+            changed = set_cell(*tilemap_, layer_index, x, y, std::nullopt) || changed;
+    return changed && commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::move_selection(int layer_index, int min_x, int min_y,
+    int max_x, int max_y, int delta_x, int delta_y)
+{
+    if (!tilemap_ || stroke_before_ || (delta_x == 0 && delta_y == 0)
+        || layer_index < 0 || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    struct selected_cell { int x; int y; Brush brush; };
+    std::vector<selected_cell> selected;
+    for (int y = std::min(min_y, max_y); y <= std::max(min_y, max_y); ++y)
+        for (int x = std::min(min_x, max_x); x <= std::max(min_x, max_x); ++x)
+            if (const auto brush = brush_at(layer_index, x, y)) selected.push_back({x, y, *brush});
+    if (selected.empty()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    for (const auto& cell : selected)
+        static_cast<void>(set_cell(*tilemap_, layer_index, cell.x, cell.y, std::nullopt));
+    for (const auto& cell : selected)
+        static_cast<void>(set_cell(*tilemap_, layer_index,
+            cell.x + delta_x, cell.y + delta_y, cell.brush));
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::edit_selection(int layer_index, int min_x, int min_y,
+    int max_x, int max_y, const Brush& properties)
+{
+    if (!tilemap_ || stroke_before_ || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    bool changed = false;
+    for (int y = std::min(min_y, max_y); y <= std::max(min_y, max_y); ++y)
+        for (int x = std::min(min_x, max_x); x <= std::max(min_x, max_x); ++x)
+            if (brush_at(layer_index, x, y))
+                changed = set_cell(*tilemap_, layer_index, x, y, properties) || changed;
+    return changed && commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::insert_rows(int layer_index, int before_y, int count)
+{
+    if (!tilemap_ || stroke_before_ || count <= 0 || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    const auto positions = occupied_positions(tilemap_->layers[static_cast<std::size_t>(layer_index)]);
+    std::vector<std::tuple<int, int, Brush>> moving;
+    for (const auto& [x, y] : positions)
+        if (y >= before_y)
+            if (const auto brush = brush_at(layer_index, x, y)) moving.push_back({x, y, *brush});
+    if (moving.empty()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    for (const auto& [x, y, brush] : moving) static_cast<void>(set_cell(*tilemap_, layer_index, x, y, std::nullopt));
+    for (const auto& [x, y, brush] : moving) static_cast<void>(set_cell(*tilemap_, layer_index, x, y + count, brush));
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::delete_rows(int layer_index, int first_y, int count)
+{
+    if (!tilemap_ || stroke_before_ || count <= 0 || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    const auto positions = occupied_positions(tilemap_->layers[static_cast<std::size_t>(layer_index)]);
+    if (positions.empty()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    std::vector<std::tuple<int, int, Brush>> moving;
+    for (const auto& [x, y] : positions)
+    {
+        if (const auto brush = brush_at(layer_index, x, y)) moving.push_back({x, y, *brush});
+        static_cast<void>(set_cell(*tilemap_, layer_index, x, y, std::nullopt));
+    }
+    for (const auto& [x, y, brush] : moving)
+        if (y < first_y || y >= first_y + count)
+            static_cast<void>(set_cell(*tilemap_, layer_index, x,
+                y >= first_y + count ? y - count : y, brush));
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::insert_columns(int layer_index, int before_x, int count)
+{
+    if (!tilemap_ || stroke_before_ || count <= 0 || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    const auto positions = occupied_positions(tilemap_->layers[static_cast<std::size_t>(layer_index)]);
+    std::vector<std::tuple<int, int, Brush>> moving;
+    for (const auto& [x, y] : positions)
+        if (x >= before_x)
+            if (const auto brush = brush_at(layer_index, x, y)) moving.push_back({x, y, *brush});
+    if (moving.empty()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    for (const auto& [x, y, brush] : moving) static_cast<void>(set_cell(*tilemap_, layer_index, x, y, std::nullopt));
+    for (const auto& [x, y, brush] : moving) static_cast<void>(set_cell(*tilemap_, layer_index, x + count, y, brush));
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::delete_columns(int layer_index, int first_x, int count)
+{
+    if (!tilemap_ || stroke_before_ || count <= 0 || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())) return false;
+    const auto positions = occupied_positions(tilemap_->layers[static_cast<std::size_t>(layer_index)]);
+    if (positions.empty()) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    std::vector<std::tuple<int, int, Brush>> moving;
+    for (const auto& [x, y] : positions)
+    {
+        if (const auto brush = brush_at(layer_index, x, y)) moving.push_back({x, y, *brush});
+        static_cast<void>(set_cell(*tilemap_, layer_index, x, y, std::nullopt));
+    }
+    for (const auto& [x, y, brush] : moving)
+        if (x < first_x || x >= first_x + count)
+            static_cast<void>(set_cell(*tilemap_, layer_index,
+                x >= first_x + count ? x - count : x, y, brush));
     return commit_document_edit(std::move(before), dirty);
 }
 
@@ -316,7 +671,7 @@ void TileDocumentService::begin_stroke()
 {
     if (tilemap_ && !stroke_before_)
     {
-        stroke_before_ = *tilemap_;
+        stroke_before_ = snapshot();
     }
 }
 
@@ -328,12 +683,21 @@ bool TileDocumentService::set_cell(
     const std::optional<Brush>& brush)
 {
     if (layer_index < 0 || layer_index >= static_cast<int>(document.layers.size())) return false;
-    if (brush && (brush->rotation_quarter_turns > 3 || !tileset_
-        || std::none_of(tileset_->tiles.begin(), tileset_->tiles.end(), [&](const auto& tile) {
-            return tile.tile_id == brush->tile_id;
-        })))
+    dragonpixel::core::uuid resolved_tile_set_id;
+    if (brush)
     {
-        return false;
+        if (brush->rotation_quarter_turns > 3 || !std::isfinite(brush->rotation_degrees)
+            || !std::isfinite(brush->scale.x) || !std::isfinite(brush->scale.y)
+            || !std::isfinite(brush->offset.x) || !std::isfinite(brush->offset.y))
+            return false;
+        const auto owner = std::find_if(tilesets_.begin(), tilesets_.end(), [&](const auto& set) {
+            return (brush->tile_set_id.is_nil() || set.asset_id == brush->tile_set_id)
+                && std::any_of(set.tiles.begin(), set.tiles.end(), [&](const auto& tile) {
+                    return tile.tile_id == brush->tile_id;
+                });
+        });
+        if (owner == tilesets_.end()) return false;
+        resolved_tile_set_id = owner->asset_id;
     }
     const auto chunk_x = floor_div_32(x);
     const auto chunk_y = floor_div_32(y);
@@ -362,13 +726,31 @@ bool TileDocumentService::set_cell(
     }
     if (cell == chunk->cells.end())
     {
-        chunk->cells.push_back({index, brush->tile_id, brush->flip_x,
-            brush->flip_y, brush->rotation_quarter_turns});
+        dragonpixel::tiles::tile_cell created;
+        created.index = index;
+        created.tile_id = brush->tile_id;
+        created.flip_x = brush->flip_x;
+        created.flip_y = brush->flip_y;
+        created.rotation_quarter_turns = brush->rotation_quarter_turns;
+        created.tile_set_id = resolved_tile_set_id;
+        created.tint = brush->tint;
+        created.offset = brush->offset;
+        created.rotation_degrees = brush->rotation_degrees;
+        created.scale = brush->scale;
+        created.elevation = brush->elevation;
+        created.lock_color = brush->lock_color;
+        created.lock_transform = brush->lock_transform;
+        chunk->cells.push_back(std::move(created));
         return true;
     }
     if (cell->tile_id == brush->tile_id && cell->flip_x == brush->flip_x
         && cell->flip_y == brush->flip_y
-        && cell->rotation_quarter_turns == brush->rotation_quarter_turns)
+        && cell->rotation_quarter_turns == brush->rotation_quarter_turns
+        && cell->tile_set_id == resolved_tile_set_id && cell->tint == brush->tint
+        && cell->offset == brush->offset && cell->rotation_degrees == brush->rotation_degrees
+        && cell->scale == brush->scale && cell->elevation == brush->elevation
+        && cell->lock_color == brush->lock_color
+        && cell->lock_transform == brush->lock_transform)
     {
         return false;
     }
@@ -376,6 +758,14 @@ bool TileDocumentService::set_cell(
     cell->flip_x = brush->flip_x;
     cell->flip_y = brush->flip_y;
     cell->rotation_quarter_turns = brush->rotation_quarter_turns;
+    cell->tile_set_id = resolved_tile_set_id;
+    cell->tint = brush->tint;
+    cell->offset = brush->offset;
+    cell->rotation_degrees = brush->rotation_degrees;
+    cell->scale = brush->scale;
+    cell->elevation = brush->elevation;
+    cell->lock_color = brush->lock_color;
+    cell->lock_transform = brush->lock_transform;
     return true;
 }
 
@@ -420,9 +810,17 @@ bool TileDocumentService::preview_rectangle(
     bool flip_y,
     unsigned rotation_quarter_turns)
 {
+    return preview_rectangle(layer_index, start_x, start_y, end_x, end_y,
+        Brush{tile_id, flip_x, flip_y, rotation_quarter_turns}, erase);
+}
+
+bool TileDocumentService::preview_rectangle(
+    int layer_index, int start_x, int start_y, int end_x, int end_y,
+    const Brush& brush, bool erase)
+{
     if (!tilemap_ || !stroke_before_) return false;
     const auto dirty = is_dirty();
-    *tilemap_ = *stroke_before_;
+    *tilemap_ = stroke_before_->tilemap;
     bool changed = false;
     for (int y = std::min(start_y, end_y); y <= std::max(start_y, end_y); ++y)
     {
@@ -430,8 +828,7 @@ bool TileDocumentService::preview_rectangle(
         {
             changed = set_cell(*tilemap_, layer_index, x, y,
                 erase ? std::nullopt
-                      : std::optional{Brush{tile_id, flip_x, flip_y,
-                            rotation_quarter_turns}}) || changed;
+                      : std::optional{brush}) || changed;
         }
     }
     publish_change(dirty);
@@ -493,7 +890,7 @@ bool TileDocumentService::flood_fill(
 void TileDocumentService::commit_stroke()
 {
     if (!tilemap_ || !stroke_before_) return;
-    if (*stroke_before_ != *tilemap_)
+    if (stroke_before_->tilemap != *tilemap_ || stroke_before_->palette != palette_)
     {
         undo_.push_back(std::move(*stroke_before_));
         redo_.clear();
@@ -505,7 +902,7 @@ void TileDocumentService::cancel_stroke()
 {
     if (!tilemap_ || !stroke_before_) return;
     const auto dirty = is_dirty();
-    *tilemap_ = std::move(*stroke_before_);
+    restore(std::move(*stroke_before_));
     stroke_before_.reset();
     publish_change(dirty);
 }
@@ -514,8 +911,8 @@ bool TileDocumentService::undo()
 {
     if (!tilemap_ || undo_.empty()) return false;
     const auto dirty = is_dirty();
-    redo_.push_back(*tilemap_);
-    *tilemap_ = std::move(undo_.back());
+    redo_.push_back(snapshot());
+    restore(std::move(undo_.back()));
     undo_.pop_back();
     publish_change(dirty);
     return true;
@@ -525,8 +922,8 @@ bool TileDocumentService::redo()
 {
     if (!tilemap_ || redo_.empty()) return false;
     const auto dirty = is_dirty();
-    undo_.push_back(*tilemap_);
-    *tilemap_ = std::move(redo_.back());
+    undo_.push_back(snapshot());
+    restore(std::move(redo_.back()));
     redo_.pop_back();
     publish_change(dirty);
     return true;

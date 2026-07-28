@@ -1974,6 +1974,97 @@ private slots:
             3000);
     }
 
+    void tile_workspace_owns_multiple_tilesets_palette_selection_and_atomic_save()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto id = [](const char* value) {
+            return *dragonpixel::core::uuid::parse(value);
+        };
+        const auto map_id = id("91000000-0000-4000-8000-000000000001");
+        const auto layer_id = id("91000000-0000-4000-8000-000000000002");
+        const auto set_a_id = id("91000000-0000-4000-8000-000000000003");
+        const auto set_b_id = id("91000000-0000-4000-8000-000000000004");
+        const auto texture_a_id = id("91000000-0000-4000-8000-000000000005");
+        const auto texture_b_id = id("91000000-0000-4000-8000-000000000006");
+        const auto tile_a_id = id("91000000-0000-4000-8000-000000000007");
+        const auto tile_b_id = id("91000000-0000-4000-8000-000000000008");
+        const auto palette_id = id("91000000-0000-4000-8000-000000000009");
+        dragonpixel::tiles::tile_set_document set_a{
+            set_a_id, "A", texture_a_id, {16, 16}, {}, {}, 16.0,
+            {{tile_a_id, "A0", {0, 0, 16, 16}}}};
+        dragonpixel::tiles::tile_set_document set_b{
+            set_b_id, "B", texture_b_id, {16, 16}, {}, {}, 16.0,
+            {{tile_b_id, "B0", {0, 0, 16, 16}}}};
+        dragonpixel::tiles::tilemap_document map{
+            map_id, "Workspace", {set_a_id, set_b_id},
+            {{layer_id, "Ground", true, 0, {}}}};
+        dragonpixel::tiles::tile_palette_document palette{
+            palette_id, "Universal", {set_a_id, set_b_id},
+            {{0, 0, {set_a_id, tile_a_id}}, {1, 0, {set_b_id, tile_b_id}}}};
+        const auto map_path = QDir{temporary.path()}.filePath(QStringLiteral("map.dpetilemap"));
+        const auto set_a_path = QDir{temporary.path()}.filePath(QStringLiteral("a.dpetileset"));
+        const auto set_b_path = QDir{temporary.path()}.filePath(QStringLiteral("b.dpetileset"));
+        const auto palette_path = QDir{temporary.path()}.filePath(QStringLiteral("palette.dpetilepalette"));
+        const auto write = [](const QString& path, const std::string& value) {
+            QFile file{path};
+            return file.open(QIODevice::WriteOnly) && file.write(QByteArray::fromStdString(value))
+                == static_cast<qint64>(value.size());
+        };
+        QVERIFY(write(map_path, dragonpixel::tiles::write_tilemap(map)));
+        QVERIFY(write(set_a_path, dragonpixel::tiles::write_tile_set(set_a)));
+        QVERIFY(write(set_b_path, dragonpixel::tiles::write_tile_set(set_b)));
+        QVERIFY(write(palette_path, dragonpixel::tiles::write_tile_palette(palette)));
+
+        TileDocumentService service;
+        QVERIFY2(service.load(map_path, {set_a_path, set_b_path}, palette_path),
+            qPrintable(service.error()));
+        QCOMPARE(service.tilesets().size(), std::size_t{2});
+        QVERIFY(service.palette() != nullptr);
+        QCOMPARE(service.palette()->cells.size(), std::size_t{2});
+
+        const TileDocumentService::Brush rich{
+            tile_b_id, true, false, 1U, set_b_id,
+            {0.8, 0.7, 0.6, 1.0}, {0.25, -0.5}, 33.0, {1.5, 0.75}, 4, true, true};
+        QVERIFY(service.add_palette_cell(2, 0, rich));
+        QCOMPARE(service.palette()->cells.size(), std::size_t{3});
+        QVERIFY(service.undo());
+        QCOMPARE(service.palette()->cells.size(), std::size_t{2});
+        QVERIFY(service.redo());
+        QCOMPARE(service.palette()->cells.size(), std::size_t{3});
+        QVERIFY(service.move_palette_cell(2, 0, 3, 1));
+        QVERIFY(service.remove_palette_cell(3, 1));
+
+        service.begin_stroke();
+        QVERIFY(service.paint_cell(0, 0, 0, rich));
+        QVERIFY(service.paint_cell(0, 1, 0,
+            TileDocumentService::Brush{tile_a_id, false, false, 0U, set_a_id}));
+        service.commit_stroke();
+        QCOMPARE(service.brush_at(0, 0, 0), std::optional{rich});
+        QVERIFY(service.edit_selection(0, 0, 0, 1, 0, rich));
+        QCOMPARE(service.brush_at(0, 1, 0), std::optional{rich});
+        QVERIFY(service.move_selection(0, 0, 0, 1, 0, 2, 3));
+        QVERIFY(!service.brush_at(0, 0, 0));
+        QVERIFY(service.brush_at(0, 2, 3));
+        QVERIFY(service.insert_rows(0, 3, 2));
+        QVERIFY(service.brush_at(0, 2, 5));
+        QVERIFY(service.delete_rows(0, 4, 1));
+        QVERIFY(service.brush_at(0, 2, 4));
+        QVERIFY(service.insert_columns(0, 2, 2));
+        QVERIFY(service.brush_at(0, 4, 4));
+        QVERIFY(service.delete_columns(0, 3, 1));
+        QVERIFY(service.brush_at(0, 3, 4));
+        QVERIFY(service.delete_selection(0, 3, 4, 4, 4));
+        QVERIFY(!service.brush_at(0, 3, 4));
+        QVERIFY(service.add_palette_cell(5, 5, rich));
+        QVERIFY(service.is_dirty());
+        QVERIFY2(service.save(), qPrintable(service.error()));
+        QVERIFY(!service.is_dirty());
+        QVERIFY(dragonpixel::tiles::read_tilemap(read_bytes(map_path).toStdString()).succeeded());
+        QVERIFY(dragonpixel::tiles::read_tile_palette(
+            read_bytes(palette_path).toStdString()).succeeded());
+    }
+
     void png_tileset_creation_is_contained_deterministic_and_non_overwriting()
     {
         QTemporaryDir temporary;
