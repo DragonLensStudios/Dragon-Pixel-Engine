@@ -226,7 +226,7 @@ const component_record* find_component(const dragonpixel::scene::entity& value, 
 void verify_scene_round_trip()
 {
     const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
-    require(registry.size() == 16, "Default metadata registration did not retain every built-in component.");
+    require(registry.size() == 17, "Default metadata registration did not retain every built-in component.");
     const auto* transform_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::transform);
     require(transform_descriptor != nullptr && transform_descriptor->schema_version == 2,
         "Transform schema version was wrong.");
@@ -252,6 +252,12 @@ void verify_scene_round_trip()
         "Explicit default component descriptor values changed.");
     const auto* camera_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::camera);
     require(camera_descriptor != nullptr, "Camera metadata registration failed.");
+    const auto* tilemap_collider_descriptor =
+        registry.find(dragonpixel::metadata::builtin_component_ids::tilemap_collider_2d);
+    require(tilemap_collider_descriptor != nullptr
+            && tilemap_collider_descriptor->schema_version == 1
+            && tilemap_collider_descriptor->owner == dragonpixel::metadata::runtime_owner::native,
+        "TilemapCollider2D metadata registration failed.");
     const auto primary_property = std::find_if(
         camera_descriptor->properties.begin(),
         camera_descriptor->properties.end(),
