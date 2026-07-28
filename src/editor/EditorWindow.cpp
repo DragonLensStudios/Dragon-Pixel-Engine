@@ -9,6 +9,8 @@
 #include <dragonpixel/metadata/builtin_ids.h>
 #include <dragonpixel/serialization/atomic_file.h>
 #include <dragonpixel/serialization/scene_json.h>
+#include <dragonpixel/tiles/tile_evaluator.h>
+#include <dragonpixel/tiles/tile_grid.h>
 
 #include <nlohmann/json.hpp>
 
@@ -73,6 +75,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -6852,7 +6855,7 @@ void EditorWindow::cancel_tile_scene_stroke()
 std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene& source_scene) const
 {
     auto root = nlohmann::ordered_json::parse(dragonpixel::serialization::write_scene_json(source_scene));
-    root["snapshotFormatVersion"] = 4;
+    root["snapshotFormatVersion"] = 5;
     auto assets = nlohmann::ordered_json::array();
     auto tile_sets = nlohmann::ordered_json::array();
     auto tilemaps = nlohmann::ordered_json::array();
@@ -6905,37 +6908,36 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
             const auto parsed = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
             if (!parsed.succeeded()) continue;
             resolved_tile_sets[parsed.document->asset_id.to_string()] = *parsed.document;
-            std::string texture_png_base64;
-            const auto texture_entry = assets_by_id.find(parsed.document->texture_asset_id.to_string());
-            if (texture_entry != assets_by_id.end()
-                && QFileInfo{texture_entry->second->resolved_source_path}.suffix().compare(
-                    QStringLiteral("png"), Qt::CaseInsensitive) == 0)
+            auto snapshot = nlohmann::ordered_json::parse(
+                dragonpixel::tiles::write_tile_set(*parsed.document));
+            snapshot["cellWidth"] = parsed.document->cell_size.x;
+            snapshot["cellHeight"] = parsed.document->cell_size.y;
+            auto texture_bytes = nlohmann::ordered_json::object();
+            for (const auto& texture_id : parsed.document->texture_asset_ids)
             {
+                const auto texture_entry = assets_by_id.find(texture_id.to_string());
+                if (texture_entry == assets_by_id.end()
+                    || QFileInfo{texture_entry->second->resolved_source_path}.suffix().compare(
+                        QStringLiteral("png"), Qt::CaseInsensitive) != 0)
+                {
+                    continue;
+                }
                 QFile texture{texture_entry->second->resolved_source_path};
                 if (texture.open(QIODevice::ReadOnly))
-                    texture_png_base64 = texture.readAll().toBase64().toStdString();
+                    texture_bytes[texture_id.to_string()] = texture.readAll().toBase64().toStdString();
             }
-            auto tiles = nlohmann::ordered_json::array();
-            for (const auto& tile : parsed.document->tiles)
+            const auto primary_texture = parsed.document->texture_asset_id.to_string();
+            snapshot["texturePngBase64"] = texture_bytes.value(primary_texture, std::string{});
+            snapshot["texturePngBase64ByAssetId"] = std::move(texture_bytes);
+            for (auto& tile : snapshot["tiles"])
             {
-                tiles.push_back({
-                    {"tileId", tile.tile_id.to_string()},
-                    {"name", tile.name},
-                    {"sourceX", tile.source.x},
-                    {"sourceY", tile.source.y},
-                    {"sourceWidth", tile.source.width},
-                    {"sourceHeight", tile.source.height},
-                });
+                const auto source = tile.value("source", nlohmann::ordered_json::object());
+                tile["sourceX"] = source.value("x", 0);
+                tile["sourceY"] = source.value("y", 0);
+                tile["sourceWidth"] = source.value("width", 1);
+                tile["sourceHeight"] = source.value("height", 1);
             }
-            tile_sets.push_back({
-                {"assetId", parsed.document->asset_id.to_string()},
-                {"textureAssetId", parsed.document->texture_asset_id.to_string()},
-                {"texturePngBase64", texture_png_base64},
-                {"cellWidth", parsed.document->cell_size.x},
-                {"cellHeight", parsed.document->cell_size.y},
-                {"pixelsPerUnit", parsed.document->pixels_per_unit},
-                {"tiles", std::move(tiles)},
-            });
+            tile_sets.push_back(std::move(snapshot));
         }
         else if (entry.asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive))
         {
@@ -6952,22 +6954,94 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
             }
             if (!current) continue;
             resolved_tilemaps[current->asset_id.to_string()] = *current;
+            const auto serialized = nlohmann::ordered_json::parse(
+                dragonpixel::tiles::write_tilemap(*current));
+            const auto definition_for = [&](dragonpixel::tiles::tile_reference reference)
+                -> const dragonpixel::tiles::tile_definition* {
+                const auto set = resolved_tile_sets.find(reference.tile_set_id.to_string());
+                if (set == resolved_tile_sets.end()) return nullptr;
+                const auto tile = std::find_if(set->second.tiles.cbegin(), set->second.tiles.cend(),
+                    [&](const auto& candidate) { return candidate.tile_id == reference.tile_id; });
+                return tile == set->second.tiles.cend() ? nullptr : &*tile;
+            };
             auto layers = nlohmann::ordered_json::array();
             for (const auto& layer : current->layers)
             {
+                std::unordered_map<std::uint64_t, dragonpixel::tiles::tile_reference> occupied;
+                const auto cell_key = [](int x, int y) {
+                    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(x)) << 32U)
+                        | static_cast<std::uint32_t>(y);
+                };
+                for (const auto& chunk : layer.chunks)
+                {
+                    for (const auto& cell : chunk.cells)
+                    {
+                        const auto x = (chunk.x * 32) + static_cast<int>(cell.index % 32U);
+                        const auto y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
+                        occupied[cell_key(x, y)] = {
+                            cell.tile_set_id.is_nil() ? current->tile_set_dependencies.front() : cell.tile_set_id,
+                            cell.tile_id};
+                    }
+                }
                 auto cells = nlohmann::ordered_json::array();
                 for (const auto& chunk : layer.chunks)
                 {
                     for (const auto& cell : chunk.cells)
                     {
-                        cells.push_back({
-                            {"x", (chunk.x * 32) + static_cast<int>(cell.index % 32U)},
-                            {"y", (chunk.y * 32) + static_cast<int>(cell.index / 32U)},
+                        const auto x = (chunk.x * 32) + static_cast<int>(cell.index % 32U);
+                        const auto y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
+                        const dragonpixel::tiles::tile_reference reference{
+                            cell.tile_set_id.is_nil()
+                                ? current->tile_set_dependencies.front() : cell.tile_set_id,
+                            cell.tile_id};
+                        auto resolved = reference;
+                        std::optional<dragonpixel::tiles::sprite_reference> resolved_sprite;
+                        auto placeholder = false;
+                        if (const auto* definition = definition_for(reference))
+                        {
+                            const auto evaluation = dragonpixel::tiles::evaluate_tile(
+                                *definition, reference, current->grid.layout, {x, y}, 0.0,
+                                dragonpixel::tiles::stable_tile_seed(
+                                    current->asset_id, layer.layer_id, {x, y}, "runtime-rule"),
+                                [&](dragonpixel::tiles::integer_point neighbor)
+                                    -> std::optional<dragonpixel::tiles::tile_reference> {
+                                    const auto found = occupied.find(cell_key(neighbor.x, neighbor.y));
+                                    return found == occupied.end() ? std::nullopt
+                                        : std::optional{found->second};
+                                }, definition_for);
+                            resolved = evaluation.output;
+                            resolved_sprite = evaluation.sprite;
+                            placeholder = evaluation.placeholder;
+                        }
+                        nlohmann::ordered_json cell_value{
+                            {"x", x}, {"y", y},
+                            {"tileSetId", reference.tile_set_id.to_string()},
                             {"tileId", cell.tile_id.to_string()},
+                            {"resolvedTileSetId", resolved.tile_set_id.to_string()},
+                            {"resolvedTileId", resolved.tile_id.to_string()},
+                            {"placeholder", placeholder},
                             {"flipX", cell.flip_x},
                             {"flipY", cell.flip_y},
                             {"rotationQuarterTurns", cell.rotation_quarter_turns},
-                        });
+                            {"tint", {{"r", cell.tint.red}, {"g", cell.tint.green},
+                                {"b", cell.tint.blue}, {"a", cell.tint.alpha}}},
+                            {"offset", {{"x", cell.offset.x}, {"y", cell.offset.y}}},
+                            {"rotationDegrees", cell.rotation_degrees},
+                            {"scale", {{"x", cell.scale.x}, {"y", cell.scale.y}}},
+                            {"elevation", cell.elevation},
+                            {"lockColor", cell.lock_color},
+                            {"lockTransform", cell.lock_transform},
+                        };
+                        if (resolved_sprite)
+                        {
+                            cell_value["resolvedSprite"] = {
+                                {"textureAssetId", resolved_sprite->texture_asset_id.to_string()},
+                                {"source", {{"x", resolved_sprite->source.x}, {"y", resolved_sprite->source.y},
+                                    {"width", resolved_sprite->source.width},
+                                    {"height", resolved_sprite->source.height}}},
+                            };
+                        }
+                        cells.push_back(std::move(cell_value));
                     }
                 }
                 layers.push_back({
@@ -6975,6 +7049,19 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                     {"name", layer.name},
                     {"visible", layer.visible},
                     {"order", layer.order},
+                    {"renderer", {
+                        {"tint", {{"r", layer.tint.red}, {"g", layer.tint.green},
+                            {"b", layer.tint.blue}, {"a", layer.tint.alpha}}},
+                        {"materialAssetId", layer.material_asset_id.is_nil()
+                            ? nlohmann::ordered_json(nullptr)
+                            : nlohmann::ordered_json(layer.material_asset_id.to_string())},
+                        {"sortOrder", layer.sort_order},
+                        {"mode", layer.renderer_mode == dragonpixel::tiles::tile_renderer_mode::individual
+                            ? "individual" : "chunk"},
+                        {"animationRate", layer.animation_rate},
+                        {"cullingPadding", {{"x", layer.culling_padding.x},
+                            {"y", layer.culling_padding.y}}},
+                    }},
                     {"cells", std::move(cells)},
                 });
             }
@@ -6986,6 +7073,7 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                         dependencies.push_back(dependency.to_string());
                     return dependencies;
                 }()},
+                {"grid", serialized.at("grid")},
                 {"layers", std::move(layers)},
             });
         }
@@ -7016,8 +7104,6 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
         }
         const auto map = resolved_tilemaps.find(map_id);
         if (!collider_enabled || map == resolved_tilemaps.end() || map->second.tile_set_dependencies.empty()) continue;
-        const auto set = resolved_tile_sets.find(map->second.tile_set_dependencies.front().to_string());
-        if (set == resolved_tile_sets.end()) continue;
         for (const auto& layer : map->second.layers)
         {
             if (!layer.visible) continue;
@@ -7025,12 +7111,66 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
             {
                 for (const auto& cell : chunk.cells)
                 {
+                    const auto set_id = cell.tile_set_id.is_nil()
+                        ? map->second.tile_set_dependencies.front() : cell.tile_set_id;
+                    const auto set = resolved_tile_sets.find(set_id.to_string());
+                    if (set == resolved_tile_sets.end()) continue;
                     const auto tile = std::find_if(set->second.tiles.begin(), set->second.tiles.end(), [&](const auto& value) {
                         return value.tile_id == cell.tile_id;
                     });
-                    if (tile == set->second.tiles.end() || !tile->collision) continue;
+                    if (tile == set->second.tiles.end()
+                        || (tile->collider_mode == dragonpixel::tiles::tile_collider_mode::none
+                            && !tile->collision)) continue;
                     const auto cell_x = (chunk.x * 32) + static_cast<int>(cell.index % 32U);
                     const auto cell_y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
+                    const auto projected = dragonpixel::tiles::project_cell(
+                        map->second.grid, {cell_x, cell_y}, cell.elevation);
+                    auto collider_x = projected.x + cell.offset.x;
+                    auto collider_y = projected.y + cell.offset.y;
+                    auto collider_width = map->second.grid.cell_size.x;
+                    auto collider_height = map->second.grid.cell_size.y;
+                    if (tile->collision)
+                    {
+                        collider_x += tile->collision->offset_x;
+                        collider_y += tile->collision->offset_y;
+                        collider_width = tile->collision->width;
+                        collider_height = tile->collision->height;
+                    }
+                    else
+                    {
+                        const auto footprint = tile->collider_mode
+                                == dragonpixel::tiles::tile_collider_mode::sprite_outline
+                            ? tile->collision_outline
+                            : dragonpixel::tiles::grid_collision_polygon(
+                                map->second.grid, {cell_x, cell_y}, cell.elevation);
+                        if (footprint.empty()) continue;
+                        auto minimum_x = footprint.front().x;
+                        auto maximum_x = footprint.front().x;
+                        auto minimum_y = footprint.front().y;
+                        auto maximum_y = footprint.front().y;
+                        for (const auto point : footprint)
+                        {
+                            minimum_x = std::min(minimum_x, point.x);
+                            maximum_x = std::max(maximum_x, point.x);
+                            minimum_y = std::min(minimum_y, point.y);
+                            maximum_y = std::max(maximum_y, point.y);
+                        }
+                        if (tile->collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline)
+                        {
+                            collider_x += (minimum_x + maximum_x) * 0.5;
+                            collider_y += (minimum_y + maximum_y) * 0.5;
+                        }
+                        else
+                        {
+                            collider_x = (minimum_x + maximum_x) * 0.5 + cell.offset.x;
+                            collider_y = (minimum_y + maximum_y) * 0.5 + cell.offset.y;
+                        }
+                        collider_width = maximum_x - minimum_x;
+                        collider_height = maximum_y - minimum_y;
+                    }
+                    const auto rotation_radians = (cell.rotation_degrees
+                        + static_cast<double>(cell.rotation_quarter_turns) * 90.0)
+                        * std::numbers::pi / 180.0;
                     const auto generated_id = stable_runtime_uuid(QByteArray::fromStdString(
                         entity.value("id", std::string{}) + ":" + layer.layer_id.to_string() + ":"
                         + std::to_string(cell_x) + ":" + std::to_string(cell_y)));
@@ -7048,10 +7188,12 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                                 {"schemaVersion", 2}, {"owner", "native"}, {"enabled", true},
                                 {"properties", {
                                     {"dpe.transform.position", {
-                                        {"x", static_cast<double>(cell_x) + tile->collision->offset_x},
-                                        {"y", static_cast<double>(cell_y) + tile->collision->offset_y}, {"z", 0.0}}},
-                                    {"dpe.transform.rotation", {{"w", 1.0}, {"x", 0.0}, {"y", 0.0}, {"z", 0.0}}},
-                                    {"dpe.transform.scale", {{"x", 1.0}, {"y", 1.0}, {"z", 1.0}}},
+                                        {"x", collider_x}, {"y", collider_y}, {"z", 0.0}}},
+                                    {"dpe.transform.rotation", {
+                                        {"w", std::cos(rotation_radians * 0.5)}, {"x", 0.0}, {"y", 0.0},
+                                        {"z", std::sin(rotation_radians * 0.5)}}},
+                                    {"dpe.transform.scale", {{"x", std::abs(cell.scale.x)},
+                                        {"y", std::abs(cell.scale.y)}, {"z", 1.0}}},
                                 }},
                             },
                             {
@@ -7065,7 +7207,7 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                                 {"qualifiedName", "DragonPixel.Native.BoxCollider2DComponent"},
                                 {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
                                 {"properties", {
-                                    {"dpe.physics2d.size", {{"x", tile->collision->width}, {"y", tile->collision->height}}},
+                                    {"dpe.physics2d.size", {{"x", collider_width}, {"y", collider_height}}},
                                     {"dpe.physics2d.offset", {{"x", 0.0}, {"y", 0.0}}},
                                     {"dpe.physics.sensor", false}, {"dpe.physics.density", 1.0},
                                     {"dpe.physics.friction", 0.5}, {"dpe.physics.restitution", 0.0},

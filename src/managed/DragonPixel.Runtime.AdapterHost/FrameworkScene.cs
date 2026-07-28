@@ -32,27 +32,78 @@ public sealed record RenderAsset(
 
 public sealed record RenderMesh(string AssetId, RenderColor BaseColor);
 
+public enum RenderGridLayout
+{
+    Rectangular,
+    HexPointTop,
+    HexFlatTop,
+    Isometric,
+    IsometricZAsY,
+}
+
+public sealed record RenderTileTexture(string AssetId, byte[] PngBytes);
+
+public sealed record RenderTileAnimationFrame(
+    string TextureAssetId,
+    int SourceX,
+    int SourceY,
+    int SourceWidth,
+    int SourceHeight,
+    float DurationSeconds);
+
 public sealed record RenderTileCell(
     int X,
     int Y,
+    string TileSetId,
     string TileId,
     RenderColor Color,
+    string TextureAssetId,
     int SourceX,
     int SourceY,
     int SourceWidth,
     int SourceHeight,
     bool FlipX,
     bool FlipY,
-    int RotationQuarterTurns);
+    int RotationQuarterTurns,
+    float RotationDegrees,
+    float OffsetX,
+    float OffsetY,
+    float ScaleX,
+    float ScaleY,
+    int Elevation,
+    bool ColorLocked,
+    bool TransformLocked,
+    IReadOnlyList<RenderTileAnimationFrame> AnimationFrames,
+    float MinimumAnimationSpeed,
+    float MaximumAnimationSpeed,
+    float AnimationStartTime,
+    int AnimationStartFrame,
+    bool AnimationLoopOnce,
+    bool AnimationPaused);
 
-public sealed record RenderTileLayer(string Name, bool Visible, int Order, IReadOnlyList<RenderTileCell> Cells);
+public sealed record RenderTileLayer(
+    string Name,
+    bool Visible,
+    int Order,
+    RenderColor Tint,
+    string? MaterialAssetId,
+    int SortOrder,
+    bool IndividualMode,
+    float AnimationRate,
+    float CullingPaddingX,
+    float CullingPaddingY,
+    IReadOnlyList<RenderTileCell> Cells);
 
 public sealed record RenderTilemap(
     string AssetId,
-    string TextureAssetId,
-    byte[] TexturePng,
+    IReadOnlyDictionary<string, RenderTileTexture> Textures,
+    RenderGridLayout GridLayout,
     float CellWidth,
     float CellHeight,
+    float CellGapX,
+    float CellGapY,
+    float TileAnchorX,
+    float TileAnchorY,
     RenderColor Tint,
     int BaseLayer,
     IReadOnlyList<RenderTileLayer> Layers);
