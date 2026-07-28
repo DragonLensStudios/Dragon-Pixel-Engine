@@ -931,7 +931,9 @@ void TileDocumentService::publish_change(bool previous_dirty)
 
 bool TileDocumentService::paint_cell(int layer_index, int x, int y, const dragonpixel::core::uuid& tile_id)
 {
-    return paint_cell(layer_index, x, y, Brush{tile_id});
+    Brush brush;
+    brush.tile_id = tile_id;
+    return paint_cell(layer_index, x, y, brush);
 }
 
 bool TileDocumentService::paint_cell(int layer_index, int x, int y, const Brush& brush)
@@ -964,8 +966,12 @@ bool TileDocumentService::preview_rectangle(
     bool flip_y,
     unsigned rotation_quarter_turns)
 {
-    return preview_rectangle(layer_index, start_x, start_y, end_x, end_y,
-        Brush{tile_id, flip_x, flip_y, rotation_quarter_turns}, erase);
+    Brush brush;
+    brush.tile_id = tile_id;
+    brush.flip_x = flip_x;
+    brush.flip_y = flip_y;
+    brush.rotation_quarter_turns = rotation_quarter_turns;
+    return preview_rectangle(layer_index, start_x, start_y, end_x, end_y, brush, erase);
 }
 
 bool TileDocumentService::preview_rectangle(
@@ -1018,7 +1024,9 @@ bool TileDocumentService::flood_fill(
     const dragonpixel::core::uuid& tile_id,
     std::size_t limit)
 {
-    return flood_fill(layer_index, x, y, Brush{tile_id}, limit);
+    Brush brush;
+    brush.tile_id = tile_id;
+    return flood_fill(layer_index, x, y, brush, limit);
 }
 
 bool TileDocumentService::flood_fill(

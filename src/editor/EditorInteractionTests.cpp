@@ -2260,8 +2260,10 @@ private slots:
         tiles.cancel_stroke();
         QVERIFY(!tiles.tile_at(0, 4, 4).has_value());
         tiles.begin_stroke();
+        TileDocumentService::Brush line_brush;
+        line_brush.tile_id = tile_id;
         QVERIFY(tiles.preview_line(0, -2, 1, 2, 1,
-            TileDocumentService::Brush{tile_id}));
+            line_brush));
         tiles.commit_stroke();
         for (int x = -2; x <= 2; ++x)
             QVERIFY(tiles.tile_at(0, x, 1).has_value());
@@ -2390,8 +2392,11 @@ private slots:
 
         service.begin_stroke();
         QVERIFY(service.paint_cell(0, 0, 0, rich));
+        TileDocumentService::Brush basic;
+        basic.tile_id = tile_a_id;
+        basic.tile_set_id = set_a_id;
         QVERIFY(service.paint_cell(0, 1, 0,
-            TileDocumentService::Brush{tile_a_id, false, false, 0U, set_a_id}));
+            basic));
         service.commit_stroke();
         QCOMPARE(service.brush_at(0, 0, 0), std::optional{rich});
         QVERIFY(service.edit_selection(0, 0, 0, 1, 0, rich));

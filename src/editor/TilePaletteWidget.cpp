@@ -899,8 +899,13 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
             flip_y_->setChecked(current->data(Qt::UserRole + 3).toBool());
             brush_rotation_ = current->data(Qt::UserRole + 4).toUInt() % 4U;
             rotate_->setText(QStringLiteral("Rotate %1 deg").arg(brush_rotation_ * 90U));
-            canvas_->set_selected_brush(TileDocumentService::Brush{
-                *id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_, *set_id});
+            TileDocumentService::Brush brush;
+            brush.tile_id = *id;
+            brush.flip_x = flip_x_->isChecked();
+            brush.flip_y = flip_y_->isChecked();
+            brush.rotation_quarter_turns = brush_rotation_;
+            brush.tile_set_id = *set_id;
+            canvas_->set_selected_brush(brush);
         }
         else
         {
@@ -913,9 +918,16 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         [this](const QString& set, const QString& id, bool flip_x, bool flip_y, int rotation) {
         const auto tile_id = dragonpixel::core::uuid::parse(id.toStdString());
         const auto tile_set_id = dragonpixel::core::uuid::parse(set.toStdString());
-        if (tile_id && tile_set_id) select_brush(TileDocumentService::Brush{
-            *tile_id, flip_x, flip_y,
-            static_cast<unsigned>(std::clamp(rotation, 0, 3)), *tile_set_id});
+        if (tile_id && tile_set_id)
+        {
+            TileDocumentService::Brush brush;
+            brush.tile_id = *tile_id;
+            brush.flip_x = flip_x;
+            brush.flip_y = flip_y;
+            brush.rotation_quarter_turns = static_cast<unsigned>(std::clamp(rotation, 0, 3));
+            brush.tile_set_id = *tile_set_id;
+            select_brush(brush);
+        }
     });
     connect(canvas_, &TileCanvas::selectionChanged, this, [this](int x, int y) {
         status_->setText(QStringLiteral("Selected cell (%1, %2)%3")
@@ -1279,8 +1291,11 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
                     });
                 if (!exists)
                 {
+                    TileDocumentService::Brush brush;
+                    brush.tile_id = tile.tile_id;
+                    brush.tile_set_id = set.asset_id;
                     static_cast<void>(service_->add_palette_cell(next % 16, next / 16,
-                        TileDocumentService::Brush{tile.tile_id, false, false, 0U, set.asset_id}));
+                        brush));
                     ++next;
                 }
             }
@@ -1480,8 +1495,13 @@ bool TilePaletteWidget::eventFilter(QObject* watched, QEvent* event)
                 [&](const auto& cell) {
                     return cell.tile.tile_set_id == owner->asset_id && cell.tile.tile_id == tile.tile_id;
                 });
-            if (!exists && service_->add_palette_cell(next % 16, next / 16,
-                    TileDocumentService::Brush{tile.tile_id, false, false, 0U, owner->asset_id})) ++next;
+            if (!exists)
+            {
+                TileDocumentService::Brush brush;
+                brush.tile_id = tile.tile_id;
+                brush.tile_set_id = owner->asset_id;
+                if (service_->add_palette_cell(next % 16, next / 16, brush)) ++next;
+            }
         }
     drop->acceptProposedAction();
     return true;
