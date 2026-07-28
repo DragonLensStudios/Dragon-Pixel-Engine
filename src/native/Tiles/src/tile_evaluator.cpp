@@ -252,8 +252,11 @@ std::vector<tile_palette_cell> group_pick(const std::vector<brush_cell>& occupie
     {
         if (item.cell.x < min_x || item.cell.x > max_x
             || item.cell.y < min_y || item.cell.y > max_y) continue;
-        result.push_back({(item.cell.x - min_x) * (gap + 1),
-            (item.cell.y - min_y) * (gap + 1), item.tile});
+        tile_palette_cell cell{};
+        cell.u = (item.cell.x - min_x) * (gap + 1);
+        cell.v = (item.cell.y - min_y) * (gap + 1);
+        cell.tile = item.tile;
+        result.push_back(std::move(cell));
         if (result.size() == limit) break;
     }
     return result;
