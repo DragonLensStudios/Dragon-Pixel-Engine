@@ -135,6 +135,35 @@ internal sealed class ProjectComponentRuntime : IDisposable
         }
     }
 
+    internal static ulong StableTileSeed(
+        string mapId,
+        string layerId,
+        int x,
+        int y,
+        string typeId)
+    {
+        const ulong offset = 1469598103934665603UL;
+        const ulong prime = 1099511628211UL;
+        var result = offset;
+        static byte[] IdBytes(string value) =>
+            Convert.FromHexString(value.Replace("-", string.Empty, StringComparison.Ordinal));
+        void Mix(byte value)
+        {
+            result ^= value;
+            result = unchecked(result * prime);
+        }
+        foreach (var value in IdBytes(mapId)) Mix(value);
+        foreach (var value in IdBytes(layerId)) Mix(value);
+        foreach (var integer in new[] { x, y })
+        {
+            var bits = unchecked((uint)integer);
+            for (var shift = 0; shift < 32; shift += 8)
+                Mix(unchecked((byte)(bits >> shift)));
+        }
+        foreach (var value in Encoding.UTF8.GetBytes(typeId)) Mix(value);
+        return result;
+    }
+
     public IReadOnlyList<TileExtensionEvaluationResult> EvaluateTiles(
         string pluginId,
         IReadOnlyList<TileExtensionContext> contexts)

@@ -107,7 +107,7 @@ internal static class Program
                     ["cellY"] = -3,
                     ["elevation"] = 0,
                     ["layout"] = 0,
-                    ["deterministicSeed"] = "1234",
+                    ["deterministicSeed"] = "223698854302154547",
                     ["elapsedSeconds"] = 0.0,
                     ["mapId"] = "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
                     ["layerId"] = "59737391-9417-45bf-a8af-cb6e24e7aa38",

@@ -279,6 +279,11 @@ void TileCanvas::mousePressEvent(QMouseEvent* event)
     if (event->button() != Qt::LeftButton) return;
     setFocus(Qt::MouseFocusReason);
     const auto cell = cell_at(event->position().toPoint());
+    if (tool_ == Tool::paint && custom_brush_mode_)
+    {
+        emit customBrushRequested(cell.x(), cell.y());
+        return;
+    }
     stroke_start_ = cell;
     last_cell_ = cell;
     if (tool_ == Tool::paint || tool_ == Tool::erase || tool_ == Tool::rectangle
@@ -603,9 +608,12 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     brush_behavior_->addItem(QStringLiteral("Basic"), QStringLiteral("basic"));
     brush_behavior_->addItem(QStringLiteral("Random Selection"), QStringLiteral("random"));
     brush_behavior_->addItem(QStringLiteral("Group Stamp"), QStringLiteral("group"));
+    brush_behavior_->addItem(QStringLiteral("Custom Extension"),
+        QStringLiteral("custom-extension"));
     brush_behavior_->addItem(QStringLiteral("GameObject"), QStringLiteral("object"));
     brush_behavior_->setToolTip(QStringLiteral(
         "Random Selection chooses deterministically; Group Stamp preserves selected palette offsets; "
+        "Custom Extension invokes the selected Custom Tile's project-local worker module; "
         "GameObject places a dropped prefab or copied scene-object subtree."));
     controls->addWidget(brush_behavior_);
     controls->addWidget(new QLabel{QStringLiteral("Active Target"), this});
@@ -1222,6 +1230,8 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     canvas_ = new TileCanvas{service_, splitter};
     canvas_->set_brush_provider([this](int x, int y) { return active_brush_at(x, y); });
     canvas_->set_pattern_provider([this](int x, int y) { return active_brush_pattern_at(x, y); });
+    connect(canvas_, &TileCanvas::customBrushRequested,
+        this, &TilePaletteWidget::customBrushRequested);
     splitter->addWidget(tiles_);
     splitter->addWidget(canvas_);
     splitter->setStretchFactor(1, 1);
@@ -1978,10 +1988,31 @@ bool TilePaletteWidget::target_pinned() const noexcept
     return target_pin_ != nullptr && target_pin_->isChecked();
 }
 
+bool TilePaletteWidget::custom_extension_brush_active() const
+{
+    if (brush_behavior_ == nullptr
+        || brush_behavior_->currentData().toString()
+            != QStringLiteral("custom-extension")) return false;
+    const auto brush = active_brush();
+    if (!brush) return false;
+    for (const auto& set : service_->tilesets())
+    {
+        if (set.asset_id != brush->tile_set_id) continue;
+        const auto tile = std::find_if(set.tiles.cbegin(), set.tiles.cend(),
+            [&](const auto& candidate) { return candidate.tile_id == brush->tile_id; });
+        return tile != set.tiles.cend()
+            && tile->kind == dragonpixel::tiles::tile_kind::custom
+            && !tile->custom_type_id.empty();
+    }
+    return false;
+}
+
 std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush_at(int x, int y) const
 {
     if (brush_behavior_ != nullptr
-        && brush_behavior_->currentData().toString() == QStringLiteral("object")) return std::nullopt;
+        && (brush_behavior_->currentData().toString() == QStringLiteral("object")
+            || brush_behavior_->currentData().toString()
+                == QStringLiteral("custom-extension"))) return std::nullopt;
     auto brush = active_brush();
     const auto* map = service_->tilemap();
     const auto layer_index = active_layer();
@@ -2165,6 +2196,13 @@ void TilePaletteWidget::update_tile_editor()
 void TilePaletteWidget::update_brush()
 {
     canvas_->set_selected_brush(active_brush());
+    canvas_->set_custom_brush_mode(custom_extension_brush_active());
+    if (brush_behavior_ != nullptr
+        && brush_behavior_->currentData().toString()
+            == QStringLiteral("custom-extension")
+        && !custom_extension_brush_active())
+        status_->setText(QStringLiteral(
+            "Custom Extension requires a selected Custom Tile with a non-empty type ID."));
     emit authoringStateChanged();
 }
 

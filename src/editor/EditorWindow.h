@@ -25,6 +25,8 @@
 
 #include <QComboBox>
 #include <QDockWidget>
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QListView>
 #include <QMainWindow>
@@ -248,6 +250,14 @@ private:
     void update_tile_scene_stroke(const QVector3D& world_position);
     void end_tile_scene_stroke(const QVector3D& world_position);
     void cancel_tile_scene_stroke();
+    void request_custom_tile_brush(const QPoint& cell);
+    void apply_custom_tile_brush_proposal(
+        quint64 request_token,
+        const QJsonArray& commands);
+    void reject_custom_tile_brush_proposal(
+        quint64 request_token,
+        const QString& error_code,
+        const QString& error_message);
     [[nodiscard]] bool place_tile_object(
         const TilePaletteWidget::ObjectBrushSource& source,
         const TileSceneTarget& target,
@@ -385,6 +395,17 @@ private:
     int tile_scene_stroke_layer_{};
     std::optional<TileDocumentService::Brush> tile_scene_stroke_brush_;
     std::optional<dragonpixel::core::uuid> pinned_tile_scene_target_;
+    struct PendingCustomTileBrush final
+    {
+        dragonpixel::core::uuid map_id;
+        dragonpixel::core::uuid layer_id;
+        int layer{};
+        std::uint64_t document_revision{};
+        TileDocumentService::Brush brush;
+    };
+    QHash<quint64, PendingCustomTileBrush> pending_custom_tile_brushes_;
+    quint64 next_custom_tile_brush_token_{};
+    std::uint64_t tile_document_revision_{};
 
     QAction* save_action_{};
     QAction* new_scene_action_{};

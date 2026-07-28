@@ -574,6 +574,14 @@ public static class WorkerHost
         var layerId = CanonicalId(contextValue, "layerId");
         var tileSetId = CanonicalId(contextValue, "tileSetId");
         var tileId = CanonicalId(contextValue, "tileId");
+        if (deterministicSeed != ProjectComponentRuntime.StableTileSeed(
+                mapId,
+                layerId,
+                RequiredInt(contextValue, "cellX"),
+                RequiredInt(contextValue, "cellY"),
+                pluginId))
+            throw new ArgumentException(
+                "Tile brush deterministicSeed does not match its immutable context.");
         var payloadJson = RequiredString(contextValue, "payloadJson");
         var neighborhoodJson = RequiredString(contextValue, "neighborhoodJson");
         ValidateBoundedJson(payloadJson, "Tile brush custom payload");

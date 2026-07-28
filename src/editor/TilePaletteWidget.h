@@ -54,6 +54,7 @@ public:
     {
         pattern_provider_ = std::move(provider);
     }
+    void set_custom_brush_mode(bool enabled) noexcept { custom_brush_mode_ = enabled; }
     void set_zoom(double zoom) noexcept;
 
     [[nodiscard]] Tool tool() const noexcept { return tool_; }
@@ -63,6 +64,7 @@ signals:
     void brushPicked(const QString& tile_set_id, const QString& tile_id,
         bool flip_x, bool flip_y, int rotation_quarter_turns);
     void selectionChanged(int x, int y);
+    void customBrushRequested(int x, int y);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -91,6 +93,7 @@ private:
     std::optional<QPoint> selection_start_;
     std::optional<QPoint> selection_end_;
     std::optional<QPoint> last_cell_;
+    bool custom_brush_mode_{};
 };
 
 class TilePaletteWidget final : public QWidget
@@ -128,6 +131,7 @@ public:
     [[nodiscard]] TileCanvas::Tool active_tool() const noexcept;
     [[nodiscard]] int active_layer() const noexcept;
     [[nodiscard]] bool target_pinned() const noexcept;
+    [[nodiscard]] bool custom_extension_brush_active() const;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush_at(int x, int y) const;
     [[nodiscard]] std::vector<std::pair<QPoint, TileDocumentService::Brush>>
@@ -137,6 +141,7 @@ public:
 
 signals:
     void authoringStateChanged();
+    void customBrushRequested(int x, int y);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

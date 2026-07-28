@@ -117,6 +117,13 @@ try
             "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6",
             "a9ba355a-51e8-49e9-b581-c6174026c160",
             "{}", "{}");
+        Require(ProjectComponentRuntime.StableTileSeed(
+                tileContext.MapId,
+                tileContext.LayerId,
+                tileContext.CellX,
+                tileContext.CellY,
+                TileExtensionId) == 2513585628307874901UL,
+            "Managed custom-tile seed generation diverged from the portable Tile owner.");
         var tileResults = runtime.EvaluateTiles(TileExtensionId, [tileContext]);
         Require(tileResults.Count == 1 && tileResults[0].Succeeded
                 && tileResults[0].ResultJson.Contains("\"tint\"", StringComparison.Ordinal),

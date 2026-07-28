@@ -1451,6 +1451,92 @@ private slots:
         }
         QVERIFY(polygon_count >= std::size_t{3});
         QCOMPARE(composite_box_count, std::size_t{1});
+
+        const auto proposal_map = window.tile_document_service_->tilemap();
+        QVERIFY(proposal_map != nullptr);
+        const auto proposal_map_id = proposal_map->asset_id;
+        const auto proposal_layer_id = proposal_map->layers.front().layer_id;
+        const auto proposal_cell = QPoint{73, -41};
+        auto proposal_brush = reflected;
+        proposal_brush.tile_set_id = *edited_set_id;
+        proposal_brush.tile_id = grid_tile_id;
+        const auto proposal_commands = QJsonArray{QJsonObject{
+            {QStringLiteral("kind"), QStringLiteral("paint")},
+            {QStringLiteral("x"), proposal_cell.x()},
+            {QStringLiteral("y"), proposal_cell.y()},
+            {QStringLiteral("tileSetId"),
+                QString::fromStdString(proposal_brush.tile_set_id.to_string())},
+            {QStringLiteral("tileId"),
+                QString::fromStdString(proposal_brush.tile_id.to_string())},
+        }};
+        const auto proposal_token = quint64{9001};
+        window.pending_custom_tile_brushes_.insert(proposal_token, {
+            proposal_map_id,
+            proposal_layer_id,
+            0,
+            window.tile_document_revision_,
+            proposal_brush,
+        });
+        window.apply_custom_tile_brush_proposal(proposal_token, proposal_commands);
+        QVERIFY(window.tile_document_service_->brush_at(
+            0, proposal_cell.x(), proposal_cell.y()).has_value());
+        QVERIFY(window.tile_document_service_->undo());
+        QVERIFY(!window.tile_document_service_->brush_at(
+            0, proposal_cell.x(), proposal_cell.y()).has_value());
+        QVERIFY(window.tile_document_service_->redo());
+        QVERIFY(window.tile_document_service_->brush_at(
+            0, proposal_cell.x(), proposal_cell.y()).has_value());
+
+        const auto before_rejected_proposal = dragonpixel::tiles::write_tilemap(
+            *window.tile_document_service_->tilemap());
+        const auto rejected_token = quint64{9002};
+        window.pending_custom_tile_brushes_.insert(rejected_token, {
+            proposal_map_id,
+            proposal_layer_id,
+            0,
+            window.tile_document_revision_,
+            proposal_brush,
+        });
+        auto rejected_command = proposal_commands.at(0).toObject();
+        rejected_command.insert(QStringLiteral("tileId"),
+            QStringLiteral("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+        window.apply_custom_tile_brush_proposal(
+            rejected_token, QJsonArray{rejected_command});
+        QCOMPARE(dragonpixel::tiles::write_tilemap(*window.tile_document_service_->tilemap()),
+            before_rejected_proposal);
+
+        const auto stale_token = quint64{9003};
+        window.pending_custom_tile_brushes_.insert(stale_token, {
+            proposal_map_id,
+            proposal_layer_id,
+            0,
+            window.tile_document_revision_ - 1,
+            proposal_brush,
+        });
+        window.apply_custom_tile_brush_proposal(stale_token, proposal_commands);
+        QCOMPARE(dragonpixel::tiles::write_tilemap(*window.tile_document_service_->tilemap()),
+            before_rejected_proposal);
+
+        const auto proposal_owner = std::find_if(
+            window.tile_document_service_->tilesets().cbegin(),
+            window.tile_document_service_->tilesets().cend(),
+            [&](const auto& set) { return set.asset_id == proposal_brush.tile_set_id; });
+        QVERIFY(proposal_owner != window.tile_document_service_->tilesets().cend());
+        const auto proposal_definition = std::find_if(
+            proposal_owner->tiles.cbegin(), proposal_owner->tiles.cend(),
+            [&](const auto& tile) { return tile.tile_id == proposal_brush.tile_id; });
+        QVERIFY(proposal_definition != proposal_owner->tiles.cend());
+        auto custom_definition = *proposal_definition;
+        custom_definition.kind = dragonpixel::tiles::tile_kind::custom;
+        custom_definition.custom_type_id = "example.weather-tile";
+        custom_definition.opaque_payload_json = "{\"season\":\"winter\"}";
+        QVERIFY(window.tile_document_service_->update_tile_definition(
+            proposal_brush.tile_set_id, custom_definition));
+        window.tile_palette_->select_brush(proposal_brush);
+        brush_behavior->setCurrentIndex(
+            brush_behavior->findData(QStringLiteral("custom-extension")));
+        QVERIFY(window.tile_palette_->custom_extension_brush_active());
+        QVERIFY(!window.tile_palette_->active_brush_at(4, 5).has_value());
     }
 
     void worker_client_rejects_downgraded_regressing_and_future_correlated_frames()
@@ -1468,6 +1554,52 @@ private slots:
         QVERIFY(!client.accepts_frame_metadata(2, 11, 6));
         QVERIFY(client.accepts_frame_metadata(2, 11, 3));
         QVERIFY(client.accepts_frame_metadata(2, 11, 5));
+    }
+
+    void worker_client_correlates_and_rejects_tile_brush_proposals()
+    {
+        WorkerClient client{QStringLiteral("preview")};
+        client.desired_running_ = true;
+        client.pending_.insert(41, QStringLiteral("proposeTileBrush"));
+        client.pending_tile_brush_tokens_.insert(41, 7001);
+        QSignalSpy ready{&client, &WorkerClient::tile_brush_proposal_ready};
+        QSignalSpy failed{&client, &WorkerClient::tile_brush_proposal_failed};
+        client.handle_response(QJsonObject{
+            {QStringLiteral("id"), 41},
+            {QStringLiteral("result"), QJsonObject{
+                {QStringLiteral("requestToken"), 7001},
+                {QStringLiteral("succeeded"), true},
+                {QStringLiteral("commandCount"), 1},
+                {QStringLiteral("commands"), QJsonArray{QJsonObject{
+                    {QStringLiteral("kind"), QStringLiteral("paint")},
+                    {QStringLiteral("x"), 2},
+                    {QStringLiteral("y"), -3},
+                    {QStringLiteral("tileSetId"),
+                        QStringLiteral("4fe655df-c40f-4e48-a5cc-fbe9bd356ac6")},
+                    {QStringLiteral("tileId"),
+                        QStringLiteral("a9ba355a-51e8-49e9-b581-c6174026c160")},
+                }}},
+            }},
+        });
+        QCOMPARE(ready.count(), 1);
+        QCOMPARE(ready.front().at(0).toULongLong(), quint64{7001});
+        QCOMPARE(failed.count(), 0);
+
+        client.pending_.insert(42, QStringLiteral("proposeTileBrush"));
+        client.pending_tile_brush_tokens_.insert(42, 7002);
+        client.handle_response(QJsonObject{
+            {QStringLiteral("id"), 42},
+            {QStringLiteral("result"), QJsonObject{
+                {QStringLiteral("requestToken"), 9999},
+                {QStringLiteral("succeeded"), true},
+                {QStringLiteral("commandCount"), 0},
+                {QStringLiteral("commands"), QJsonArray{}},
+            }},
+        });
+        QCOMPARE(failed.count(), 1);
+        QCOMPARE(failed.front().at(0).toULongLong(), quint64{7002});
+        QCOMPARE(failed.front().at(1).toString(),
+            QStringLiteral("DPE-TILE-EXT-PROPOSAL-CORRELATION"));
     }
 
     void typed_string_and_enum_editors_round_trip_json_safely()

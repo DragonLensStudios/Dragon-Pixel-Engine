@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QHash>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLocalSocket>
 #include <QObject>
@@ -39,6 +40,7 @@ public:
     void send_input_actions(const QJsonObject& actions);
     void send_correlated_input_actions(const QJsonObject& actions, std::uint64_t input_revision);
     void set_component_module_manifest(QString path) { component_module_manifest_ = std::move(path); }
+    void propose_tile_brush(quint64 request_token, QJsonObject parameters);
     void pick(const QPoint& frame_position);
     void pause();
     void resume();
@@ -68,6 +70,11 @@ signals:
     void runtime_input_ready();
     void runtime_pause_changed(bool paused);
     void preview_simulation_changed(bool enabled);
+    void tile_brush_proposal_ready(quint64 request_token, const QJsonArray& commands);
+    void tile_brush_proposal_failed(
+        quint64 request_token,
+        const QString& error_code,
+        const QString& error_message);
 
 private:
     friend class EditorInteractionTests;
@@ -77,6 +84,9 @@ private:
     void fail_session(const QString& message);
     void recover_from_runtime_input_error(const QString& message);
     void neutralize_cached_input_actions();
+    void fail_pending_tile_brush_proposals(
+        const QString& error_code,
+        const QString& error_message);
     void send_cached_input_actions();
     void send_request(const QString& method, const QJsonObject& parameters = {});
     void consume_messages();
@@ -100,6 +110,7 @@ private:
     QElapsedTimer connect_deadline_;
     QByteArray incoming_;
     QHash<int, QString> pending_;
+    QHash<int, quint64> pending_tile_brush_tokens_;
     QString adapter_;
     QString negotiated_adapter_;
     QString runtime_backend_;
@@ -140,4 +151,5 @@ private:
     bool awaiting_neutral_input_ack_{};
     bool runtime_input_recovery_requested_{};
     bool runtime_identity_refresh_requested_{};
+    bool tile_brush_proposals_available_{};
 };

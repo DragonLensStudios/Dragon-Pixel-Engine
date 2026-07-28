@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using DragonPixel.Contracts;
 
@@ -660,7 +659,8 @@ internal static class SceneSnapshotParser
                                 {
                                     var context = new TileExtensionContext(
                                         cellX, cellY, elevation, checked((uint)layout),
-                                        StableTileExtensionSeed(id, layerId, cellX, cellY, tile.CustomTypeId),
+                                        ProjectComponentRuntime.StableTileSeed(
+                                            id, layerId, cellX, cellY, tile.CustomTypeId),
                                         0.0, id, layerId, tileSetId, tileId,
                                         tile.CustomPayloadJson, "{}");
                                     var evaluated = projectRuntime.EvaluateTiles(tile.CustomTypeId, [context])[0];
@@ -818,18 +818,6 @@ internal static class SceneSnapshotParser
             throw new InvalidDataException($"Invalid {field}: {value}.");
         }
         return id.ToString("D");
-    }
-
-    private static ulong StableTileExtensionSeed(
-        string mapId,
-        string layerId,
-        int x,
-        int y,
-        string typeId)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{mapId}\n{layerId}\n{x}\n{y}\n{typeId}"));
-        return System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(bytes);
     }
 
     private static string RequiredString(JsonElement element, string name) =>

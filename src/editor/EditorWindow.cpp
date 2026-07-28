@@ -568,6 +568,10 @@ void EditorWindow::build_interface()
         append_console(message, QStringLiteral("Info"), QStringLiteral("Runtime"), {},
             game_preview_worker_->adapter_name(), QStringLiteral("game-preview"));
     });
+    connect(preview_worker_, &WorkerClient::tile_brush_proposal_ready,
+        this, &EditorWindow::apply_custom_tile_brush_proposal);
+    connect(preview_worker_, &WorkerClient::tile_brush_proposal_failed,
+        this, &EditorWindow::reject_custom_tile_brush_proposal);
     connect(preview_worker_, &WorkerClient::runtime_stopped, viewport_, &AuthoringViewport::clear_preview_frame);
     connect(game_preview_worker_, &WorkerClient::runtime_stopped, game_viewport_, &GameViewport::clear_preview_frame);
     connect(preview_worker_, &WorkerClient::preview_simulation_changed, this, [this](bool enabled) {
@@ -1233,6 +1237,8 @@ void EditorWindow::build_interface()
     });
     connect(tile_palette_, &TilePaletteWidget::authoringStateChanged,
         this, &EditorWindow::update_tile_scene_edit_state);
+    connect(tile_palette_, &TilePaletteWidget::customBrushRequested,
+        this, [this](int x, int y) { request_custom_tile_brush({x, y}); });
     connect(tile_document_service_, &TileDocumentService::diagnostic, this, [this](const QString& message) {
         append_console(message, QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
     });
@@ -1241,6 +1247,7 @@ void EditorWindow::build_interface()
         update_action_states();
     });
     connect(tile_document_service_, &TileDocumentService::documentChanged, this, [this] {
+        ++tile_document_revision_;
         update_tile_scene_edit_state();
         if (tile_document_service_->is_loaded() && tile_preview_timer_)
             tile_preview_timer_->start();
@@ -6937,6 +6944,233 @@ bool EditorWindow::erase_tile_objects(
     return true;
 }
 
+void EditorWindow::request_custom_tile_brush(const QPoint& cell)
+{
+    if (preview_worker_ == nullptr || tile_palette_ == nullptr
+        || tile_document_service_ == nullptr || play_running_
+        || !tile_palette_->custom_extension_brush_active()) return;
+    if (!pending_custom_tile_brushes_.isEmpty())
+    {
+        append_console(
+            QStringLiteral("A Custom Extension Brush proposal is already pending."),
+            QStringLiteral("Info"),
+            QStringLiteral("Tile Authoring"));
+        return;
+    }
+    const auto* map = tile_document_service_->tilemap();
+    const auto brush = tile_palette_->active_brush();
+    const auto layer = tile_palette_->active_layer();
+    if (map == nullptr || !brush || layer < 0
+        || layer >= static_cast<int>(map->layers.size())) return;
+    const dragonpixel::tiles::tile_definition* definition{};
+    for (const auto& set : tile_document_service_->tilesets())
+    {
+        if (set.asset_id != brush->tile_set_id) continue;
+        const auto tile = std::find_if(set.tiles.cbegin(), set.tiles.cend(),
+            [&](const auto& candidate) { return candidate.tile_id == brush->tile_id; });
+        if (tile != set.tiles.cend()) definition = &*tile;
+        break;
+    }
+    if (definition == nullptr || definition->kind != dragonpixel::tiles::tile_kind::custom
+        || definition->custom_type_id.empty()) return;
+
+    const auto& active_layer = map->layers[static_cast<std::size_t>(layer)];
+    QJsonArray neighbors;
+    for (const auto offset : dragonpixel::tiles::neighbor_offsets(map->grid.layout))
+    {
+        QJsonObject neighbor{
+            {QStringLiteral("x"), offset.x},
+            {QStringLiteral("y"), offset.y},
+        };
+        if (const auto candidate = tile_document_service_->brush_at(
+                layer, cell.x() + offset.x, cell.y() + offset.y))
+        {
+            neighbor.insert(QStringLiteral("tileSetId"),
+                QString::fromStdString(candidate->tile_set_id.to_string()));
+            neighbor.insert(QStringLiteral("tileId"),
+                QString::fromStdString(candidate->tile_id.to_string()));
+        }
+        neighbors.push_back(neighbor);
+    }
+    const auto neighborhood_json = QString::fromUtf8(
+        QJsonDocument{QJsonObject{{QStringLiteral("neighbors"), neighbors}}}
+            .toJson(QJsonDocument::Compact));
+    const auto seed = dragonpixel::tiles::stable_tile_seed(
+        map->asset_id,
+        active_layer.layer_id,
+        {cell.x(), cell.y()},
+        definition->custom_type_id);
+    QJsonObject request{
+        {QStringLiteral("kind"), QStringLiteral("stamp")},
+        {QStringLiteral("origin"), QJsonObject{
+            {QStringLiteral("x"), cell.x()},
+            {QStringLiteral("y"), cell.y()},
+        }},
+        {QStringLiteral("brush"), QJsonObject{
+            {QStringLiteral("flipX"), brush->flip_x},
+            {QStringLiteral("flipY"), brush->flip_y},
+            {QStringLiteral("rotationQuarterTurns"),
+                static_cast<int>(brush->rotation_quarter_turns)},
+            {QStringLiteral("elevation"), brush->elevation},
+        }},
+    };
+    QJsonObject parameters{
+        {QStringLiteral("pluginId"), QString::fromStdString(definition->custom_type_id)},
+        {QStringLiteral("context"), QJsonObject{
+            {QStringLiteral("cellX"), cell.x()},
+            {QStringLiteral("cellY"), cell.y()},
+            {QStringLiteral("elevation"), brush->elevation},
+            {QStringLiteral("layout"), static_cast<int>(map->grid.layout)},
+            {QStringLiteral("deterministicSeed"),
+                QString::number(static_cast<qulonglong>(seed))},
+            {QStringLiteral("elapsedSeconds"), 0.0},
+            {QStringLiteral("mapId"), QString::fromStdString(map->asset_id.to_string())},
+            {QStringLiteral("layerId"), QString::fromStdString(active_layer.layer_id.to_string())},
+            {QStringLiteral("tileSetId"), QString::fromStdString(brush->tile_set_id.to_string())},
+            {QStringLiteral("tileId"), QString::fromStdString(brush->tile_id.to_string())},
+            {QStringLiteral("payloadJson"),
+                QString::fromStdString(definition->opaque_payload_json)},
+            {QStringLiteral("neighborhoodJson"), neighborhood_json},
+        }},
+        {QStringLiteral("request"), request},
+    };
+    const auto token = ++next_custom_tile_brush_token_;
+    pending_custom_tile_brushes_.insert(token, {
+        map->asset_id,
+        active_layer.layer_id,
+        layer,
+        tile_document_revision_,
+        *brush,
+    });
+    preview_worker_->propose_tile_brush(token, std::move(parameters));
+}
+
+void EditorWindow::apply_custom_tile_brush_proposal(
+    quint64 request_token,
+    const QJsonArray& commands)
+{
+    const auto found = pending_custom_tile_brushes_.find(request_token);
+    if (found == pending_custom_tile_brushes_.end()) return;
+    const auto pending = *found;
+    pending_custom_tile_brushes_.erase(found);
+    const auto* map = tile_document_service_ == nullptr
+        ? nullptr : tile_document_service_->tilemap();
+    if (map == nullptr || pending.document_revision != tile_document_revision_
+        || map->asset_id != pending.map_id || pending.layer < 0
+        || pending.layer >= static_cast<int>(map->layers.size())
+        || map->layers[static_cast<std::size_t>(pending.layer)].layer_id
+            != pending.layer_id)
+    {
+        append_console(
+            QStringLiteral("Discarded a stale Custom Extension Brush proposal without mutation."),
+            QStringLiteral("Warning"),
+            QStringLiteral("Tile Authoring"));
+        return;
+    }
+    if (commands.size() > 4096)
+    {
+        append_console(
+            QStringLiteral("Rejected a Custom Extension Brush proposal above the 4096-command limit."),
+            QStringLiteral("Warning"),
+            QStringLiteral("Tile Authoring"));
+        return;
+    }
+    struct ProposedPaint final
+    {
+        int x{};
+        int y{};
+        dragonpixel::core::uuid tile_set_id;
+        dragonpixel::core::uuid tile_id;
+    };
+    std::vector<ProposedPaint> paints;
+    paints.reserve(static_cast<std::size_t>(commands.size()));
+    for (const auto& value : commands)
+    {
+        if (!value.isObject())
+        {
+            reject_custom_tile_brush_proposal(request_token,
+                QStringLiteral("DPE-TILE-EXT-MALFORMED-PROPOSAL"),
+                QStringLiteral("A proposed Tile brush command is not an object."));
+            return;
+        }
+        const auto command = value.toObject();
+        if (command.size() != 5 || command.value(QStringLiteral("kind")).toString()
+                != QStringLiteral("paint")
+            || !command.value(QStringLiteral("x")).isDouble()
+            || !command.value(QStringLiteral("y")).isDouble())
+        {
+            reject_custom_tile_brush_proposal(request_token,
+                QStringLiteral("DPE-TILE-EXT-MALFORMED-PROPOSAL"),
+                QStringLiteral("A proposed Tile brush command has an invalid shape."));
+            return;
+        }
+        const auto x64 = command.value(QStringLiteral("x")).toInteger(
+            std::numeric_limits<qint64>::min());
+        const auto y64 = command.value(QStringLiteral("y")).toInteger(
+            std::numeric_limits<qint64>::min());
+        const auto tile_set_text = command.value(QStringLiteral("tileSetId")).toString();
+        const auto tile_text = command.value(QStringLiteral("tileId")).toString();
+        const auto tile_set_id = dragonpixel::core::uuid::parse(tile_set_text.toStdString());
+        const auto tile_id = dragonpixel::core::uuid::parse(tile_text.toStdString());
+        if (x64 < std::numeric_limits<int>::min() || x64 > std::numeric_limits<int>::max()
+            || y64 < std::numeric_limits<int>::min() || y64 > std::numeric_limits<int>::max()
+            || !tile_set_id || !tile_id
+            || tile_set_text != QString::fromStdString(tile_set_id->to_string())
+            || tile_text != QString::fromStdString(tile_id->to_string()))
+        {
+            reject_custom_tile_brush_proposal(request_token,
+                QStringLiteral("DPE-TILE-EXT-MALFORMED-PROPOSAL"),
+                QStringLiteral("A proposed Tile brush command has invalid coordinates or IDs."));
+            return;
+        }
+        const auto owner = std::find_if(
+            tile_document_service_->tilesets().cbegin(),
+            tile_document_service_->tilesets().cend(),
+            [&](const auto& candidate) { return candidate.asset_id == *tile_set_id; });
+        if (owner == tile_document_service_->tilesets().cend()
+            || std::none_of(owner->tiles.cbegin(), owner->tiles.cend(),
+                [&](const auto& candidate) { return candidate.tile_id == *tile_id; }))
+        {
+            reject_custom_tile_brush_proposal(request_token,
+                QStringLiteral("DPE-TILE-EXT-UNRESOLVED-PROPOSAL"),
+                QStringLiteral("A proposed Tile brush command references an unloaded tile."));
+            return;
+        }
+        paints.push_back({static_cast<int>(x64), static_cast<int>(y64),
+            *tile_set_id, *tile_id});
+    }
+    tile_document_service_->begin_stroke();
+    bool changed{};
+    for (const auto& paint : paints)
+    {
+        auto brush = pending.brush;
+        brush.tile_set_id = paint.tile_set_id;
+        brush.tile_id = paint.tile_id;
+        changed = tile_document_service_->paint_cell(
+            pending.layer, paint.x, paint.y, brush) || changed;
+    }
+    tile_document_service_->commit_stroke();
+    append_console(
+        changed
+            ? QStringLiteral("Applied %1 Custom Extension Brush command(s) as one Undo transaction.")
+                .arg(paints.size())
+            : QStringLiteral("Custom Extension Brush proposal produced no authoring change."),
+        QStringLiteral("Info"),
+        QStringLiteral("Tile Authoring"));
+}
+
+void EditorWindow::reject_custom_tile_brush_proposal(
+    quint64 request_token,
+    const QString& error_code,
+    const QString& error_message)
+{
+    pending_custom_tile_brushes_.remove(request_token);
+    append_console(
+        QStringLiteral("%1: %2").arg(error_code, error_message),
+        QStringLiteral("Warning"),
+        QStringLiteral("Tile Authoring"));
+}
+
 void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
 {
     cancel_tile_scene_stroke();
@@ -6958,6 +7192,12 @@ void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
         return;
     }
     if (tool == TileCanvas::Tool::select) return;
+    if (tool == TileCanvas::Tool::paint
+        && tile_palette_->custom_extension_brush_active())
+    {
+        request_custom_tile_brush(cell);
+        return;
+    }
     if (const auto object_brush = tile_palette_->active_object_brush())
     {
         if (tool == TileCanvas::Tool::paint)
