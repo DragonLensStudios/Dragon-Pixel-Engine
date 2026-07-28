@@ -453,6 +453,95 @@ private slots:
         QVERIFY(tilemap != window.project_index_.candidate->entries.cend());
     }
 
+    void tilemap_creation_reuses_a_blank_gameobject_and_is_immediately_paint_ready()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("PaintReadyProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        const auto tileset = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.asset_type.contains(
+                    QStringLiteral("tileset"), Qt::CaseInsensitive);
+        });
+        QVERIFY(tileset != window.project_index_.candidate->entries.cend());
+        const auto tileset_id = tileset->id;
+
+        window.create_preset(
+            dragonpixel::scene::entity_preset::tilemap, {}, true);
+        const auto blank_id = window.selected_entity_id();
+        QVERIFY(blank_id.has_value());
+        const auto entity_count = window.scene_->entities().size();
+        const auto component_for = [&window](const dragonpixel::core::uuid& id) {
+            const auto* entity = window.scene_->find_entity(id);
+            return entity == nullptr ? static_cast<const dragonpixel::scene::component_record*>(nullptr)
+                : [&]() -> const dragonpixel::scene::component_record* {
+                    const auto component = std::find_if(
+                        entity->components.cbegin(), entity->components.cend(),
+                        [](const auto& candidate) {
+                            return candidate.type_id
+                                == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+                        });
+                    return component == entity->components.cend() ? nullptr : &*component;
+                }();
+        };
+        QVERIFY(component_for(*blank_id) != nullptr);
+        QCOMPARE(QString::fromStdString(component_for(*blank_id)->properties
+            .value("dpe.tilemap.asset", std::string{})), QString{});
+
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset_id, QStringLiteral("Paint Ready Map")));
+        QCOMPARE(window.scene_->entities().size(), entity_count);
+        QCOMPARE(window.selected_entity_id(), blank_id);
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        const auto map_id = QString::fromStdString(
+            window.tile_document_service_->tilemap()->asset_id.to_string());
+        QCOMPARE(QString::fromStdString(component_for(*blank_id)->properties
+            .at("dpe.tilemap.asset").get<std::string>()), map_id);
+        QCOMPARE(window.tile_palette_->active_layer(), 0);
+        QVERIFY(window.tile_palette_->active_brush().has_value());
+        QCOMPARE(window.viewport_->view_mode(), AuthoringViewport::ViewMode::two_d);
+        QVERIFY(window.viewport_->tile_edit_enabled());
+        QVERIFY(window.tile_scene_target().has_value());
+
+        window.undo();
+        QCOMPARE(QString::fromStdString(component_for(*blank_id)->properties
+            .value("dpe.tilemap.asset", std::string{})), QString{});
+        QVERIFY(!window.viewport_->tile_edit_enabled());
+        window.redo();
+        QCOMPARE(QString::fromStdString(component_for(*blank_id)->properties
+            .at("dpe.tilemap.asset").get<std::string>()), map_id);
+        QVERIFY(window.viewport_->tile_edit_enabled());
+
+        const auto target = window.tile_scene_target();
+        QVERIFY(target.has_value());
+        const auto world = target->local_to_world.map(QVector3D{
+            target->cell_width * 0.25F, target->cell_height * 0.25F, 0.0F});
+        window.begin_tile_scene_stroke(world);
+        window.end_tile_scene_stroke(world);
+        QVERIFY(window.tile_document_service_->tile_at(0, 0, 0).has_value());
+        const auto tilemap_path = window.tile_document_service_->tilemap_path();
+        const auto* reopened_tileset = window.project_index_.candidate->find_by_id(tileset_id);
+        QVERIFY(reopened_tileset != nullptr);
+        const auto tileset_path = reopened_tileset->resolved_source_path;
+        QVERIFY(window.save_scene());
+
+        TileDocumentService reopened;
+        QVERIFY(reopened.load(tilemap_path, tileset_path));
+        QVERIFY(reopened.tile_at(0, 0, 0).has_value());
+    }
+
     void scene_view_tile_editing_maps_cells_guards_modes_and_refreshes_preview()
     {
         QTemporaryDir temporary;
