@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** PNG intake correction verified; PR update pending
-> **Disposition:** Implementation complete; not merged
+> **Status:** Implementation complete; ready for human review
+> **Disposition:** Ready for review; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
@@ -191,7 +191,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop` and left unmerged for human review.
 - [x] Reported extensionless-PNG creation failure is regression-covered and repaired without weakening non-PNG rejection.
-- [ ] Correction verification, evidence, branch push, and draft PR #6 update are complete.
+- [x] Correction verification, evidence, branch push, and draft PR #6 update are complete.
 - [ ] Human review and merge occur after this implementation handoff.
 
 ## Work Log
@@ -211,7 +211,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | PNG intake correction started | The supplied extensionless file `Tileset_Ground_JMguEL` exists and begins with the standard PNG signature. The preview succeeds because `QImage` detects content, while `TileSetCreationService::create` rejects the same file solely because `QFileInfo::suffix()` is not `png`. The smallest complete correction is content-based PNG acceptance shared by preview/create, explicit rejection of mislabeled non-PNG data, and focused creation/regression evidence on this same active feature branch and draft PR. Required document mirrors and `DPE-ARCH-0014` were reverified before source changes. |
 | 2026-07-27 | PNG intake correction implemented and focused verification passed | Added a regression that first failed 2 passed / 1 failed in 9 ms at the exact suffix-only rejection. Preview and Create now share one forced-PNG content decoder over one captured byte sequence, accept a valid extensionless PNG, retain the exact validated bytes in a normalized contained `.png`, reject missing and mislabeled non-PNG input before output, expose the full selected path as a tooltip, and offer an all-files picker fallback. The existing plus new direct/wizard intake workflows pass **4/4 in 36 ms** under Release and **4/4 in 66 ms** under MSVC AddressSanitizer. The expanded tilemap workflow set, including Scene View editing, Project/Hierarchy/Inspector attachment, layer/brush transactions, both PNG intake cases, and recoverable scene-plus-tile save, passes **8/8 in 37.941 seconds** under Release and **8/8 in 63.733 seconds** under AddressSanitizer with no sanitizer finding. Commit: `03267d8`. |
 | 2026-07-27 | PNG correction aggregate verification passed | A complete strict Windows Release rebuild succeeded with zero warnings/errors and the unchanged preset passed **60/60 in 482.94 seconds**. The production-style bundle contains **189** manifest records with zero missing, size-mismatched, hash-mismatched, unlisted, or manifest-only files; the packaged MonoGame self-test passes with development-path overrides removed. Final hashes: editor `E1D6BFA7F77705BC4D9C2C5D1210A0A334488362BC7C67ECCF7BB5A698E29E34`, Tiled importer `4B83ADCA6BD9E8CD81D7E2C7FC66A3455C2759D075CE2A91A42ADDD1489C3B5F`, manifest `90FC556D52BC4B40C7B8D3F9AB0200DFF8ED8FE37F8EE922CDE2EA80A5361ABD`. The broader ASan preset was not repeated for this decoder-local correction; its prior 59/60 result and unchanged POC J performance blocker remain recorded, while the complete affected tile workflow passes under sanitizer as reported above. |
+| 2026-07-27 | PNG correction review handoff complete | Reviewed the four focused correction commits and five-file correction diff, then re-reviewed the aggregate branch stat and confirmed `git diff --check develop...HEAD` is clean with no unrelated source, format, contract, threshold, or support change. Pushed the correction to `feature/tilemap-authoring-workspace` and updated existing draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) with the root cause, behavior, focused/full verification, recovery coverage, final hashes, unchanged limitations, and prior POC J sanitizer blocker. GitHub reports the PR open, draft, targeting `develop`, and unmerged. |
 
 ## Handoff Notes
 
-The reported extensionless-PNG TileSet creation failure is implemented and verified on the existing feature branch. Draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) remains open and intentionally unmerged while the aggregate diff is reviewed, the branch is pushed, and the PR evidence is updated. The prior repeated aggregate POC J sanitizer performance failure and remaining scope/platform limitations remain open and unchanged.
+The reported extensionless-PNG TileSet creation failure is fixed and ready for human review in draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6). Valid PNG content now works through the real wizard even without a filename extension; misleading or missing input still fails before output. The branch is pushed and intentionally unmerged. The prior repeated aggregate POC J sanitizer performance failure, current Ubuntu/macOS evidence, broader tile types/importers, complete POC K/O/J acceptance, and KNI production support remain open and unchanged.
