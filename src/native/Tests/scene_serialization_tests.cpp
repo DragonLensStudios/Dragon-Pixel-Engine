@@ -1671,6 +1671,44 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "A transient target sharing violation outlived the publication retry budget: "
             + transient_target_result.error);
 
+    const auto persistent_target_handle = CreateFileW(
+        scene_target.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    require(persistent_target_handle != INVALID_HANDLE_VALUE,
+        "Could not arrange the persistent Windows target-sharing fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> persistent_target_retry{
+        {scene_target, "scene-must-not-survive-persistent-target-lock\n"},
+        {tile_target, "tile-must-not-survive-persistent-target-lock\n"},
+    };
+    const auto persistent_target_result = dragonpixel::serialization::save_utf8_transaction(
+        persistent_target_retry, transaction_root);
+    static_cast<void>(CloseHandle(persistent_target_handle));
+    require(!persistent_target_result.succeeded
+            && persistent_target_result.error.find("ReplaceFileW failed with error 32 (")
+                != std::string::npos
+            && persistent_target_result.error.find(") after 8 attempt(s); target=\"")
+                != std::string::npos
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Persistent target sharing did not fail cleanly with the prior documents intact: "
+            + persistent_target_result.error);
+    const auto released_target_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_target_retry, transaction_root);
+    require(released_target_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Save did not recover after the persistent target handle was released: "
+            + released_target_result.error);
+
     const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_journal_retry{
         {scene_target, "scene-after-transient-journal-retry\n"},
         {tile_target, "tile-after-transient-journal-retry\n"},
@@ -1778,7 +1816,7 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "Could not publish the transaction journal: MoveFileExW failed with error 32 (";
     require(!persistent_journal_result.succeeded
             && persistent_journal_result.error.starts_with(persistent_error_prefix)
-            && persistent_journal_result.error.find(") after 7 attempt(s); target=\"") != std::string::npos
+            && persistent_journal_result.error.find(") after 8 attempt(s); target=\"") != std::string::npos
             && persistent_journal_result.error.find("; staged=\"") != std::string::npos
             && persistent_journal_result.error.ends_with("; backup=<none>.")
             && persistent_journal_result.error.find("system message unavailable") == std::string::npos

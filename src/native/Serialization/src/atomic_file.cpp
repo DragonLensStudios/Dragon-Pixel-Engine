@@ -87,7 +87,10 @@ enum class recovery_fault
 };
 
 #if defined(_WIN32)
+// Keep topology reads short, but allow an atomic replacement to outlive a
+// bounded antivirus/indexer read handle without falling back to in-place I/O.
 constexpr std::array<DWORD, 6> windows_retry_delays_ms{1, 2, 4, 8, 16, 32};
+constexpr std::array<DWORD, 7> windows_publication_retry_delays_ms{5, 10, 20, 40, 80, 160, 320};
 #endif
 constexpr std::array<unsigned int, 6> transaction_lease_retry_delays_ms{1, 2, 4, 8, 16, 32};
 
@@ -858,14 +861,14 @@ save_result replace_staged_file(
             if (topology.state != publication_topology::safe)
             {
                 if (topology.state == publication_topology::unsafe
-                    || delay_index >= windows_retry_delays_ms.size())
+                    || delay_index >= windows_publication_retry_delays_ms.size())
                 {
                     return windows_topology_failure(
                         "ReplaceFileW", topology_probes, api_attempts,
                         topology, target, staged, backup);
                 }
                 std::this_thread::sleep_for(
-                    std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+                    std::chrono::milliseconds{windows_publication_retry_delays_ms[delay_index++]});
                 topology = inspect_replace_file_retry_topology(
                     target, staged, *backup, expected_target_hash, expected_staged_hash);
                 ++topology_probes;
@@ -895,7 +898,7 @@ save_result replace_staged_file(
                     "ReplaceFileW", topology_probes, api_attempts,
                     topology, target, staged, backup, last_error);
             }
-            if (delay_index >= windows_retry_delays_ms.size())
+            if (delay_index >= windows_publication_retry_delays_ms.size())
             {
                 return topology.state == publication_topology::unavailable
                     ? windows_topology_failure(
@@ -905,7 +908,7 @@ save_result replace_staged_file(
                         "ReplaceFileW", last_error, api_attempts, target, staged, backup);
             }
             std::this_thread::sleep_for(
-                std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+                std::chrono::milliseconds{windows_publication_retry_delays_ms[delay_index++]});
             topology = inspect_replace_file_retry_topology(
                 target, staged, *backup, expected_target_hash, expected_staged_hash);
             ++topology_probes;
@@ -935,14 +938,14 @@ save_result replace_staged_file(
         if (topology.state != publication_topology::safe)
         {
             if (topology.state == publication_topology::unsafe
-                || delay_index >= windows_retry_delays_ms.size())
+                || delay_index >= windows_publication_retry_delays_ms.size())
             {
                 return windows_topology_failure(
                     "MoveFileExW", topology_probes, api_attempts,
                     topology, target, staged, backup);
             }
             std::this_thread::sleep_for(
-                std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+                std::chrono::milliseconds{windows_publication_retry_delays_ms[delay_index++]});
             topology = inspect_move_file_retry_topology(
                 target, staged, expected_target_state, expected_target_hash, expected_staged_hash);
             ++topology_probes;
@@ -999,7 +1002,7 @@ save_result replace_staged_file(
                 "MoveFileExW", topology_probes, api_attempts,
                 topology, target, staged, backup, last_error);
         }
-        if (delay_index >= windows_retry_delays_ms.size())
+        if (delay_index >= windows_publication_retry_delays_ms.size())
         {
             return topology.state == publication_topology::unavailable
                 ? windows_topology_failure(
@@ -1009,7 +1012,7 @@ save_result replace_staged_file(
                     "MoveFileExW", last_error, api_attempts, target, staged, backup);
         }
         std::this_thread::sleep_for(
-            std::chrono::milliseconds{windows_retry_delays_ms[delay_index++]});
+            std::chrono::milliseconds{windows_publication_retry_delays_ms[delay_index++]});
         topology = inspect_move_file_retry_topology(
             target, staged, expected_target_state, expected_target_hash, expected_staged_hash);
         ++topology_probes;
