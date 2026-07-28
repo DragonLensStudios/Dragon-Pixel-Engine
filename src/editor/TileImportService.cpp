@@ -1,5 +1,8 @@
 #include "TileImportService.h"
 
+#include <dragonpixel/core/uuid.h>
+#include <dragonpixel/tiles/tile_documents.h>
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -237,6 +240,7 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
     result.tilemap_asset_id = next_id();
     result.tileset_asset_id = next_id();
     result.texture_asset_id = next_id();
+    result.palette_asset_id = next_id();
     const auto canonical_id = [](const QString& value) {
         const QUuid parsed{value};
         return parsed.isNull() ? QString{}
@@ -245,14 +249,18 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
     result.tilemap_asset_id = canonical_id(result.tilemap_asset_id);
     result.tileset_asset_id = canonical_id(result.tileset_asset_id);
     result.texture_asset_id = canonical_id(result.texture_asset_id);
+    result.palette_asset_id = canonical_id(result.palette_asset_id);
     if (result.tilemap_asset_id.isEmpty() || result.tileset_asset_id.isEmpty()
-        || result.texture_asset_id.isEmpty()
+        || result.texture_asset_id.isEmpty() || result.palette_asset_id.isEmpty()
         || result.tilemap_asset_id == result.tileset_asset_id
         || result.tilemap_asset_id == result.texture_asset_id
-        || result.tileset_asset_id == result.texture_asset_id)
+        || result.tilemap_asset_id == result.palette_asset_id
+        || result.tileset_asset_id == result.texture_asset_id
+        || result.tileset_asset_id == result.palette_asset_id
+        || result.texture_asset_id == result.palette_asset_id)
     {
         diagnostic(result, QStringLiteral("DPE-TILE-IMPORT-IDS"),
-            QStringLiteral("The editor could not allocate three distinct tile asset identifiers."));
+            QStringLiteral("The editor could not allocate four distinct tile asset identifiers."));
         return result;
     }
 
@@ -437,7 +445,34 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
         return result;
     }
 
-    const auto published = asset_service_.publish_tile_import({
+    const auto parsed_set = dragonpixel::tiles::read_tile_set(
+        std::string_view{tileset_bytes.constData(), static_cast<std::size_t>(tileset_bytes.size())});
+    const auto palette_uuid = dragonpixel::core::uuid::parse(
+        result.palette_asset_id.toStdString());
+    if (!parsed_set.succeeded() || !palette_uuid)
+    {
+        diagnostic(result, QStringLiteral("DPE-TILE-IMPORT-PALETTE"),
+            QStringLiteral("The imported TileSet could not be converted into a Tile Palette."));
+        return result;
+    }
+    dragonpixel::tiles::tile_palette_document palette;
+    palette.asset_id = *palette_uuid;
+    palette.name = (request.base_name + QStringLiteral(" Palette")).toStdString();
+    palette.tile_set_dependencies = {parsed_set.document->asset_id};
+    const auto palette_columns = std::max(1, static_cast<int>(
+        std::ceil(std::sqrt(static_cast<double>(parsed_set.document->tiles.size())))));
+    for (std::size_t index = 0; index < parsed_set.document->tiles.size(); ++index)
+    {
+        palette.cells.push_back({
+            static_cast<int>(index) % palette_columns,
+            static_cast<int>(index) / palette_columns,
+            {parsed_set.document->asset_id, parsed_set.document->tiles[index].tile_id},
+        });
+    }
+    const auto palette_bytes = QByteArray::fromStdString(
+        dragonpixel::tiles::write_tile_palette(palette));
+
+    TileAssetPublicationRequest publication{
         request.project_manifest_path,
         request.base_name,
         result.tilemap_asset_id,
@@ -448,7 +483,10 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
         texture_bytes,
         sha256(source_bytes),
         request.pixels_per_unit,
-    });
+    };
+    publication.palette_asset_id = result.palette_asset_id;
+    publication.palette_bytes = palette_bytes;
+    const auto published = asset_service_.publish_tile_import(publication);
     if (!published.succeeded)
     {
         result.operation_id = published.operation_id;
@@ -467,6 +505,8 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
             result.tileset_path = path;
         else if (path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
             result.texture_path = path;
+        else if (path.endsWith(QStringLiteral(".dpetilepalette"), Qt::CaseInsensitive))
+            result.palette_path = path;
     }
     result.succeeded = true;
     return result;

@@ -1986,7 +1986,7 @@ bool EditorWindow::create_tilemap_from_tileset(
             QStringLiteral("Tile Authoring"), diagnostic.path,
             {}, {}, result.operation_id, {}, tileset_asset_id, diagnostic.path);
     }
-    if (!result.succeeded || result.asset_ids.size() != 1)
+    if (!result.succeeded || result.asset_ids.isEmpty())
     {
         if (result.diagnostics.isEmpty())
         {
