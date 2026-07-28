@@ -540,6 +540,14 @@ private slots:
         TileDocumentService reopened;
         QVERIFY(reopened.load(tilemap_path, tileset_path));
         QVERIFY(reopened.tile_at(0, 0, 0).has_value());
+
+        const auto additional = window.create_preset(
+            dragonpixel::scene::entity_preset::tilemap, {}, true);
+        QVERIFY(additional.has_value());
+        QVERIFY(*additional != *blank_id);
+        QVERIFY(component_for(*additional) != nullptr);
+        QCOMPARE(QString::fromStdString(component_for(*additional)->properties
+            .at("dpe.tilemap.asset").get<std::string>()), map_id);
     }
 
     void activating_an_unmapped_tileset_completes_the_selected_blank_gameobject()
@@ -615,6 +623,39 @@ private slots:
                 ->asset_id.to_string()));
         QVERIFY(window.tile_palette_->active_brush().has_value());
         QVERIFY(window.viewport_->tile_edit_enabled());
+    }
+
+    void tilemap_publication_is_retained_when_no_scene_can_be_attached()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("MapOnlyProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+
+        EditorWindow window{manifest};
+        const auto tileset = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.asset_type.contains(
+                    QStringLiteral("tileset"), Qt::CaseInsensitive);
+            });
+        QVERIFY(tileset != window.project_index_.candidate->entries.cend());
+        const auto tileset_id = tileset->id;
+        window.scene_.reset();
+
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset_id, QStringLiteral("Retained Map")));
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        const auto map_id = QString::fromStdString(
+            window.tile_document_service_->tilemap()->asset_id.to_string());
+        const auto* map_entry = window.project_index_.candidate->find_by_id(map_id);
+        QVERIFY(map_entry != nullptr);
+        QVERIFY(QFileInfo::exists(map_entry->absolute_path));
+        QVERIFY(QFileInfo::exists(map_entry->resolved_source_path));
+        QCOMPARE(map_entry->dependencies, QStringList{tileset_id});
     }
 
     void image_tileset_wizard_completes_a_new_paint_ready_gameobject_by_default()
