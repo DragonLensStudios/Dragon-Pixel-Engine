@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -131,6 +132,11 @@ void write_common_texture(const temporary_tree& tree)
         {reinterpret_cast<const char*>(png_signature.data()), png_signature.size()});
 }
 
+void write_second_texture(const temporary_tree& tree)
+{
+    write_bytes(tree.path / "props.png", read_bytes(tree.path / "atlas.png"));
+}
+
 std::pair<int, int> absolute_cell(const dragonpixel::tiles::tile_chunk& chunk,
     const dragonpixel::tiles::tile_cell& cell)
 {
@@ -212,6 +218,80 @@ void external_infinite_map_converts_negative_chunks_and_y_axis()
         "Tiled negative chunks or top-down coordinates were converted incorrectly.");
 }
 
+void multiple_tilesets_isometric_animation_and_hex_rotation_convert()
+{
+    temporary_tree tree;
+    write_common_texture(tree);
+    write_second_texture(tree);
+    auto animated = inline_tileset();
+    animated["tilecount"] = 2;
+    animated["columns"] = 2;
+    animated["tiles"] = json::array({{{"id", 0}, {"name", "Water"},
+        {"animation", json::array({{{"tileid", 0}, {"duration", 100}},
+            {{"tileid", 1}, {"duration", 250}}})}}});
+    auto props = inline_tileset("props.png");
+    props["name"] = "Props";
+    props["wangsets"] = json::array({{{"name", "Solid"},
+        {"wangtiles", json::array({{{"tileid", 0},
+            {"wangid", json::array({1, 1, 1, 1, 1, 1, 1, 1})}}})}}});
+    animated["firstgid"] = 1;
+    props["firstgid"] = 3;
+    const json map{
+        {"type", "map"}, {"orientation", "isometric"}, {"infinite", false},
+        {"tilewidth", 16}, {"tileheight", 16}, {"width", 2}, {"height", 1},
+        {"tilesets", json::array({animated, props})},
+        {"layers", json::array({{{"id", 5}, {"type", "tilelayer"}, {"width", 2},
+            {"height", 1}, {"data", json::array({1, 3})}}})},
+    };
+    write_bytes(tree.path / "map.tmj", map.dump(2));
+    const auto result = dragonpixel::importers::tiled::import_tiled_json(
+        request_for(tree, tree.path / "staging"));
+    require(result.succeeded, result.diagnostics.empty() ? "Multi-set import failed."
+        : result.diagnostics.front().message);
+    require(result.tileset_paths.size() == 2 && result.texture_paths.size() == 2,
+        "Multiple atlas TileSets did not produce isolated outputs.");
+    const auto first = dragonpixel::tiles::read_tile_set(read_bytes(result.tileset_paths[0]));
+    const auto second = dragonpixel::tiles::read_tile_set(read_bytes(result.tileset_paths[1]));
+    const auto parsed_map = dragonpixel::tiles::read_tilemap(read_bytes(result.tilemap_path));
+    require(first.succeeded() && second.succeeded() && parsed_map.succeeded(),
+        "Multi-set outputs failed native validation.");
+    require(first.document->tiles[0].kind == dragonpixel::tiles::tile_kind::animated
+        && first.document->tiles[0].animation_frames.size() == 2,
+        "Tiled animation was not converted to an Animated Tile.");
+    require(second.document->tiles[0].kind == dragonpixel::tiles::tile_kind::rule
+        && !second.document->tiles[0].rules.empty(),
+        "Representable Tiled Wang data was not converted to a Rule Tile.");
+    require(parsed_map.document->grid.layout == dragonpixel::tiles::grid_layout::isometric
+        && parsed_map.document->tile_set_dependencies.size() == 2,
+        "Isometric layout or multiple TileSet dependencies were not retained.");
+    std::set<dragonpixel::core::uuid> referenced_sets;
+    for (const auto& chunk : parsed_map.document->layers.front().chunks)
+        for (const auto& cell : chunk.cells) referenced_sets.insert(cell.tile_set_id);
+    require(referenced_sets.size() == 2, "Qualified cells did not retain both TileSets.");
+
+    auto hex = finite_map();
+    hex["orientation"] = "hexagonal";
+    hex["staggeraxis"] = "y";
+    hex["staggerindex"] = "odd";
+    hex["hexsidelength"] = 8;
+    hex["width"] = 1;
+    hex["layers"].front()["width"] = 1;
+    hex["layers"].front()["data"] = json::array({d | 0x10000000U | 1U});
+    write_bytes(tree.path / "hex.tmj", hex.dump(2));
+    auto hex_request = request_for(tree, tree.path / "hex-staging");
+    hex_request.source_map = tree.path / "hex.tmj";
+    const auto hex_result = dragonpixel::importers::tiled::import_tiled_json(hex_request);
+    require(hex_result.succeeded, hex_result.diagnostics.empty() ? "Hex import failed."
+        : hex_result.diagnostics.front().message);
+    const auto hex_map = dragonpixel::tiles::read_tilemap(read_bytes(hex_result.tilemap_path));
+    require(hex_map.succeeded()
+        && hex_map.document->grid.layout == dragonpixel::tiles::grid_layout::hex_point_top,
+        "Hexagonal Tiled orientation was not converted.");
+    const auto& hex_cell = hex_map.document->layers.front().chunks.front().cells.front();
+    require(std::abs(hex_cell.rotation_degrees - 180.0) < 0.001,
+        "Tiled 60/120 degree hexadecimal GID rotation flags were not preserved.");
+}
+
 void request_protocol_writes_a_versioned_result()
 {
     temporary_tree tree;
@@ -265,12 +345,13 @@ void rejected_inputs_leave_no_staged_artifacts()
     };
 
     auto map = finite_map();
-    map["orientation"] = "isometric";
+    map["orientation"] = "oblique";
     expect_failure(map, "DPE-TILED-ORIENTATION");
 
     map = finite_map();
-    map["tilesets"].push_back(map["tilesets"].front());
-    expect_failure(map, "DPE-TILED-TILESETS");
+    map["tilesets"].front().erase("image");
+    map["tilesets"].front()["tiles"].front()["image"] = "single.png";
+    expect_failure(map, "DPE-TILED-IMAGE");
 
     map = finite_map();
     map["layers"].push_back({{"id", 9}, {"type", "objectgroup"}, {"objects", json::array({{{"id", 1}}})}});
@@ -299,6 +380,8 @@ int main()
         finite_inline_map_converts_deterministically_with_all_flags();
         std::cout << "external infinite\n" << std::flush;
         external_infinite_map_converts_negative_chunks_and_y_axis();
+        std::cout << "multiple layouts\n" << std::flush;
+        multiple_tilesets_isometric_animation_and_hex_rotation_convert();
         std::cout << "request protocol\n" << std::flush;
         request_protocol_writes_a_versioned_result();
         std::cout << "rejections\n" << std::flush;
