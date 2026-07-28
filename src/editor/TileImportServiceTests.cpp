@@ -87,6 +87,7 @@ TileImportService::IdProvider fixed_ids()
         QStringLiteral("20000000-0000-4000-8000-000000000001"),
         QStringLiteral("20000000-0000-4000-8000-000000000002"),
         QStringLiteral("20000000-0000-4000-8000-000000000003"),
+        QStringLiteral("20000000-0000-4000-8000-000000000004"),
     };
     return [values = std::move(values)]() mutable {
         return values.takeFirst();
@@ -131,16 +132,19 @@ private slots:
         QVERIFY(QFileInfo{result.tilemap_path}.isFile());
         QVERIFY(QFileInfo{result.tileset_path}.isFile());
         QVERIFY(QFileInfo{result.texture_path}.isFile());
+        QVERIFY(QFileInfo{result.palette_path}.isFile());
 
         const auto indexed = ProjectIndexService{}.build_candidate(manifest);
         QVERIFY(indexed.succeeded());
         const auto* map = indexed.candidate->find_by_id(result.tilemap_asset_id);
         const auto* set = indexed.candidate->find_by_id(result.tileset_asset_id);
         const auto* texture = indexed.candidate->find_by_id(result.texture_asset_id);
-        QVERIFY(map != nullptr && set != nullptr && texture != nullptr);
+        const auto* palette = indexed.candidate->find_by_id(result.palette_asset_id);
+        QVERIFY(map != nullptr && set != nullptr && texture != nullptr && palette != nullptr);
         QCOMPARE(map->dependencies, QStringList{result.tileset_asset_id});
         QCOMPARE(set->dependencies, QStringList{result.texture_asset_id});
         QCOMPARE(texture->source_ownership, QStringLiteral("copied"));
+        QCOMPARE(palette->dependencies, QStringList{result.tileset_asset_id});
     }
 
     void contains_and_rejects_a_tampered_result_envelope()

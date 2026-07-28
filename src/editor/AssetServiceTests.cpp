@@ -76,6 +76,7 @@ TileAssetPublicationRequest tile_publication(const QString& manifest)
     constexpr auto tilemap_id = "10000000-0000-4000-8000-000000000001";
     constexpr auto tileset_id = "10000000-0000-4000-8000-000000000002";
     constexpr auto texture_id = "10000000-0000-4000-8000-000000000003";
+    constexpr auto palette_id = "10000000-0000-4000-8000-000000000004";
     dragonpixel::tiles::tile_set_document set{
         uuid(tileset_id), "Test Tiles", uuid(texture_id), {2, 2}, {}, {}, 2.0,
         {{uuid("10000000-0000-4000-8000-000000000010"), "Tile 0", {0, 0, 2, 2}, std::nullopt}}};
@@ -83,7 +84,10 @@ TileAssetPublicationRequest tile_publication(const QString& manifest)
         uuid(tilemap_id), "Test Map", {uuid(tileset_id)},
         {{uuid("10000000-0000-4000-8000-000000000020"), "Ground", true, 0,
             {{0, 0, {{0, set.tiles.front().tile_id, false, false, 0}}}}}}};
-    return {
+    dragonpixel::tiles::tile_palette_document palette{
+        uuid(palette_id), "Imported Map Palette", {uuid(tileset_id)},
+        {{0, 0, {uuid(tileset_id), set.tiles.front().tile_id}}}};
+    TileAssetPublicationRequest request{
         manifest,
         QStringLiteral("Imported Map"),
         QString::fromLatin1(tilemap_id),
@@ -95,6 +99,10 @@ TileAssetPublicationRequest tile_publication(const QString& manifest)
         QString(64, QLatin1Char{'a'}),
         2.0,
     };
+    request.palette_asset_id = QString::fromLatin1(palette_id);
+    request.palette_bytes = QByteArray::fromStdString(
+        dragonpixel::tiles::write_tile_palette(palette));
+    return request;
 }
 } // namespace
 
@@ -121,9 +129,9 @@ private slots:
         QVERIFY2(result.succeeded, result.diagnostics.isEmpty()
             ? "unknown Tilemap creation failure"
             : qPrintable(result.diagnostics.constFirst().message));
-        QCOMPARE(result.asset_ids.size(), 1);
-        QCOMPARE(result.metadata_paths.size(), 1);
-        QCOMPARE(result.affected_paths.size(), 2);
+        QCOMPARE(result.asset_ids.size(), 2);
+        QCOMPARE(result.metadata_paths.size(), 2);
+        QCOMPARE(result.affected_paths.size(), 4);
 
         const auto indexed = ProjectIndexService{}.build_candidate(manifest);
         QVERIFY(indexed.succeeded());
@@ -153,6 +161,17 @@ private slots:
         QCOMPARE(QString::fromStdString(parsed.document->layers.front().name),
             QStringLiteral("Layer 1"));
         QVERIFY(parsed.document->layers.front().chunks.empty());
+
+        const auto* palette_entry = indexed.candidate->find_by_id(result.asset_ids.at(1));
+        QVERIFY(palette_entry != nullptr);
+        QCOMPARE(palette_entry->asset_type, QStringLiteral("tilepalette"));
+        QCOMPARE(palette_entry->dependencies, QStringList{imported.asset_ids.at(1)});
+        QFile palette_file{palette_entry->resolved_source_path};
+        QVERIFY(palette_file.open(QIODevice::ReadOnly));
+        const auto parsed_palette = dragonpixel::tiles::read_tile_palette(
+            palette_file.readAll().toStdString());
+        QVERIFY(parsed_palette.succeeded());
+        QCOMPARE(parsed_palette.document->cells.size(), std::size_t{1});
     }
 
     void rejects_invalid_or_colliding_empty_tilemap_without_partial_files()
@@ -222,16 +241,17 @@ private slots:
             ? "unknown tile publication failure"
             : qPrintable(result.diagnostics.constFirst().message));
         QCOMPARE(result.asset_ids, QStringList({request.texture_asset_id,
-            request.tileset_asset_id, request.tilemap_asset_id}));
-        QCOMPARE(result.metadata_paths.size(), 3);
-        QCOMPARE(result.affected_paths.size(), 6);
+            request.tileset_asset_id, request.tilemap_asset_id, request.palette_asset_id}));
+        QCOMPARE(result.metadata_paths.size(), 4);
+        QCOMPARE(result.affected_paths.size(), 8);
 
         const auto indexed = ProjectIndexService{}.build_candidate(manifest);
         QVERIFY(indexed.succeeded());
         const auto* texture = indexed.candidate->find_by_id(request.texture_asset_id);
         const auto* set = indexed.candidate->find_by_id(request.tileset_asset_id);
         const auto* map = indexed.candidate->find_by_id(request.tilemap_asset_id);
-        QVERIFY(texture != nullptr && set != nullptr && map != nullptr);
+        const auto* palette = indexed.candidate->find_by_id(request.palette_asset_id);
+        QVERIFY(texture != nullptr && set != nullptr && map != nullptr && palette != nullptr);
         QCOMPARE(texture->asset_type, QStringLiteral("sprite"));
         QCOMPARE(texture->source_ownership, QStringLiteral("copied"));
         QCOMPARE(set->asset_type, QStringLiteral("tileset"));
@@ -239,6 +259,8 @@ private slots:
         QCOMPARE(set->dependencies, QStringList{request.texture_asset_id});
         QCOMPARE(map->asset_type, QStringLiteral("tilemap"));
         QCOMPARE(map->dependencies, QStringList{request.tileset_asset_id});
+        QCOMPARE(palette->asset_type, QStringLiteral("tilepalette"));
+        QCOMPARE(palette->dependencies, QStringList{request.tileset_asset_id});
         QCOMPARE(map->document.value(QStringLiteral("importer")).toObject()
             .value(QStringLiteral("id")).toString(), QStringLiteral("dragonpixel.tiled-json"));
         QCOMPARE(map->document.value(QStringLiteral("importSettings")).toObject()

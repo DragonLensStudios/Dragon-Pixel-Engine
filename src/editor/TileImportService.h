@@ -41,9 +41,11 @@ struct TileImportResult final
     QString tilemap_asset_id;
     QString tileset_asset_id;
     QString texture_asset_id;
+    QString palette_asset_id;
     QString tilemap_path;
     QString tileset_path;
     QString texture_path;
+    QString palette_path;
     qsizetype tile_count{};
     qsizetype layer_count{};
     qsizetype cell_count{};

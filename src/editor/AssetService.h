@@ -40,6 +40,8 @@ struct TileAssetPublicationRequest final
     QByteArray texture_bytes;
     QString source_map_hash;
     double pixels_per_unit{32.0};
+    QString palette_asset_id;
+    QByteArray palette_bytes;
 };
 
 struct TilemapCreationRequest final
@@ -47,6 +49,7 @@ struct TilemapCreationRequest final
     QString project_manifest_path;
     QString tileset_asset_id;
     QString name;
+    bool create_palette{true};
 };
 
 struct AssetOperationResult final
