@@ -99,6 +99,35 @@ struct minor_zero_api
     std::array<std::byte, DPE_API_V1_MINOR_0_SIZE> bytes{};
     std::uint64_t sentinel{0x1badc0de12345678ULL};
 };
+
+struct physics_minor_zero_api
+{
+    std::array<std::byte, DPE_PHYSICS_API_V1_MINOR_0_SIZE> bytes{};
+    std::uint64_t sentinel{0x7ee1cafe12345678ULL};
+};
+
+dpe_physics_collider_v2 polygon_collider()
+{
+    dpe_physics_collider_v2 value{};
+    value.struct_size = sizeof(value);
+    value.shape = DPE_PHYSICS_SHAPE_POLYGON_2D;
+    value.size[0] = 1.0;
+    value.size[1] = 1.0;
+    value.size[2] = 1.0;
+    value.density = 1.0;
+    value.friction = 0.5;
+    value.mask = 0xffff;
+    value.vertex_count = 4;
+    value.vertices[0] = -3.0;
+    value.vertices[1] = -0.5;
+    value.vertices[2] = 3.0;
+    value.vertices[3] = -0.5;
+    value.vertices[4] = 2.0;
+    value.vertices[5] = 0.5;
+    value.vertices[6] = -2.0;
+    value.vertices[7] = 0.5;
+    return value;
+}
 }
 
 int main()
@@ -121,12 +150,29 @@ int main()
 
     dpe_runtime_handle runtime{};
     require(api.create_runtime(&runtime) == DPE_STATUS_OK, "runtime creation failed");
-    dpe_physics_api_v1 physics{};
+    physics_minor_zero_api old_physics_storage;
     require(
-        api.acquire_physics_api(runtime, 1, 1, &physics, sizeof(physics)) == DPE_STATUS_ABI_VERSION_UNSUPPORTED,
+        api.acquire_physics_api(runtime, 1, 0,
+            reinterpret_cast<dpe_physics_api_v1*>(old_physics_storage.bytes.data()),
+            old_physics_storage.bytes.size()) == DPE_STATUS_OK,
+        "physics minor-0 original-size negotiation failed");
+    const auto* old_physics = reinterpret_cast<const dpe_physics_api_v1*>(
+        old_physics_storage.bytes.data());
+    require(old_physics->struct_size == DPE_PHYSICS_API_V1_MINOR_0_SIZE
+            && old_physics->abi_minor == 0,
+        "physics minor-0 negotiation returned the wrong table shape");
+    require(old_physics_storage.sentinel == 0x7ee1cafe12345678ULL,
+        "physics minor-0 negotiation overran caller storage");
+
+    dpe_physics_api_v1 physics{};
+    require(api.acquire_physics_api(runtime, 1, 2, &physics, sizeof(physics))
+            == DPE_STATUS_ABI_VERSION_UNSUPPORTED,
         "unsupported physics minor was accepted");
-    require(api.acquire_physics_api(runtime, 1, 0, &physics, sizeof(physics)) == DPE_STATUS_OK, "physics API acquisition failed");
-    require(physics.struct_size == sizeof(physics), "physics API table size mismatch");
+    require(api.acquire_physics_api(runtime, 1, 1, &physics, sizeof(physics)) == DPE_STATUS_OK,
+        "physics minor-1 API acquisition failed");
+    require(physics.struct_size == sizeof(physics) && physics.abi_minor == 1
+            && physics.rebuild_v2 != nullptr,
+        "physics minor-1 API table was incomplete");
 
     dpe_physics_world_settings_v1 settings{};
     settings.struct_size = sizeof(settings);
@@ -170,6 +216,35 @@ int main()
     require(
         physics.rebuild(world, bodies.data(), bodies.size(), colliders.data(), colliders.size()) == DPE_STATUS_OK,
         "physics snapshot rebuild failed");
+
+    std::vector<dpe_physics_collider_v2> polygon_colliders{
+        polygon_collider(),
+        {},
+    };
+    polygon_colliders[1].struct_size = sizeof(dpe_physics_collider_v2);
+    polygon_colliders[1].shape = DPE_PHYSICS_SHAPE_CIRCLE_OR_SPHERE;
+    polygon_colliders[1].size[0] = 0.5;
+    polygon_colliders[1].size[1] = 0.5;
+    polygon_colliders[1].size[2] = 0.5;
+    polygon_colliders[1].density = 1.0;
+    polygon_colliders[1].friction = 0.5;
+    polygon_colliders[1].mask = 0xffff;
+    std::vector<dpe_physics_body_v1> polygon_bodies{
+        body(40, DPE_PHYSICS_DIMENSION_2D, DPE_PHYSICS_BODY_STATIC, 0.0, 0.0, 0.0, 0),
+        body(41, DPE_PHYSICS_DIMENSION_2D, DPE_PHYSICS_BODY_DYNAMIC, 0.0, 4.0, 0.0, 1),
+    };
+    require(physics.rebuild_v2(world, polygon_bodies.data(), polygon_bodies.size(),
+            polygon_colliders.data(), polygon_colliders.size()) == DPE_STATUS_OK,
+        "physics v2 polygon snapshot rebuild failed");
+    polygon_colliders.front().vertex_count = 2;
+    require(physics.rebuild_v2(world, polygon_bodies.data(), polygon_bodies.size(),
+            polygon_colliders.data(), polygon_colliders.size()) == DPE_STATUS_INVALID_ARGUMENT,
+        "malformed physics v2 polygon was accepted");
+    require(last_error_message(api).find("DPE.PHYSICS.INVALID_COLLIDER") != std::string::npos,
+        "malformed polygon did not surface a structured diagnostic code");
+    require(physics.rebuild(world, bodies.data(), bodies.size(), colliders.data(), colliders.size())
+            == DPE_STATUS_OK,
+        "physics minor-0 rebuild stopped working after polygon validation");
 
     auto unsupported_colliders = colliders;
     unsupported_colliders.insert(unsupported_colliders.begin() + 4, collider());
