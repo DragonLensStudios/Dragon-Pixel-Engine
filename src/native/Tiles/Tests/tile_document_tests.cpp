@@ -246,6 +246,26 @@ int main()
         require_close(high.y - low.y, 1.5, "Z-as-Y elevation was not projected consistently.");
         require(high.sort_key > low.sort_key, "Z-as-Y elevation did not affect sorting.");
 
+        const std::vector<tiles::double_point> concave_outline{
+            {0.0, 0.0}, {2.0, 0.0}, {2.0, 1.0}, {1.0, 1.0}, {1.0, 2.0}, {0.0, 2.0}};
+        const auto outline_triangles = tiles::triangulate_polygon(concave_outline);
+        require(outline_triangles.size() == 4,
+            "Concave sprite outline did not lower to deterministic triangles.");
+        const auto triangle_area = [](const auto& triangle) {
+            return std::abs((triangle[0].x * (triangle[1].y - triangle[2].y)
+                + triangle[1].x * (triangle[2].y - triangle[0].y)
+                + triangle[2].x * (triangle[0].y - triangle[1].y)) * 0.5);
+        };
+        double covered_area{};
+        for (const auto& triangle : outline_triangles) covered_area += triangle_area(triangle);
+        require_close(covered_area, 3.0,
+            "Sprite outline triangulation changed the occupied collision area.");
+        const std::array self_intersecting_outline{
+            tiles::double_point{0.0, 0.0}, tiles::double_point{1.0, 1.0},
+            tiles::double_point{0.0, 1.0}, tiles::double_point{1.0, 0.0}};
+        require(tiles::triangulate_polygon(self_intersecting_outline).empty(),
+            "Self-intersecting sprite outline was accepted.");
+
         const tiles::tile_reference animated_reference{set_id, animated_id};
         const auto animated_evaluation = tiles::evaluate_tile(animated, animated_reference,
             tiles::grid_layout::rectangular, {4, 2}, 0.25, 77,
