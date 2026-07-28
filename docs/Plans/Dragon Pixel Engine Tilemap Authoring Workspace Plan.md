@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Image-based TileSet intake verified; safe bundle rebuild awaiting editor close
+> **Status:** Ready-to-paint Tilemap workflow correction in progress
 > **Disposition:** Implementation correction in progress; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
@@ -30,6 +30,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 
 - Add an `AssetService` operation that creates one empty `dpe.tilemap` v1 and one `dpe.asset` v3 sidecar from one structurally valid indexed TileSet, with a stable generated asset ID, one initial layer, dependency revision binding, collision checks, atomic publication, and post-commit index validation.
 - Add **Assets > Create Tilemap from Selected TileSet...** and a matching Project Explorer context action with a validated name prompt, refresh, automatic palette opening, and clear diagnostics.
+- Make **Create TileSet from Image...** offer a default-on, visible option to create the dependent Tilemap and scene GameObject immediately. Creating a Tilemap from an existing TileSet must reuse a selected blank Tilemap2D GameObject when possible, otherwise create one through the preset command, then select it and enter the paint-ready 2D workspace.
 - Add a Tilemap GameObject preset containing Transform and `Tilemap2D`, plus **Add > Tilemap 2D** and versioned Project-to-Scene/Hierarchy drag creation using the dragged Tilemap asset ID.
 - Retain and test compatible Tilemap-to-Inspector assignment through the existing filtered asset-reference command path.
 - Replace the minimal Project details label content for tile assets with parsed, read-only facts: stable ID, source, format, dependency/import/structural state, TileSet cell size/pixels-per-unit/tile count/texture dependency, and Tilemap layer/occupied-cell/dependency counts.
@@ -134,6 +135,14 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Keep dimensions, slicing, collision, non-overwrite, no-partial-output, and extensionless-PNG behavior unchanged; reject unsupported or malformed image content before project mutation.
 - Add public menu/wizard naming and JPEG-to-PNG normalization coverage, rerun focused Release/sanitizer and full Release verification, rebuild/verify the bundle, and update draft PR #6 without merging it.
 
+### Increment 7: Ready-to-paint Tilemap workflow
+
+- Reproduce the reported state with an indexed TileSet, no Tilemap asset, and a selected Tilemap2D GameObject whose asset reference is empty.
+- Add a default-on wizard choice that completes Image -> TileSet -> Tilemap -> assigned GameObject after successful TileSet publication, while keeping the independent TileSet-only choice available.
+- Make every explicit **Create Tilemap from TileSet** path load the published map, bind the selected blank Tilemap2D GameObject or create a command-backed preset, select the target, and enter the 2D workspace with the initial layer and first brush ready.
+- Make activating an unreferenced TileSet offer the same named Tilemap-creation path instead of ending with a dependency warning, and let a newly added Tilemap 2D preset reuse the currently open Tilemap.
+- Cover attachment, reuse, Undo, map persistence when scene attachment is unavailable, palette readiness, Scene View painting, save/reopen, and existing drag/Inspector paths before updating draft PR #6 without merging it.
+
 ## Affected Tests and Verification Strategy
 
 - Native scene: Tilemap preset components/defaults, primary asset assignment, transaction Undo/Redo, scene serialization/reopen, and existing preset regressions.
@@ -142,6 +151,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Qt interactions: create action and context action, automatic palette opening, real atlas previews, layer/brush controls, keyboard/focus/accessibility, Tilemap Scene/Hierarchy drop, Inspector assignment, 2D Scene View stroke/overlay/cancel, and no Play/3D mutation.
 - PNG TileSet intake: valid `.png` and extensionless PNG content, mislabeled non-PNG rejection, missing-source rejection, normalized contained `.png` output, and zero partial files after rejected input.
 - General image TileSet intake: public menu/dialog/accessibility naming, JPEG/BMP/GIF content acceptance, PNG output format/signature, dimensions/tile count, and unsupported/malformed input rejection.
+- Ready-to-paint workflow: default-on wizard option; TileSet-only opt-out; empty-map publication; selected blank Tilemap2D reuse; fallback preset creation; loaded-map preset binding; first-layer/first-brush selection; 2D Scene View edit enablement; paint/save/reopen; Undo; and retained map plus actionable diagnostic if scene attachment cannot complete.
 - Managed/runtime: existing snapshot-v4 parsing and both adapter tile-drawing tests, with pixels-per-unit sizing and real tile pixels/picking reported separately.
 - Serialization/recovery: scene-plus-tilemap transaction tests, invalid/missing dependency preservation, atomic publication, and no write on rejected operations.
 - Packaging: developer bundle manifest/hash verification and packaged MonoGame self-test; no new runtime file is expected.
@@ -173,6 +183,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - **Preview/create disagreement:** use the same content-based PNG decoder at both boundaries; do not accept by suffix alone or reject valid PNG bytes because a temporary/downloaded file has no extension.
 - **Misleading image support:** publish the exact accepted raster formats in the picker and README, validate by decoded content rather than suffix, and transcode every non-PNG source so a `.png` destination never contains another codec.
 - **Stale Project drag/selection:** preserve drag format revision/project identity validation and re-resolve every asset ID in the current candidate index.
+- **Partial cross-domain completion:** Tilemap publication and scene mutation have separate authoritative owners. Never delete a successfully published map when scene attachment fails; keep it indexed/open, report the retained asset, and let the user attach it later.
+- **Surprising scene mutation:** expose the wizard completion option and default it on for the guided path; an explicit Create Tilemap command may reuse only the one selected Tilemap2D whose reference is empty, never overwrite a non-empty reference implicitly.
 - **Cross-platform input differences:** keep pointer mapping in Qt logical coordinates and validate guarded behavior without OS-specific events.
 
 ## Definition of Done
@@ -203,7 +215,11 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Correction verification, evidence, branch push, and draft PR #6 update are complete.
 - [x] Public workflow consistently says **Create TileSet from Image...** and accepts the documented raster formats.
 - [x] Non-PNG inputs are normalized to real PNG bytes with focused verification and no regression to extensionless PNG handling.
-- [ ] Image-intake evidence, branch push, and draft PR #6 update are complete.
+- [x] Image-intake evidence, branch push, and draft PR #6 update are complete.
+- [ ] Guided image creation produces a dependent Tilemap and an assigned, selected Tilemap2D GameObject by default.
+- [ ] Existing TileSets and blank Tilemap2D GameObjects can be completed into a paint-ready 2D workflow without drag-and-drop guesswork.
+- [ ] The initial layer and first brush are active, Scene View painting is enabled, and paint/save/reopen is regression-covered.
+- [ ] Ready-to-paint focused/full verification, bundle evidence, branch push, and draft PR #6 update are complete.
 - [ ] Human review and merge occur after this implementation handoff.
 
 ## Work Log
@@ -228,6 +244,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Image-based TileSet intake implemented and focused verification passed | The public Assets action, handler, wizard title/form/accessibility text, source object ID, and request field now use image-based naming. Preview/Create share content detection limited to PNG/JPEG/BMP/GIF; PNG bytes are preserved, while JPEG/BMP/GIF decode and transcode into a real PNG before the existing contained four-file publication. A new JPEG regression first failed 2 passed / 1 failed in 11 ms at the prior forced-PNG decoder. The final focused set validates the public action, wizard text, standard and extensionless PNG, JPEG/BMP/GIF PNG signatures/dimensions/tile counts, malformed/missing/SVG rejection, non-overwrite, exact PNG retention, and zero targeted partial outputs: **6/6 in 0.937 seconds** under strict Release and **6/6 in 3.212 seconds** under MSVC AddressSanitizer with no sanitizer finding. Commit: `e3b7104`. |
 | 2026-07-27 | Image workflow aggregate verification passed | The expanded Tilemap workflow set, including public Project Hub action discovery, Scene View painting, Project/Hierarchy/Inspector attachment, document/layer/brush transactions, all image-intake cases, and recoverable scene-plus-tile save, passes **10/10 in 43.322 seconds** under Release and **10/10 in 80.934 seconds** under MSVC AddressSanitizer with no sanitizer finding. A complete strict Windows Release rebuild succeeded with zero warnings/errors and the unchanged preset passed **60/60 in 626.84 seconds**. The broader complete ASan preset was not repeated; its previously recorded 59/60 result and unchanged POC J performance blocker remain open. |
 | 2026-07-27 | Bundle rebuild safely blocked | `Build-Production-Editor.ps1 -Fast` correctly refused to replace the production-style bundle because `out/product/windows-x64/DragonPixelEditor/DragonPixelEditor.exe` is running interactively as PID 37912 with no self-test arguments. Codex did not terminate it because it may contain unsaved authoring work. New bundle inventory/hash and packaged MonoGame self-test evidence remain pending until the user closes that editor; the prior bundle cannot be claimed as evidence for the newly built binary. |
+| 2026-07-27 | Ready-to-paint workflow correction started | The supplied screenshot and read-only inspection of `C:\Users\monyd\Documents\TEST ME` reproduce the gap: the contained texture and TileSet plus sidecars are valid, but no `.dpetilemap` exists; the selected unsaved Tilemap2D GameObject has an empty Tilemap reference; and the palette therefore has no document, layer, or brush. Existing tests prove each low-level path only after manually creating and dragging a map, so they did not cover the user journey. The bounded correction connects the existing AssetService, TileDocumentService, and scene-command owners without changing durable formats, ABI, protocol, topology, or support claims. Required mirrors and `DPE-ARCH-0014` were reverified before source changes. |
 
 ## Handoff Notes
 
