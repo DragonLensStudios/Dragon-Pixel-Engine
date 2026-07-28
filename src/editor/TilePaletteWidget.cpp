@@ -1,6 +1,7 @@
 #include "TilePaletteWidget.h"
 
 #include <dragonpixel/tiles/tile_grid.h>
+#include <dragonpixel/tiles/tile_evaluator.h>
 
 #include <QActionGroup>
 #include <QCheckBox>
@@ -213,8 +214,8 @@ void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
     switch (tool_)
     {
         case Tool::paint:
-            if (selected_brush_) static_cast<void>(service_->paint_cell(
-                layer_, cell.x(), cell.y(), *selected_brush_));
+            if (const auto brush = brush_provider_ ? brush_provider_(cell.x(), cell.y()) : selected_brush_)
+                static_cast<void>(service_->paint_cell(layer_, cell.x(), cell.y(), *brush));
             break;
         case Tool::erase:
             static_cast<void>(service_->erase_cell(layer_, cell.x(), cell.y()));
@@ -472,6 +473,15 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     palettes_->setAccessibleName(QStringLiteral("Active Tile Palette"));
     palettes_->setToolTip(QStringLiteral("Selects the durable logical Tile Palette used by the brush."));
     controls->addWidget(palettes_, 1);
+    controls->addWidget(new QLabel{QStringLiteral("Brush"), this});
+    brush_behavior_ = new QComboBox{this};
+    brush_behavior_->setObjectName(QStringLiteral("TileBrushBehavior"));
+    brush_behavior_->setAccessibleName(QStringLiteral("Tile brush behavior"));
+    brush_behavior_->addItem(QStringLiteral("Basic"), QStringLiteral("basic"));
+    brush_behavior_->addItem(QStringLiteral("Random Selection"), QStringLiteral("random"));
+    brush_behavior_->setToolTip(QStringLiteral(
+        "Random Selection deterministically chooses among the selected palette tiles for each target cell."));
+    controls->addWidget(brush_behavior_);
     controls->addWidget(new QLabel{QStringLiteral("Active Target"), this});
     layers_ = new QComboBox{this};
     layers_->setObjectName(QStringLiteral("TileLayer"));
@@ -579,11 +589,13 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tiles_->setViewMode(QListView::IconMode);
     tiles_->setIconSize(QSize{40, 40});
     tiles_->setResizeMode(QListView::Adjust);
+    tiles_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tiles_->setMinimumWidth(150);
     tiles_->setAcceptDrops(true);
     tiles_->viewport()->setAcceptDrops(true);
     tiles_->viewport()->installEventFilter(this);
     canvas_ = new TileCanvas{service_, splitter};
+    canvas_->set_brush_provider([this](int x, int y) { return active_brush_at(x, y); });
     splitter->addWidget(tiles_);
     splitter->addWidget(canvas_);
     splitter->setStretchFactor(1, 1);
@@ -597,6 +609,12 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         canvas_->set_layer(index);
         update_layer_controls();
         emit authoringStateChanged();
+    });
+    connect(brush_behavior_, &QComboBox::currentIndexChanged, this,
+        [this] { update_brush(); });
+    connect(tiles_, &QListWidget::itemSelectionChanged, this, [this] {
+        if (brush_behavior_->currentData().toString() == QStringLiteral("random"))
+            update_brush();
     });
     connect(zoom_, &QSlider::valueChanged, this, [this](int value) { canvas_->set_zoom(value / 100.0); });
     connect(tiles_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
@@ -887,6 +905,35 @@ std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush() cons
         {brush_scale_x_->value(), brush_scale_y_->value()},
         brush_elevation_->value(), brush_lock_color_->isChecked(),
         brush_lock_transform_->isChecked()};
+}
+
+std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush_at(int x, int y) const
+{
+    auto brush = active_brush();
+    const auto* map = service_->tilemap();
+    const auto layer_index = active_layer();
+    if (!brush || map == nullptr || brush_behavior_ == nullptr
+        || brush_behavior_->currentData().toString() != QStringLiteral("random")
+        || layer_index < 0 || layer_index >= static_cast<int>(map->layers.size()))
+    {
+        return brush;
+    }
+    std::vector<dragonpixel::tiles::weighted_tile_reference> candidates;
+    for (const auto* item : tiles_->selectedItems())
+    {
+        const auto tile_id = dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole).toString().toStdString());
+        const auto set_id = dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole + 1).toString().toStdString());
+        if (tile_id && set_id) candidates.push_back({{*set_id, *tile_id}, 1.0});
+    }
+    if (candidates.empty()) return brush;
+    const auto selected = dragonpixel::tiles::random_brush_tile(candidates,
+        map->asset_id, map->layers[static_cast<std::size_t>(layer_index)].layer_id,
+        {x, y});
+    brush->tile_set_id = selected.tile_set_id;
+    brush->tile_id = selected.tile_id;
+    return brush;
 }
 
 void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)

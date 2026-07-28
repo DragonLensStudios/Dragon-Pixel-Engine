@@ -7,6 +7,7 @@
 #include <QWidget>
 
 #include <optional>
+#include <functional>
 
 class QActionGroup;
 class QComboBox;
@@ -43,6 +44,10 @@ public:
     void set_selected_brush(std::optional<TileDocumentService::Brush> brush) { selected_brush_ = brush; }
     void set_atlas(QImage atlas) { atlas_ = std::move(atlas); update(); }
     void set_atlases(QHash<QString, QImage> atlases) { atlases_ = std::move(atlases); update(); }
+    void set_brush_provider(std::function<std::optional<TileDocumentService::Brush>(int, int)> provider)
+    {
+        brush_provider_ = std::move(provider);
+    }
     void set_zoom(double zoom) noexcept;
 
     [[nodiscard]] Tool tool() const noexcept { return tool_; }
@@ -71,6 +76,7 @@ private:
     int layer_{};
     double zoom_{1.0};
     std::optional<TileDocumentService::Brush> selected_brush_;
+    std::function<std::optional<TileDocumentService::Brush>(int, int)> brush_provider_;
     QImage atlas_;
     QHash<QString, QImage> atlases_;
     std::optional<QPoint> stroke_start_;
@@ -99,6 +105,7 @@ public:
     [[nodiscard]] TileCanvas::Tool active_tool() const noexcept;
     [[nodiscard]] int active_layer() const noexcept;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
+    [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush_at(int x, int y) const;
     void select_brush(const TileDocumentService::Brush& brush);
 
 signals:
@@ -116,6 +123,7 @@ private:
     TileCanvas* canvas_{};
     QListWidget* tiles_{};
     QComboBox* palettes_{};
+    QComboBox* brush_behavior_{};
     QComboBox* layers_{};
     QLabel* status_{};
     QSlider* zoom_{};
