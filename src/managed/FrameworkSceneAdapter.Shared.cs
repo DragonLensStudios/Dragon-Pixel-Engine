@@ -750,10 +750,28 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         {
             RenderColliderKind.Box2D => CreateBox2DOutline(offset, halfSize, color),
             RenderColliderKind.Circle2D => CreateRingOutline(offset, halfSize.X, RingPlane.XY, color),
+            RenderColliderKind.Polygon2D => CreatePolygon2DOutline(collider.Points, offset, color),
             RenderColliderKind.Box3D => CreateBox3DOutline(offset, halfSize, color),
             RenderColliderKind.Sphere3D => CreateSphereOutline(offset, halfSize.X, color),
             _ => Array.Empty<VertexPositionColor>(),
         };
+    }
+
+    private static VertexPositionColor[] CreatePolygon2DOutline(
+        IReadOnlyList<RenderVector3>? points,
+        Vector3 offset,
+        Color color)
+    {
+        if (points is null || points.Count < 3) return Array.Empty<VertexPositionColor>();
+        var vertices = new List<VertexPositionColor>(points.Count * 2);
+        for (var index = 0; index < points.Count; ++index)
+        {
+            AddLine(vertices,
+                offset + ToVector3(points[index]),
+                offset + ToVector3(points[(index + 1) % points.Count]),
+                color);
+        }
+        return vertices.ToArray();
     }
 
     private static VertexPositionColor[] CreateBox2DOutline(

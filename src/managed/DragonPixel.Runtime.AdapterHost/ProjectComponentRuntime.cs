@@ -53,6 +53,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
         BuiltinComponentIds.RigidBody2D,
         BuiltinComponentIds.BoxCollider2D,
         BuiltinComponentIds.CircleCollider2D,
+        BuiltinComponentIds.PolygonCollider2D,
         BuiltinComponentIds.RigidBody3D,
         BuiltinComponentIds.BoxCollider3D,
         BuiltinComponentIds.SphereCollider3D,

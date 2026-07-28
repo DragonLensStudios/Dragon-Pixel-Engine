@@ -129,6 +129,7 @@ public enum RenderColliderKind
 {
     Box2D,
     Circle2D,
+    Polygon2D,
     Box3D,
     Sphere3D,
 }
@@ -137,7 +138,8 @@ public sealed record RenderCollider(
     RenderColliderKind Kind,
     RenderVector3 Size,
     RenderVector3 Offset,
-    bool Sensor);
+    bool Sensor,
+    IReadOnlyList<RenderVector3>? Points = null);
 
 public sealed record RenderInputMotion2D(
     string HorizontalAction,

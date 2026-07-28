@@ -220,6 +220,14 @@ internal static class SceneSnapshotParser
                                     RenderVector3.Zero),
                                 ReadBool(properties, "dpe.physics.sensor", false)));
                             break;
+                        case BuiltinComponentIds.PolygonCollider2D:
+                            colliders.Add(new RenderCollider(
+                                RenderColliderKind.Polygon2D,
+                                RenderVector3.One,
+                                ReadVector3(properties, "dpe.physics2d.offset", RenderVector3.Zero),
+                                ReadBool(properties, "dpe.physics.sensor", false),
+                                ReadColliderPoints(properties, "dpe.physics2d.points")));
+                            break;
                         case BuiltinComponentIds.BoxCollider3D:
                             colliders.Add(new RenderCollider(
                                 RenderColliderKind.Box3D,
@@ -885,6 +893,25 @@ internal static class SceneSnapshotParser
             ReadFloat(value, "x", fallback.X),
             ReadFloat(value, "y", fallback.Y),
             ReadFloat(value, "z", fallback.Z));
+    }
+
+    private static IReadOnlyList<RenderVector3> ReadColliderPoints(
+        JsonElement properties,
+        string name)
+    {
+        if (!properties.TryGetProperty(name, out var value)
+            || value.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<RenderVector3>();
+        }
+        var result = new List<RenderVector3>();
+        foreach (var point in value.EnumerateArray())
+        {
+            if (point.ValueKind != JsonValueKind.Object) return Array.Empty<RenderVector3>();
+            result.Add(new RenderVector3(
+                ReadFloat(point, "x", 0), ReadFloat(point, "y", 0), 0));
+        }
+        return result;
     }
 
     private static RenderQuaternion ReadQuaternion(

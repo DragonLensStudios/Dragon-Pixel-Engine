@@ -178,6 +178,7 @@ private:
     QLineEdit* tile_name_{};
     QComboBox* tile_kind_{};
     QComboBox* tile_collider_{};
+    QLineEdit* tile_outline_{};
     QDoubleSpinBox* tile_minimum_speed_{};
     QDoubleSpinBox* tile_maximum_speed_{};
     QDoubleSpinBox* tile_start_time_{};

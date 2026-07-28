@@ -357,6 +357,35 @@ registry registry::slice_one_defaults()
             physics_property("dpe.physics.layer", "Layer", value_type::integer, 6, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.physics.mask", "Mask", value_type::integer, 7, "65535", 0.0, 65535.0, 1.0),
         }));
+    auto polygon_points = physics_property("dpe.physics2d.points", "Points",
+        value_type::list, 0,
+        R"([{"x":-0.5,"y":-0.5},{"x":0.5,"y":-0.5},{"x":0.0,"y":0.5}])");
+    value_shape points_shape;
+    points_shape.type = value_type::list;
+    value_shape point_shape;
+    point_shape.type = value_type::vector2;
+    points_shape.arguments.push_back(std::move(point_shape));
+    polygon_points.shape = std::move(points_shape);
+    const auto polygon_collider_2d_added = result.add(builtin_component(
+        std::string{builtin_component_ids::polygon_collider_2d},
+        "DragonPixel.Native.PolygonCollider2DComponent", "Polygon Collider 2D", 1,
+        runtime_owner::native,
+        {
+            std::move(polygon_points),
+            physics_property("dpe.physics2d.offset", "Offset", value_type::vector2, 1,
+                R"({"x":0.0,"y":0.0})", {}, {}, 0.05, "m"),
+            physics_property("dpe.physics.sensor", "Sensor", value_type::boolean, 2, "false"),
+            physics_property("dpe.physics.density", "Density", value_type::number, 3,
+                "1.0", 0.0001, {}, 0.05),
+            physics_property("dpe.physics.friction", "Friction", value_type::number, 4,
+                "0.5", 0.0, 1.0, 0.01),
+            physics_property("dpe.physics.restitution", "Restitution", value_type::number, 5,
+                "0.0", 0.0, 1.0, 0.01),
+            physics_property("dpe.physics.layer", "Layer", value_type::integer, 6,
+                "0", 0.0, 15.0, 1.0),
+            physics_property("dpe.physics.mask", "Mask", value_type::integer, 7,
+                "65535", 0.0, 65535.0, 1.0),
+        }));
     const auto rigid_body_3d_added = result.add(builtin_component(
         std::string{builtin_component_ids::rigid_body_3d}, "DragonPixel.Native.RigidBody3DComponent", "Rigid Body 3D", 1, runtime_owner::native,
         {
@@ -408,6 +437,8 @@ registry registry::slice_one_defaults()
             physics_property("dpe.tilemap.collider.restitution", "Restitution", value_type::number, 2, "0.0", 0.0, 1.0, 0.01),
             physics_property("dpe.tilemap.collider.layer", "Layer", value_type::integer, 3, "0", 0.0, 15.0, 1.0),
             physics_property("dpe.tilemap.collider.mask", "Mask", value_type::integer, 4, "65535", 0.0, 65535.0, 1.0),
+            physics_property("dpe.tilemap.collider.composite", "Composite adjacent Grid tiles",
+                value_type::boolean, 5, "false"),
         }));
     const auto tile_object_placement_2d_added = result.add(builtin_component(
         std::string{builtin_component_ids::tile_object_placement_2d},
@@ -451,7 +482,8 @@ registry registry::slice_one_defaults()
         "Moves this GameObject in the isolated Play world from focused Game-view actions."));
     if (!transform_added || !rotator_added || !camera_added || !sprite_added || !mesh_added
         || !material_added || !light_added || !rigid_body_2d_added || !box_collider_2d_added
-        || !circle_collider_2d_added || !rigid_body_3d_added || !box_collider_3d_added
+        || !circle_collider_2d_added || !polygon_collider_2d_added
+        || !rigid_body_3d_added || !box_collider_3d_added
         || !sphere_collider_3d_added || !tilemap_2d_added || !tilemap_collider_2d_added
         || !tile_object_placement_2d_added || !input_motion_2d_added)
     {

@@ -772,6 +772,14 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tile_collider_->addItem(QStringLiteral("Grid"), static_cast<int>(dragonpixel::tiles::tile_collider_mode::grid));
     tile_collider_->addItem(QStringLiteral("Sprite Outline"), static_cast<int>(dragonpixel::tiles::tile_collider_mode::sprite_outline));
     tile_form->addRow(QStringLiteral("Collider"), tile_collider_);
+    tile_outline_ = new QLineEdit{tile_editor};
+    tile_outline_->setObjectName(QStringLiteral("TileDefinitionColliderOutline"));
+    tile_outline_->setAccessibleName(QStringLiteral(
+        "Sprite outline points as semicolon-separated X comma Y pairs"));
+    tile_outline_->setPlaceholderText(QStringLiteral("0,0; 1,0; 1,1; 0,1"));
+    tile_outline_->setToolTip(QStringLiteral(
+        "Normalized points relative to the tile pivot. Concave simple polygons are supported."));
+    tile_form->addRow(QStringLiteral("Sprite outline"), tile_outline_);
     const auto tile_speed = [tile_editor, tile_form](const QString& label, const QString& name,
                                 double minimum, double maximum, double value) {
         auto* field = new QDoubleSpinBox{tile_editor};
@@ -1567,8 +1575,41 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         }
         edited.name = name.toStdString();
         edited.kind = static_cast<dragonpixel::tiles::tile_kind>(tile_kind_->currentData().toInt());
+        const auto previous_collider_mode = edited.collider_mode;
         edited.collider_mode = static_cast<dragonpixel::tiles::tile_collider_mode>(
             tile_collider_->currentData().toInt());
+        if (edited.collider_mode != previous_collider_mode)
+            edited.collision.reset();
+        if (edited.collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline)
+        {
+            std::vector<dragonpixel::tiles::double_point> outline;
+            const auto point_values = tile_outline_->text().split(';', Qt::SkipEmptyParts);
+            for (const auto& point_value : point_values)
+            {
+                const auto coordinates = point_value.split(',', Qt::KeepEmptyParts);
+                bool x_valid{};
+                bool y_valid{};
+                const auto x = coordinates.size() == 2
+                    ? coordinates[0].trimmed().toDouble(&x_valid) : 0.0;
+                const auto y = coordinates.size() == 2
+                    ? coordinates[1].trimmed().toDouble(&y_valid) : 0.0;
+                if (!x_valid || !y_valid || !std::isfinite(x) || !std::isfinite(y))
+                {
+                    status_->setText(QStringLiteral(
+                        "Sprite outline points must use X,Y pairs separated by semicolons."));
+                    return;
+                }
+                outline.push_back({x, y});
+            }
+            if (outline.size() < 3 || outline.size() > 256
+                || dragonpixel::tiles::triangulate_polygon(outline).empty())
+            {
+                status_->setText(QStringLiteral(
+                    "Sprite outlines require 3 to 256 points forming one simple non-degenerate polygon."));
+                return;
+            }
+            edited.collision_outline = std::move(outline);
+        }
         edited.minimum_speed = tile_minimum_speed_->value();
         edited.maximum_speed = tile_maximum_speed_->value();
         if (edited.minimum_speed > edited.maximum_speed)
@@ -1591,9 +1632,6 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
                     edited.source, edited.pivot},
                 1.0 / 12.0});
         }
-        if (edited.collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline
-            && edited.collision_outline.empty())
-            edited.collision_outline = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
         if (!service_->update_tile_definition(*set_id, edited))
             status_->setText(service_->error().isEmpty()
                 ? QStringLiteral("Tile definition did not change.") : service_->error());
@@ -2077,7 +2115,7 @@ void TilePaletteWidget::update_tile_editor()
             if (tile != owner->tiles.end()) selected = &*tile;
         }
     }
-    for (auto* widget : std::array<QWidget*, 18>{tile_name_, tile_kind_, tile_collider_,
+    for (auto* widget : std::array<QWidget*, 19>{tile_name_, tile_kind_, tile_collider_, tile_outline_,
              tile_minimum_speed_, tile_maximum_speed_, tile_start_time_, tile_start_frame_,
              tile_loop_once_, tile_paused_, tile_update_physics_, tile_frame_duration_,
              tile_rule_topology_, tile_rule_match_, tile_rule_output_, tile_rule_neighbor_,
@@ -2089,6 +2127,10 @@ void TilePaletteWidget::update_tile_editor()
     tile_kind_->setCurrentIndex(tile_kind_->findData(static_cast<int>(selected->kind)));
     tile_collider_->setCurrentIndex(
         tile_collider_->findData(static_cast<int>(selected->collider_mode)));
+    QStringList outline;
+    for (const auto point : selected->collision_outline)
+        outline.push_back(QStringLiteral("%1,%2").arg(point.x, 0, 'g', 10).arg(point.y, 0, 'g', 10));
+    tile_outline_->setText(outline.join(QStringLiteral("; ")));
     tile_minimum_speed_->setValue(selected->minimum_speed);
     tile_maximum_speed_->setValue(selected->maximum_speed);
     tile_start_time_->setValue(selected->animation_start_time);

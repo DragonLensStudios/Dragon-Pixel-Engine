@@ -81,6 +81,7 @@
 #include <iterator>
 #include <limits>
 #include <numbers>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -7138,15 +7139,28 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
         if (!file.open(QIODevice::ReadOnly)) continue;
         if (entry.asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
         {
-            const auto parsed = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
-            if (!parsed.succeeded()) continue;
-            resolved_tile_sets[parsed.document->asset_id.to_string()] = *parsed.document;
+            std::optional<dragonpixel::tiles::tile_set_document> current;
+            if (tile_document_service_)
+            {
+                const auto open = std::find_if(tile_document_service_->tilesets().cbegin(),
+                    tile_document_service_->tilesets().cend(), [&](const auto& candidate) {
+                        return candidate.asset_id.to_string() == entry.id.toStdString();
+                    });
+                if (open != tile_document_service_->tilesets().cend()) current = *open;
+            }
+            if (!current)
+            {
+                const auto parsed = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
+                if (parsed.succeeded()) current = *parsed.document;
+            }
+            if (!current) continue;
+            resolved_tile_sets[current->asset_id.to_string()] = *current;
             auto snapshot = nlohmann::ordered_json::parse(
-                dragonpixel::tiles::write_tile_set(*parsed.document));
-            snapshot["cellWidth"] = parsed.document->cell_size.x;
-            snapshot["cellHeight"] = parsed.document->cell_size.y;
+                dragonpixel::tiles::write_tile_set(*current));
+            snapshot["cellWidth"] = current->cell_size.x;
+            snapshot["cellHeight"] = current->cell_size.y;
             auto texture_bytes = nlohmann::ordered_json::object();
-            for (const auto& texture_id : parsed.document->texture_asset_ids)
+            for (const auto& texture_id : current->texture_asset_ids)
             {
                 const auto texture_entry = assets_by_id.find(texture_id.to_string());
                 if (texture_entry == assets_by_id.end()
@@ -7159,7 +7173,7 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                 if (texture.open(QIODevice::ReadOnly))
                     texture_bytes[texture_id.to_string()] = texture.readAll().toBase64().toStdString();
             }
-            const auto primary_texture = parsed.document->texture_asset_id.to_string();
+            const auto primary_texture = current->texture_asset_id.to_string();
             snapshot["texturePngBase64"] = texture_bytes.value(primary_texture, std::string{});
             snapshot["texturePngBase64ByAssetId"] = std::move(texture_bytes);
             for (auto& tile : snapshot["tiles"])
@@ -7314,33 +7328,129 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
     root["assets"] = std::move(assets);
     root["tileSets"] = std::move(tile_sets);
     root["tilemaps"] = std::move(tilemaps);
+    struct collider_settings final
+    {
+        bool enabled{};
+        bool sensor{};
+        bool composite{};
+        double friction{0.5};
+        double restitution{};
+        int layer{};
+        int mask{65535};
+    };
+    struct pending_collider final
+    {
+        std::string stable_key;
+        std::string name;
+        double x{};
+        double y{};
+        double rotation_radians{};
+        double width{1.0};
+        double height{1.0};
+        std::vector<dragonpixel::tiles::double_point> points;
+        std::uint32_t sibling_order{};
+    };
     auto generated_colliders = nlohmann::ordered_json::array();
     const auto original_entities = root.value("entities", nlohmann::ordered_json::array());
     for (const auto& entity : original_entities)
     {
         if (!entity.value("enabled", true)) continue;
         std::string map_id;
-        bool collider_enabled = false;
+        collider_settings settings;
         for (const auto& component : entity.value("components", nlohmann::ordered_json::array()))
         {
             if (!component.value("enabled", true)) continue;
             const auto type_id = component.value("typeId", std::string{});
+            const auto properties = component.value("properties", nlohmann::ordered_json::object());
             if (type_id == dragonpixel::metadata::builtin_component_ids::tilemap_2d)
             {
-                const auto properties = component.value("properties", nlohmann::ordered_json::object());
                 map_id = properties.value("dpe.tilemap.asset", std::string{});
             }
             else if (type_id == dragonpixel::metadata::builtin_component_ids::tilemap_collider_2d)
             {
-                collider_enabled = true;
+                settings.enabled = true;
+                settings.sensor = properties.value("dpe.tilemap.collider.sensor", false);
+                settings.composite = properties.value("dpe.tilemap.collider.composite", false);
+                settings.friction = properties.value("dpe.tilemap.collider.friction", 0.5);
+                settings.restitution = properties.value("dpe.tilemap.collider.restitution", 0.0);
+                settings.layer = std::clamp(properties.value("dpe.tilemap.collider.layer", 0), 0, 15);
+                settings.mask = std::clamp(properties.value("dpe.tilemap.collider.mask", 65535), 0, 65535);
             }
         }
         const auto map = resolved_tilemaps.find(map_id);
-        if (!collider_enabled || map == resolved_tilemaps.end() || map->second.tile_set_dependencies.empty()) continue;
-        for (const auto& layer : map->second.layers)
+        if (!settings.enabled || map == resolved_tilemaps.end()
+            || map->second.tile_set_dependencies.empty()) continue;
+
+        const auto append_generated = [&](const pending_collider& collider) {
+            auto collider_properties = nlohmann::ordered_json{
+                {"dpe.physics2d.offset", {{"x", 0.0}, {"y", 0.0}}},
+                {"dpe.physics.sensor", settings.sensor},
+                {"dpe.physics.density", 1.0},
+                {"dpe.physics.friction", settings.friction},
+                {"dpe.physics.restitution", settings.restitution},
+                {"dpe.physics.layer", settings.layer},
+                {"dpe.physics.mask", settings.mask},
+            };
+            std::string collider_type;
+            std::string qualified_name;
+            if (collider.points.empty())
+            {
+                collider_type = dragonpixel::metadata::builtin_component_ids::box_collider_2d;
+                qualified_name = "DragonPixel.Native.BoxCollider2DComponent";
+                collider_properties["dpe.physics2d.size"] = {
+                    {"x", collider.width}, {"y", collider.height}};
+            }
+            else
+            {
+                collider_type = dragonpixel::metadata::builtin_component_ids::polygon_collider_2d;
+                qualified_name = "DragonPixel.Native.PolygonCollider2DComponent";
+                auto points = nlohmann::ordered_json::array();
+                for (const auto point : collider.points)
+                    points.push_back({{"x", point.x}, {"y", point.y}});
+                collider_properties["dpe.physics2d.points"] = std::move(points);
+            }
+            const auto generated_id = stable_runtime_uuid(QByteArray::fromStdString(
+                entity.value("id", std::string{}) + ":" + collider.stable_key));
+            generated_colliders.push_back({
+                {"id", generated_id}, {"name", collider.name},
+                {"parentId", entity.value("id", std::string{})},
+                {"siblingOrder", collider.sibling_order}, {"enabled", true},
+                {"runtimeGenerated", true},
+                {"components", nlohmann::ordered_json::array({
+                    {
+                        {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::transform}},
+                        {"qualifiedName", "DragonPixel.Native.TransformComponent"},
+                        {"schemaVersion", 2}, {"owner", "native"}, {"enabled", true},
+                        {"properties", {
+                            {"dpe.transform.position", {{"x", collider.x}, {"y", collider.y}, {"z", 0.0}}},
+                            {"dpe.transform.rotation", {
+                                {"w", std::cos(collider.rotation_radians * 0.5)},
+                                {"x", 0.0}, {"y", 0.0},
+                                {"z", std::sin(collider.rotation_radians * 0.5)}}},
+                            {"dpe.transform.scale", {{"x", 1.0}, {"y", 1.0}, {"z", 1.0}}},
+                        }},
+                    },
+                    {
+                        {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::rigid_body_2d}},
+                        {"qualifiedName", "DragonPixel.Native.RigidBody2DComponent"},
+                        {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
+                        {"properties", {{"dpe.physics2d.body_mode", "static"}}},
+                    },
+                    {
+                        {"typeId", collider_type}, {"qualifiedName", qualified_name},
+                        {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
+                        {"properties", std::move(collider_properties)},
+                    },
+                })},
+            });
+        };
+
+        for (const auto& tile_layer : map->second.layers)
         {
-            if (!layer.visible) continue;
-            for (const auto& chunk : layer.chunks)
+            if (!tile_layer.visible) continue;
+            std::vector<pending_collider> pending;
+            std::set<std::pair<int, int>> composite_cells;
+            for (const auto& chunk : tile_layer.chunks)
             {
                 for (const auto& cell : chunk.cells)
                 {
@@ -7348,9 +7458,8 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                         ? map->second.tile_set_dependencies.front() : cell.tile_set_id;
                     const auto set = resolved_tile_sets.find(set_id.to_string());
                     if (set == resolved_tile_sets.end()) continue;
-                    const auto tile = std::find_if(set->second.tiles.begin(), set->second.tiles.end(), [&](const auto& value) {
-                        return value.tile_id == cell.tile_id;
-                    });
+                    const auto tile = std::find_if(set->second.tiles.begin(), set->second.tiles.end(),
+                        [&](const auto& value) { return value.tile_id == cell.tile_id; });
                     if (tile == set->second.tiles.end()
                         || (tile->collider_mode == dragonpixel::tiles::tile_collider_mode::none
                             && !tile->collision)) continue;
@@ -7358,102 +7467,127 @@ std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene&
                     const auto cell_y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
                     const auto projected = dragonpixel::tiles::project_cell(
                         map->second.grid, {cell_x, cell_y}, cell.elevation);
-                    auto collider_x = projected.x + cell.offset.x;
-                    auto collider_y = projected.y + cell.offset.y;
-                    auto collider_width = map->second.grid.cell_size.x;
-                    auto collider_height = map->second.grid.cell_size.y;
-                    if (tile->collision)
-                    {
-                        collider_x += tile->collision->offset_x;
-                        collider_y += tile->collision->offset_y;
-                        collider_width = tile->collision->width;
-                        collider_height = tile->collision->height;
-                    }
-                    else
-                    {
-                        const auto footprint = tile->collider_mode
-                                == dragonpixel::tiles::tile_collider_mode::sprite_outline
-                            ? tile->collision_outline
-                            : dragonpixel::tiles::grid_collision_polygon(
-                                map->second.grid, {cell_x, cell_y}, cell.elevation);
-                        if (footprint.empty()) continue;
-                        auto minimum_x = footprint.front().x;
-                        auto maximum_x = footprint.front().x;
-                        auto minimum_y = footprint.front().y;
-                        auto maximum_y = footprint.front().y;
-                        for (const auto point : footprint)
-                        {
-                            minimum_x = std::min(minimum_x, point.x);
-                            maximum_x = std::max(maximum_x, point.x);
-                            minimum_y = std::min(minimum_y, point.y);
-                            maximum_y = std::max(maximum_y, point.y);
-                        }
-                        if (tile->collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline)
-                        {
-                            collider_x += (minimum_x + maximum_x) * 0.5;
-                            collider_y += (minimum_y + maximum_y) * 0.5;
-                        }
-                        else
-                        {
-                            collider_x = (minimum_x + maximum_x) * 0.5 + cell.offset.x;
-                            collider_y = (minimum_y + maximum_y) * 0.5 + cell.offset.y;
-                        }
-                        collider_width = maximum_x - minimum_x;
-                        collider_height = maximum_y - minimum_y;
-                    }
                     const auto rotation_radians = (cell.rotation_degrees
                         + static_cast<double>(cell.rotation_quarter_turns) * 90.0)
                         * std::numbers::pi / 180.0;
-                    const auto generated_id = stable_runtime_uuid(QByteArray::fromStdString(
-                        entity.value("id", std::string{}) + ":" + layer.layer_id.to_string() + ":"
-                        + std::to_string(cell_x) + ":" + std::to_string(cell_y)));
-                    generated_colliders.push_back({
-                        {"id", generated_id},
-                        {"name", std::string{"Generated Tile Collider "} + std::to_string(cell_x) + "," + std::to_string(cell_y)},
-                        {"parentId", entity.value("id", std::string{})},
-                        {"siblingOrder", cell.index},
-                        {"enabled", true},
-                        {"runtimeGenerated", true},
-                        {"components", nlohmann::ordered_json::array({
-                            {
-                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::transform}},
-                                {"qualifiedName", "DragonPixel.Native.TransformComponent"},
-                                {"schemaVersion", 2}, {"owner", "native"}, {"enabled", true},
-                                {"properties", {
-                                    {"dpe.transform.position", {
-                                        {"x", collider_x}, {"y", collider_y}, {"z", 0.0}}},
-                                    {"dpe.transform.rotation", {
-                                        {"w", std::cos(rotation_radians * 0.5)}, {"x", 0.0}, {"y", 0.0},
-                                        {"z", std::sin(rotation_radians * 0.5)}}},
-                                    {"dpe.transform.scale", {{"x", std::abs(cell.scale.x)},
-                                        {"y", std::abs(cell.scale.y)}, {"z", 1.0}}},
-                                }},
-                            },
-                            {
-                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::rigid_body_2d}},
-                                {"qualifiedName", "DragonPixel.Native.RigidBody2DComponent"},
-                                {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
-                                {"properties", {{"dpe.physics2d.body_mode", "static"}}},
-                            },
-                            {
-                                {"typeId", std::string{dragonpixel::metadata::builtin_component_ids::box_collider_2d}},
-                                {"qualifiedName", "DragonPixel.Native.BoxCollider2DComponent"},
-                                {"schemaVersion", 1}, {"owner", "native"}, {"enabled", true},
-                                {"properties", {
-                                    {"dpe.physics2d.size", {{"x", collider_width}, {"y", collider_height}}},
-                                    {"dpe.physics2d.offset", {{"x", 0.0}, {"y", 0.0}}},
-                                    {"dpe.physics.sensor", false}, {"dpe.physics.density", 1.0},
-                                    {"dpe.physics.friction", 0.5}, {"dpe.physics.restitution", 0.0},
-                                    {"dpe.physics.layer", 0}, {"dpe.physics.mask", 65535},
-                                }},
-                            },
-                        })},
-                    });
+                    const auto base_key = tile_layer.layer_id.to_string() + ":"
+                        + std::to_string(cell_x) + ":" + std::to_string(cell_y);
+                    const auto base_name = std::string{"Generated Tile Collider "}
+                        + std::to_string(cell_x) + "," + std::to_string(cell_y);
+                    const auto scale_x = std::abs(cell.scale.x);
+                    const auto scale_y = std::abs(cell.scale.y);
+                    if (tile->collision)
+                    {
+                        pending.push_back({base_key, base_name,
+                            projected.x + cell.offset.x + tile->collision->offset_x,
+                            projected.y + cell.offset.y + tile->collision->offset_y,
+                            rotation_radians, tile->collision->width * scale_x,
+                            tile->collision->height * scale_y, {}, cell.index});
+                        continue;
+                    }
+                    if (tile->collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline)
+                    {
+                        std::vector<dragonpixel::tiles::double_point> local_outline;
+                        local_outline.reserve(tile->collision_outline.size());
+                        for (const auto point : tile->collision_outline)
+                        {
+                            auto x = (point.x - tile->pivot.x) * map->second.grid.cell_size.x * scale_x;
+                            auto y = (point.y - tile->pivot.y) * map->second.grid.cell_size.y * scale_y;
+                            if (cell.flip_x) x = -x;
+                            if (cell.flip_y) y = -y;
+                            local_outline.push_back({x, y});
+                        }
+                        const auto triangles = dragonpixel::tiles::triangulate_polygon(local_outline);
+                        for (std::size_t index = 0; index < triangles.size(); ++index)
+                        {
+                            pending_collider collider;
+                            collider.stable_key = base_key + ":outline:" + std::to_string(index);
+                            collider.name = base_name + " Outline " + std::to_string(index + 1);
+                            collider.x = projected.x + cell.offset.x
+                                + (map->second.grid.tile_anchor.x - 0.5)
+                                    * map->second.grid.cell_size.x;
+                            collider.y = projected.y + cell.offset.y
+                                + (map->second.grid.tile_anchor.y - 0.5)
+                                    * map->second.grid.cell_size.y;
+                            collider.rotation_radians = rotation_radians;
+                            collider.points.assign(triangles[index].begin(), triangles[index].end());
+                            collider.sibling_order = cell.index;
+                            pending.push_back(std::move(collider));
+                        }
+                        continue;
+                    }
+                    const auto can_composite = settings.composite
+                        && map->second.grid.layout == dragonpixel::tiles::grid_layout::rectangular
+                        && map->second.grid.cell_gap == dragonpixel::tiles::double_point{}
+                        && cell.offset == dragonpixel::tiles::double_point{}
+                        && cell.scale == dragonpixel::tiles::double_point{1.0, 1.0}
+                        && cell.rotation_quarter_turns == 0 && cell.rotation_degrees == 0.0;
+                    if (can_composite)
+                    {
+                        composite_cells.emplace(cell_x, cell_y);
+                        continue;
+                    }
+                    if (map->second.grid.layout == dragonpixel::tiles::grid_layout::rectangular)
+                    {
+                        pending.push_back({base_key, base_name,
+                            projected.x + cell.offset.x, projected.y + cell.offset.y,
+                            rotation_radians, map->second.grid.cell_size.x * scale_x,
+                            map->second.grid.cell_size.y * scale_y, {}, cell.index});
+                        continue;
+                    }
+                    auto footprint = dragonpixel::tiles::grid_collision_polygon(
+                        map->second.grid, {cell_x, cell_y}, cell.elevation);
+                    for (auto& point : footprint)
+                    {
+                        point.x = (point.x - projected.x) * scale_x;
+                        point.y = (point.y - projected.y) * scale_y;
+                    }
+                    pending.push_back({base_key, base_name,
+                        projected.x + cell.offset.x, projected.y + cell.offset.y,
+                        rotation_radians, 1.0, 1.0, std::move(footprint), cell.index});
                 }
             }
+
+            while (!composite_cells.empty())
+            {
+                const auto [minimum_x, minimum_y] = *composite_cells.begin();
+                auto maximum_x = minimum_x;
+                while (composite_cells.contains({maximum_x + 1, minimum_y})) ++maximum_x;
+                auto maximum_y = minimum_y;
+                for (;;)
+                {
+                    const auto next_y = maximum_y + 1;
+                    auto complete_row = true;
+                    for (auto x = minimum_x; x <= maximum_x; ++x)
+                        complete_row = complete_row && composite_cells.contains({x, next_y});
+                    if (!complete_row) break;
+                    maximum_y = next_y;
+                }
+                for (auto x = minimum_x; x <= maximum_x; ++x)
+                    for (auto y = minimum_y; y <= maximum_y; ++y)
+                        composite_cells.erase({x, y});
+                const auto first = dragonpixel::tiles::project_cell(
+                    map->second.grid, {minimum_x, minimum_y});
+                const auto last = dragonpixel::tiles::project_cell(
+                    map->second.grid, {maximum_x, maximum_y});
+                const auto key = tile_layer.layer_id.to_string() + ":composite:"
+                    + std::to_string(minimum_x) + ":" + std::to_string(minimum_y) + ":"
+                    + std::to_string(maximum_x) + ":" + std::to_string(maximum_y);
+                pending.push_back({key, "Generated Composite Tile Collider",
+                    (first.x + last.x) * 0.5, (first.y + last.y) * 0.5, 0.0,
+                    static_cast<double>(maximum_x - minimum_x + 1)
+                        * map->second.grid.cell_size.x,
+                    static_cast<double>(maximum_y - minimum_y + 1)
+                        * map->second.grid.cell_size.y, {}, 0});
+            }
+            std::sort(pending.begin(), pending.end(), [](const auto& left, const auto& right) {
+                return left.stable_key < right.stable_key;
+            });
+            for (const auto& collider : pending) append_generated(collider);
         }
     }
-    for (auto& generated : generated_colliders) root["entities"].push_back(std::move(generated));
+    for (auto& generated : generated_colliders)
+        root["entities"].push_back(std::move(generated));
     return root.dump(2) + "\n";
 }
 
