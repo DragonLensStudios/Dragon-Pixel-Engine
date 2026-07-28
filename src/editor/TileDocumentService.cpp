@@ -1,6 +1,7 @@
 #include "TileDocumentService.h"
 
 #include <dragonpixel/serialization/atomic_file.h>
+#include <dragonpixel/tiles/tile_grid.h>
 
 #include <QFile>
 #include <QFileInfo>
@@ -831,6 +832,28 @@ bool TileDocumentService::preview_rectangle(
                       : std::optional{brush}) || changed;
         }
     }
+    publish_change(dirty);
+    return changed;
+}
+
+bool TileDocumentService::preview_line(
+    int layer_index, int start_x, int start_y, int end_x, int end_y,
+    const Brush& brush, bool erase)
+{
+    if (!tilemap_ || !stroke_before_) return false;
+    const auto dirty = is_dirty();
+    *tilemap_ = stroke_before_->tilemap;
+    const auto points = dragonpixel::tiles::grid_line(tilemap_->grid.layout,
+        {start_x, start_y}, {end_x, end_y});
+    if (points.size() > 4096U)
+    {
+        emit diagnostic(QStringLiteral("Line Brush stopped at the 4096-cell safety limit."));
+        return false;
+    }
+    bool changed = false;
+    for (const auto point : points)
+        changed = set_cell(*tilemap_, layer_index, point.x, point.y,
+            erase ? std::nullopt : std::optional{brush}) || changed;
     publish_change(dirty);
     return changed;
 }

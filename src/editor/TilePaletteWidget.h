@@ -30,6 +30,7 @@ public:
         paint,
         erase,
         rectangle,
+        line,
         fill,
         eyedropper,
         select,

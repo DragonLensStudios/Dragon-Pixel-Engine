@@ -6756,6 +6756,9 @@ void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
             layer, cell.x(), cell.y(), cell.x(), cell.y(), brush->tile_id,
             false, brush->flip_x, brush->flip_y,
             brush->rotation_quarter_turns));
+    else if (tool == TileCanvas::Tool::line)
+        static_cast<void>(tile_document_service_->preview_line(
+            layer, cell.x(), cell.y(), cell.x(), cell.y(), *brush));
     else if (tool == TileCanvas::Tool::fill)
     {
         static_cast<void>(tile_document_service_->flood_fill(
@@ -6826,6 +6829,12 @@ void EditorWindow::update_tile_scene_stroke(const QVector3D& world_position)
             tile_scene_stroke_brush_->flip_x,
             tile_scene_stroke_brush_->flip_y,
             tile_scene_stroke_brush_->rotation_quarter_turns));
+    else if (tile_scene_stroke_tool_ == TileCanvas::Tool::line
+        && tile_scene_stroke_brush_ && tile_scene_stroke_start_)
+        static_cast<void>(tile_document_service_->preview_line(
+            tile_scene_stroke_layer_, tile_scene_stroke_start_->x(),
+            tile_scene_stroke_start_->y(), cell.x(), cell.y(),
+            *tile_scene_stroke_brush_));
 }
 
 void EditorWindow::end_tile_scene_stroke(const QVector3D& world_position)

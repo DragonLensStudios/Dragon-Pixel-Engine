@@ -115,6 +115,9 @@ public:
     [[nodiscard]] bool preview_rectangle(
         int layer_index, int start_x, int start_y, int end_x, int end_y,
         const Brush& brush, bool erase = false);
+    [[nodiscard]] bool preview_line(
+        int layer_index, int start_x, int start_y, int end_x, int end_y,
+        const Brush& brush, bool erase = false);
     [[nodiscard]] bool flood_fill(
         int layer_index,
         int x,

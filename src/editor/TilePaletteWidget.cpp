@@ -226,6 +226,11 @@ void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
                     cell.x(), cell.y(), *selected_brush_));
             }
             break;
+        case Tool::line:
+            if (preview_rectangle && stroke_start_ && selected_brush_)
+                static_cast<void>(service_->preview_line(layer_, stroke_start_->x(), stroke_start_->y(),
+                    cell.x(), cell.y(), *selected_brush_));
+            break;
         case Tool::fill:
             if (selected_brush_) static_cast<void>(service_->flood_fill(
                 layer_, cell.x(), cell.y(), *selected_brush_));
@@ -260,7 +265,8 @@ void TileCanvas::mousePressEvent(QMouseEvent* event)
     const auto cell = cell_at(event->position().toPoint());
     stroke_start_ = cell;
     last_cell_ = cell;
-    if (tool_ == Tool::paint || tool_ == Tool::erase || tool_ == Tool::rectangle || tool_ == Tool::fill)
+    if (tool_ == Tool::paint || tool_ == Tool::erase || tool_ == Tool::rectangle
+        || tool_ == Tool::line || tool_ == Tool::fill)
     {
         service_->begin_stroke();
     }
@@ -271,7 +277,7 @@ void TileCanvas::mouseMoveEvent(QMouseEvent* event)
 {
     if (!(event->buttons() & Qt::LeftButton) || !stroke_start_) return;
     const auto cell = cell_at(event->position().toPoint());
-    if (tool_ == Tool::rectangle)
+    if (tool_ == Tool::rectangle || tool_ == Tool::line)
     {
         apply_at(cell, true);
     }
@@ -289,7 +295,8 @@ void TileCanvas::mouseMoveEvent(QMouseEvent* event)
 void TileCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton || !stroke_start_) return;
-    if (tool_ == Tool::paint || tool_ == Tool::erase || tool_ == Tool::rectangle || tool_ == Tool::fill)
+    if (tool_ == Tool::paint || tool_ == Tool::erase || tool_ == Tool::rectangle
+        || tool_ == Tool::line || tool_ == Tool::fill)
     {
         service_->commit_stroke();
     }
@@ -376,28 +383,32 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         QStringLiteral("2"));
     auto* box_action = configure_tool(add_tool(QStringLiteral("Box"), QStringLiteral("TileRectangleTool"), TileCanvas::Tool::rectangle),
         QStringLiteral("3"));
-    auto* fill_action = configure_tool(add_tool(QStringLiteral("Flood"), QStringLiteral("TileFillTool"), TileCanvas::Tool::fill),
+    auto* line_action = configure_tool(add_tool(QStringLiteral("Line"), QStringLiteral("TileLineTool"), TileCanvas::Tool::line),
         QStringLiteral("4"));
-    auto* pick_action = configure_tool(add_tool(QStringLiteral("Pick"), QStringLiteral("TileEyedropperTool"), TileCanvas::Tool::eyedropper),
+    auto* fill_action = configure_tool(add_tool(QStringLiteral("Flood"), QStringLiteral("TileFillTool"), TileCanvas::Tool::fill),
         QStringLiteral("5"));
-    auto* select_action = configure_tool(add_tool(QStringLiteral("Select"), QStringLiteral("TileSelectionTool"), TileCanvas::Tool::select),
+    auto* pick_action = configure_tool(add_tool(QStringLiteral("Pick"), QStringLiteral("TileEyedropperTool"), TileCanvas::Tool::eyedropper),
         QStringLiteral("6"));
-    auto* move_action = configure_tool(add_tool(QStringLiteral("Move"), QStringLiteral("TileMoveTool"), TileCanvas::Tool::move),
+    auto* select_action = configure_tool(add_tool(QStringLiteral("Select"), QStringLiteral("TileSelectionTool"), TileCanvas::Tool::select),
         QStringLiteral("7"));
+    auto* move_action = configure_tool(add_tool(QStringLiteral("Move"), QStringLiteral("TileMoveTool"), TileCanvas::Tool::move),
+        QStringLiteral("8"));
     auto* shortcut_profile = new QComboBox{toolbar};
     shortcut_profile->setObjectName(QStringLiteral("TileShortcutProfile"));
     shortcut_profile->setAccessibleName(QStringLiteral("Tile tool shortcut profile"));
     shortcut_profile->addItem(QStringLiteral("Familiar letters"), QStringLiteral("letters"));
     shortcut_profile->addItem(QStringLiteral("Legacy numbers"), QStringLiteral("numbers"));
     toolbar->addWidget(shortcut_profile);
-    const auto apply_shortcuts = [paint_action, erase_action, box_action, fill_action,
+    const auto apply_shortcuts = [paint_action, erase_action, box_action, line_action, fill_action,
                                      pick_action, select_action, move_action](const QString& profile) {
         const QStringList keys = profile == QStringLiteral("numbers")
             ? QStringList{QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("3"),
-                  QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7")}
+                  QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"),
+                  QStringLiteral("7"), QStringLiteral("8")}
             : QStringList{QStringLiteral("P"), QStringLiteral("E"), QStringLiteral("B"),
-                  QStringLiteral("F"), QStringLiteral("I"), QStringLiteral("S"), QStringLiteral("M")};
-        const std::array actions{paint_action, erase_action, box_action, fill_action,
+                  QStringLiteral("L"), QStringLiteral("F"), QStringLiteral("I"),
+                  QStringLiteral("S"), QStringLiteral("M")};
+        const std::array actions{paint_action, erase_action, box_action, line_action, fill_action,
             pick_action, select_action, move_action};
         for (std::size_t index = 0; index < actions.size(); ++index)
         {
