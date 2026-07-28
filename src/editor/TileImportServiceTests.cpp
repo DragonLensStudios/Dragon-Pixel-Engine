@@ -81,6 +81,40 @@ QString create_tiled_source(QTemporaryDir& temp)
         ? path : QString{};
 }
 
+QString create_multi_tiled_source(QTemporaryDir& temp)
+{
+    const auto source = QDir{temp.path()}.filePath(QStringLiteral("Multi Tiled Source"));
+    if (!QDir{}.mkdir(source)) return {};
+    QImage first{2, 2, QImage::Format_RGBA8888};
+    QImage second{2, 2, QImage::Format_RGBA8888};
+    first.fill(qRgba(40, 180, 90, 255));
+    second.fill(qRgba(200, 90, 40, 255));
+    if (!first.save(QDir{source}.filePath(QStringLiteral("terrain.png")), "PNG")
+        || !second.save(QDir{source}.filePath(QStringLiteral("props.png")), "PNG")) return {};
+    const auto tile_set = [](int first_gid, const QString& name, const QString& image) {
+        return QJsonObject{{QStringLiteral("firstgid"), first_gid},
+            {QStringLiteral("name"), name}, {QStringLiteral("tilewidth"), 2},
+            {QStringLiteral("tileheight"), 2}, {QStringLiteral("tilecount"), 1},
+            {QStringLiteral("columns"), 1}, {QStringLiteral("image"), image}};
+    };
+    const QJsonObject map{
+        {QStringLiteral("type"), QStringLiteral("map")},
+        {QStringLiteral("orientation"), QStringLiteral("isometric")},
+        {QStringLiteral("infinite"), false}, {QStringLiteral("tilewidth"), 2},
+        {QStringLiteral("tileheight"), 2}, {QStringLiteral("width"), 2},
+        {QStringLiteral("height"), 1},
+        {QStringLiteral("tilesets"), QJsonArray{
+            tile_set(1, QStringLiteral("Terrain"), QStringLiteral("terrain.png")),
+            tile_set(2, QStringLiteral("Props"), QStringLiteral("props.png"))}},
+        {QStringLiteral("layers"), QJsonArray{QJsonObject{
+            {QStringLiteral("id"), 1}, {QStringLiteral("type"), QStringLiteral("tilelayer")},
+            {QStringLiteral("width"), 2}, {QStringLiteral("height"), 1},
+            {QStringLiteral("data"), QJsonArray{1, 2}}}}},
+    };
+    const auto path = QDir{source}.filePath(QStringLiteral("multi.tmj"));
+    return write_bytes(path, QJsonDocument{map}.toJson(QJsonDocument::Indented)) ? path : QString{};
+}
+
 TileImportService::IdProvider fixed_ids()
 {
     auto values = QStringList{
@@ -203,6 +237,37 @@ private slots:
             QVERIFY(indexed.succeeded());
             QVERIFY(indexed.candidate->find_by_id(result.tilemap_asset_id) == nullptr);
         }
+    }
+
+    void publishes_multiple_tilesets_textures_and_palette_dependencies_atomically()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto manifest = create_project(temp);
+        const auto source = create_multi_tiled_source(temp);
+        QVERIFY(!manifest.isEmpty() && !source.isEmpty());
+        AssetService assets;
+        TileImportService importer{assets, fixed_ids()};
+        const auto result = importer.import_tiled_json({
+            manifest, source, QStringLiteral("Multi Forest"), 2.0, 30'000, {}});
+        QVERIFY2(result.succeeded, result.diagnostics.isEmpty()
+            ? "unknown multi-TileSet import failure"
+            : qPrintable(result.diagnostics.constFirst().message));
+        QCOMPARE(result.tileset_asset_ids.size(), 2);
+        QCOMPARE(result.texture_asset_ids.size(), 2);
+        QCOMPARE(result.tileset_paths.size(), 2);
+        QCOMPARE(result.texture_paths.size(), 2);
+        const auto indexed = ProjectIndexService{}.build_candidate(manifest);
+        QVERIFY(indexed.succeeded());
+        const auto* map = indexed.candidate->find_by_id(result.tilemap_asset_id);
+        const auto* palette = indexed.candidate->find_by_id(result.palette_asset_id);
+        QVERIFY(map != nullptr && palette != nullptr);
+        QCOMPARE(map->dependencies, result.tileset_asset_ids);
+        QCOMPARE(palette->dependencies, result.tileset_asset_ids);
+        for (const auto& id : result.tileset_asset_ids)
+            QVERIFY(indexed.candidate->find_by_id(id) != nullptr);
+        for (const auto& id : result.texture_asset_ids)
+            QVERIFY(indexed.candidate->find_by_id(id) != nullptr);
     }
 
     void maps_worker_containment_failures_data()
