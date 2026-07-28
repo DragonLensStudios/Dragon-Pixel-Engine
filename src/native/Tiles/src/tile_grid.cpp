@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <numeric>
 
 namespace dragonpixel::tiles
 {
@@ -96,6 +97,59 @@ std::vector<integer_point> hex_line(integer_point start, integer_point end)
         if (result.empty() || result.back() != point) result.push_back(point);
     }
     return result;
+}
+
+double cross(double_point first, double_point second, double_point third) noexcept
+{
+    return (second.x - first.x) * (third.y - first.y)
+        - (second.y - first.y) * (third.x - first.x);
+}
+
+bool point_on_segment(double_point point, double_point first, double_point second) noexcept
+{
+    constexpr double epsilon = 1e-10;
+    return std::abs(cross(first, second, point)) <= epsilon
+        && point.x >= std::min(first.x, second.x) - epsilon
+        && point.x <= std::max(first.x, second.x) + epsilon
+        && point.y >= std::min(first.y, second.y) - epsilon
+        && point.y <= std::max(first.y, second.y) + epsilon;
+}
+
+bool segments_intersect(
+    double_point first_a,
+    double_point first_b,
+    double_point second_a,
+    double_point second_b) noexcept
+{
+    const auto first_side_a = cross(first_a, first_b, second_a);
+    const auto first_side_b = cross(first_a, first_b, second_b);
+    const auto second_side_a = cross(second_a, second_b, first_a);
+    const auto second_side_b = cross(second_a, second_b, first_b);
+    if (((first_side_a > 0.0) != (first_side_b > 0.0))
+        && ((second_side_a > 0.0) != (second_side_b > 0.0)))
+    {
+        return true;
+    }
+    return point_on_segment(second_a, first_a, first_b)
+        || point_on_segment(second_b, first_a, first_b)
+        || point_on_segment(first_a, second_a, second_b)
+        || point_on_segment(first_b, second_a, second_b);
+}
+
+bool point_in_triangle(
+    double_point point,
+    double_point first,
+    double_point second,
+    double_point third,
+    bool counter_clockwise) noexcept
+{
+    constexpr double epsilon = 1e-10;
+    const auto first_side = cross(first, second, point);
+    const auto second_side = cross(second, third, point);
+    const auto third_side = cross(third, first, point);
+    return counter_clockwise
+        ? first_side >= -epsilon && second_side >= -epsilon && third_side >= -epsilon
+        : first_side <= epsilon && second_side <= epsilon && third_side <= epsilon;
 }
 }
 
@@ -223,5 +277,82 @@ std::vector<double_point> grid_collision_polygon(
                 {center.x - half_width, center.y + half_height}};
     }
     return {};
+}
+
+std::vector<std::array<double_point, 3>> triangulate_polygon(
+    std::span<const double_point> polygon)
+{
+    constexpr double epsilon = 1e-10;
+    constexpr std::size_t maximum_vertices = 256;
+    if (polygon.size() < 3 || polygon.size() > maximum_vertices
+        || std::any_of(polygon.begin(), polygon.end(), [](const auto& point) {
+            return !std::isfinite(point.x) || !std::isfinite(point.y);
+        }))
+    {
+        return {};
+    }
+    for (std::size_t first = 0; first < polygon.size(); ++first)
+    {
+        const auto first_next = (first + 1) % polygon.size();
+        if (std::abs(polygon[first].x - polygon[first_next].x) <= epsilon
+            && std::abs(polygon[first].y - polygon[first_next].y) <= epsilon)
+        {
+            return {};
+        }
+        for (std::size_t second = first + 1; second < polygon.size(); ++second)
+        {
+            const auto second_next = (second + 1) % polygon.size();
+            if (first == second || first_next == second || second_next == first) continue;
+            if (segments_intersect(
+                polygon[first], polygon[first_next], polygon[second], polygon[second_next]))
+            {
+                return {};
+            }
+        }
+    }
+
+    double signed_area{};
+    for (std::size_t index = 0; index < polygon.size(); ++index)
+    {
+        const auto& current = polygon[index];
+        const auto& next = polygon[(index + 1) % polygon.size()];
+        signed_area += current.x * next.y - next.x * current.y;
+    }
+    if (std::abs(signed_area) <= epsilon) return {};
+    const auto counter_clockwise = signed_area > 0.0;
+
+    std::vector<std::size_t> remaining(polygon.size());
+    std::iota(remaining.begin(), remaining.end(), std::size_t{});
+    std::vector<std::array<double_point, 3>> result;
+    result.reserve(polygon.size() - 2);
+    while (remaining.size() > 3)
+    {
+        bool clipped{};
+        for (std::size_t candidate = 0; candidate < remaining.size(); ++candidate)
+        {
+            const auto previous_index = remaining[(candidate + remaining.size() - 1) % remaining.size()];
+            const auto current_index = remaining[candidate];
+            const auto next_index = remaining[(candidate + 1) % remaining.size()];
+            const auto turn = cross(
+                polygon[previous_index], polygon[current_index], polygon[next_index]);
+            if (std::abs(turn) <= epsilon || ((turn > 0.0) != counter_clockwise)) continue;
+            const auto contains_vertex = std::any_of(
+                remaining.begin(), remaining.end(), [&](const auto index) {
+                    return index != previous_index && index != current_index && index != next_index
+                        && point_in_triangle(polygon[index], polygon[previous_index],
+                            polygon[current_index], polygon[next_index], counter_clockwise);
+                });
+            if (contains_vertex) continue;
+            result.push_back({
+                polygon[previous_index], polygon[current_index], polygon[next_index]});
+            remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(candidate));
+            clipped = true;
+            break;
+        }
+        if (!clipped) return {};
+    }
+    result.push_back({
+        polygon[remaining[0]], polygon[remaining[1]], polygon[remaining[2]]});
+    return result;
 }
 }

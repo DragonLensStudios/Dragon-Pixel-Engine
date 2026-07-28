@@ -2,6 +2,8 @@
 
 #include <dragonpixel/tiles/tile_documents.h>
 
+#include <array>
+#include <span>
 #include <vector>
 
 namespace dragonpixel::tiles
@@ -31,4 +33,6 @@ struct projected_cell final
     const tile_grid_settings& grid,
     integer_point cell,
     int elevation = 0);
+[[nodiscard]] std::vector<std::array<double_point, 3>> triangulate_polygon(
+    std::span<const double_point> polygon);
 }
