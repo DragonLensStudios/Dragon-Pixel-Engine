@@ -68,6 +68,11 @@ void AuthoringViewport::clear_preview_frame()
 
 void AuthoringViewport::set_play_mode(bool enabled)
 {
+    if (enabled && pointer_mode_ == PointerMode::tile)
+    {
+        pointer_mode_ = PointerMode::none;
+        emit tile_pointer_cancelled();
+    }
     play_mode_ = enabled;
     if (enabled)
     {
@@ -88,6 +93,11 @@ void AuthoringViewport::set_selected_name(QString name)
 
 void AuthoringViewport::set_view_mode(ViewMode mode)
 {
+    if (mode != ViewMode::two_d && pointer_mode_ == PointerMode::tile)
+    {
+        pointer_mode_ = PointerMode::none;
+        emit tile_pointer_cancelled();
+    }
     view_mode_ = mode;
     if (mode == ViewMode::two_d)
     {
@@ -146,6 +156,40 @@ void AuthoringViewport::clear_selection_geometry()
     update();
 }
 
+void AuthoringViewport::set_tile_edit_enabled(bool enabled)
+{
+    if (!enabled && pointer_mode_ == PointerMode::tile)
+    {
+        pointer_mode_ = PointerMode::none;
+        emit tile_pointer_cancelled();
+    }
+    tile_edit_enabled_ = enabled;
+    setAccessibleDescription(enabled
+        ? QStringLiteral("Orthographic 2D tile editing view. Paint with the left mouse button, cancel with Escape, pan with middle mouse, and zoom with the wheel.")
+        : (view_mode_ == ViewMode::two_d
+              ? QStringLiteral("Orthographic 2D authoring view. Pan with middle mouse and zoom with the wheel.")
+              : QStringLiteral("Perspective 3D authoring view. Orbit with right mouse, pan with middle mouse, and focus with F.")));
+    update();
+}
+
+void AuthoringViewport::set_tile_cell_overlay(
+    const QVector3D& origin,
+    const QVector3D& x_axis,
+    const QVector3D& y_axis)
+{
+    tile_overlay_origin_ = origin;
+    tile_overlay_x_axis_ = x_axis;
+    tile_overlay_y_axis_ = y_axis;
+    has_tile_cell_overlay_ = true;
+    update();
+}
+
+void AuthoringViewport::clear_tile_cell_overlay()
+{
+    has_tile_cell_overlay_ = false;
+    update();
+}
+
 QRect AuthoringViewport::frame_rect() const
 {
     const auto& frame = play_mode_ ? play_frame_ : preview_frame_;
@@ -169,6 +213,24 @@ QPoint AuthoringViewport::map_to_frame(const QPoint& widget_position) const
         std::clamp((widget_position.x() - target.x()) * frame.width() / target.width(), 0, frame.width() - 1),
         std::clamp((widget_position.y() - target.y()) * frame.height() / target.height(), 0, frame.height() - 1),
     };
+}
+
+std::optional<QVector3D> AuthoringViewport::map_to_world_2d(
+    const QPoint& widget_position) const
+{
+    const auto target = frame_rect();
+    if (view_mode_ != ViewMode::two_d || !target.contains(widget_position)
+        || target.height() <= 0)
+    {
+        return std::nullopt;
+    }
+    const auto pixels_per_unit = static_cast<float>(target.height())
+        / std::max(0.1F, orthographic_size_);
+    const QPointF center = target.center();
+    return camera_target_ + QVector3D{
+        static_cast<float>(widget_position.x() - center.x()) / pixels_per_unit,
+        static_cast<float>(center.y() - widget_position.y()) / pixels_per_unit,
+        0.0F};
 }
 
 void AuthoringViewport::draw_grid(QPainter& painter, const QRect& target) const
@@ -327,6 +389,34 @@ void AuthoringViewport::draw_gizmo(QPainter& painter) const
     painter.restore();
 }
 
+void AuthoringViewport::draw_tile_overlay(QPainter& painter) const
+{
+    if (!tile_edit_enabled_ || !has_tile_cell_overlay_
+        || play_mode_ || view_mode_ != ViewMode::two_d)
+    {
+        return;
+    }
+    const std::array<QVector3D, 4> corners{
+        tile_overlay_origin_,
+        tile_overlay_origin_ + tile_overlay_x_axis_,
+        tile_overlay_origin_ + tile_overlay_x_axis_ + tile_overlay_y_axis_,
+        tile_overlay_origin_ + tile_overlay_y_axis_,
+    };
+    QPolygonF polygon;
+    for (const auto& corner : corners)
+    {
+        const auto projected = project_world_position(corner);
+        if (!projected) return;
+        polygon.push_back(*projected);
+    }
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setBrush(QColor{65, 190, 255, 45});
+    painter.setPen(QPen{QColor{80, 205, 255, 235}, 2});
+    painter.drawPolygon(polygon);
+    painter.restore();
+}
+
 void AuthoringViewport::paintEvent(QPaintEvent* event)
 {
     static_cast<void>(event);
@@ -385,6 +475,7 @@ void AuthoringViewport::paintEvent(QPaintEvent* event)
     {
         draw_grid(painter, target);
         draw_gizmo(painter);
+        draw_tile_overlay(painter);
     }
     painter.setPen(QColor{240, 196, 72});
     painter.drawText(
@@ -410,18 +501,29 @@ void AuthoringViewport::mousePressEvent(QMouseEvent* event)
     setFocus(Qt::MouseFocusReason);
     pointer_origin_ = event->position().toPoint();
     pointer_previous_ = pointer_origin_;
+    if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier)))
+    {
+        pointer_mode_ = PointerMode::pan;
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+    if (tile_edit_enabled_ && !play_mode_ && view_mode_ == ViewMode::two_d
+        && event->button() == Qt::LeftButton)
+    {
+        if (const auto world = map_to_world_2d(pointer_origin_))
+        {
+            pointer_mode_ = PointerMode::tile;
+            emit tile_pointer_pressed(*world);
+            event->accept();
+            return;
+        }
+    }
     if (!play_mode_ && event->button() == Qt::LeftButton && !selected_name_.isEmpty()
         && gizmo_hit_rect().contains(pointer_origin_))
     {
         pointer_mode_ = PointerMode::gizmo;
         emit gizmo_started(gizmo_tool_);
-        event->accept();
-        return;
-    }
-    if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier)))
-    {
-        pointer_mode_ = PointerMode::pan;
-        setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
     }
@@ -487,6 +589,14 @@ void AuthoringViewport::mouseMoveEvent(QMouseEvent* event)
         update();
         return;
     }
+    if (pointer_mode_ == PointerMode::tile)
+    {
+        if (const auto world = map_to_world_2d(current))
+        {
+            emit tile_pointer_moved(*world);
+        }
+        return;
+    }
     if (pointer_mode_ == PointerMode::pan)
     {
         const auto scale = view_mode_ == ViewMode::two_d ? orthographic_size_ / 500.0F : 0.01F;
@@ -520,6 +630,17 @@ void AuthoringViewport::mouseReleaseEvent(QMouseEvent* event)
     {
         emit gizmo_committed(gizmo_tool_, gizmo_delta(event->position().toPoint()));
     }
+    else if (pointer_mode_ == PointerMode::tile && event->button() == Qt::LeftButton)
+    {
+        if (const auto world = map_to_world_2d(event->position().toPoint()))
+        {
+            emit tile_pointer_released(*world);
+        }
+        else
+        {
+            emit tile_pointer_cancelled();
+        }
+    }
     pointer_mode_ = PointerMode::none;
     unsetCursor();
     QWidget::mouseReleaseEvent(event);
@@ -544,6 +665,13 @@ void AuthoringViewport::wheelEvent(QWheelEvent* event)
 
 void AuthoringViewport::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Escape && pointer_mode_ == PointerMode::tile)
+    {
+        pointer_mode_ = PointerMode::none;
+        emit tile_pointer_cancelled();
+        update();
+        return;
+    }
     if (event->key() == Qt::Key_Escape && pointer_mode_ == PointerMode::gizmo)
     {
         pointer_mode_ = PointerMode::none;

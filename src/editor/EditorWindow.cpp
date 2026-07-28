@@ -559,6 +559,7 @@ void EditorWindow::build_interface()
         game_status->setText(QStringLiteral("Preview · Primary Camera · Fit"));
         play_running_ = false;
         play_paused_ = false;
+        update_tile_scene_edit_state();
         update_action_states();
         append_console(QStringLiteral("Play world discarded; authoring scene unchanged."), QStringLiteral("Info"), QStringLiteral("Runtime"));
     });
@@ -627,6 +628,14 @@ void EditorWindow::build_interface()
     connect(viewport_, &AuthoringViewport::gizmo_previewed, this, &EditorWindow::preview_gizmo_delta);
     connect(viewport_, &AuthoringViewport::gizmo_committed, this, &EditorWindow::apply_gizmo_delta);
     connect(viewport_, &AuthoringViewport::gizmo_cancelled, this, &EditorWindow::cancel_gizmo_preview);
+    connect(viewport_, &AuthoringViewport::tile_pointer_pressed,
+        this, &EditorWindow::begin_tile_scene_stroke);
+    connect(viewport_, &AuthoringViewport::tile_pointer_moved,
+        this, &EditorWindow::update_tile_scene_stroke);
+    connect(viewport_, &AuthoringViewport::tile_pointer_released,
+        this, &EditorWindow::end_tile_scene_stroke);
+    connect(viewport_, &AuthoringViewport::tile_pointer_cancelled,
+        this, &EditorWindow::cancel_tile_scene_stroke);
     connect(viewport_, &AuthoringViewport::project_item_dropped, this,
         [this](const QString& project_id, qint64 source_revision, const QString& path,
             const QString& kind, const QString& asset_type, const QString& asset_id) {
@@ -1184,6 +1193,21 @@ void EditorWindow::build_interface()
 
     tile_document_service_ = new TileDocumentService(this);
     tile_palette_ = new TilePaletteWidget(tile_document_service_, this);
+    tile_preview_timer_ = new QTimer(this);
+    tile_preview_timer_->setSingleShot(true);
+    tile_preview_timer_->setInterval(75);
+    connect(tile_preview_timer_, &QTimer::timeout, this, [this] {
+        if (tile_document_service_->has_active_stroke())
+        {
+            tile_preview_timer_->start();
+        }
+        else if (scene_ && !play_running_)
+        {
+            refresh_preview();
+        }
+    });
+    connect(tile_palette_, &TilePaletteWidget::authoringStateChanged,
+        this, &EditorWindow::update_tile_scene_edit_state);
     connect(tile_document_service_, &TileDocumentService::diagnostic, this, [this](const QString& message) {
         append_console(message, QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
     });
@@ -1192,6 +1216,9 @@ void EditorWindow::build_interface()
         update_action_states();
     });
     connect(tile_document_service_, &TileDocumentService::documentChanged, this, [this] {
+        update_tile_scene_edit_state();
+        if (tile_document_service_->is_loaded() && tile_preview_timer_)
+            tile_preview_timer_->start();
         if (project_content_stack_ == nullptr) return;
         const auto current = project_content_stack_->currentIndex() == 0
             ? project_explorer_->currentIndex()
@@ -3888,6 +3915,7 @@ void EditorWindow::update_global_selection_presentation()
     {
         viewport_->set_selected_name({});
         viewport_->clear_selection_geometry();
+        update_tile_scene_edit_state();
         update_worker_viewport();
         return;
     }
@@ -3901,6 +3929,7 @@ void EditorWindow::update_global_selection_presentation()
         ? QString::fromStdString(entities.front()->name)
         : entities.empty() ? QString{} : QStringLiteral("%1 GameObjects").arg(entities.size()));
     update_viewport_selection_geometry(*scene_);
+    update_tile_scene_edit_state();
     update_worker_viewport();
 }
 
@@ -6097,6 +6126,7 @@ void EditorWindow::apply_workspace(const QString& workspace)
     game_view_dock_->setVisible(true);
     tile_palette_dock_->setVisible(mode_2d);
     viewport_->set_view_mode(mode_2d ? AuthoringViewport::ViewMode::two_d : AuthoringViewport::ViewMode::three_d);
+    update_tile_scene_edit_state();
     QSettings settings{editor_settings_path(), QSettings::IniFormat};
     settings.setValue(QStringLiteral("workspace/current"), workspace);
     statusBar()->showMessage(QStringLiteral("%1 workspace active").arg(workspace), 3000);
@@ -6365,6 +6395,259 @@ void EditorWindow::update_viewport_selection_geometry(
         minimum,
         maximum,
         first_rotation);
+}
+
+std::optional<EditorWindow::TileSceneTarget> EditorWindow::tile_scene_target() const
+{
+    if (!scene_ || !tile_document_service_ || !tile_document_service_->tilemap()
+        || !tile_document_service_->tileset())
+    {
+        return std::nullopt;
+    }
+    const auto selected = selected_entity_ids();
+    if (selected.size() != 1) return std::nullopt;
+    const auto* entity = scene_->find_entity(selected.front());
+    if (entity == nullptr) return std::nullopt;
+    const auto tilemap_component = std::find_if(
+        entity->components.cbegin(), entity->components.cend(), [](const auto& component) {
+            return component.enabled && !component.opaque
+                && component.type_id
+                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+        });
+    if (tilemap_component == entity->components.cend()) return std::nullopt;
+    const auto asset = tilemap_component->properties.value(
+        "dpe.tilemap.asset", std::string{});
+    if (asset != tile_document_service_->tilemap()->asset_id.to_string())
+    {
+        return std::nullopt;
+    }
+
+    std::vector<const dragonpixel::scene::entity*> chain;
+    const auto* current = entity;
+    while (current != nullptr)
+    {
+        if (std::any_of(chain.cbegin(), chain.cend(), [&](const auto* ancestor) {
+                return ancestor->id == current->id;
+            }))
+        {
+            return std::nullopt;
+        }
+        chain.push_back(current);
+        current = current->parent_id ? scene_->find_entity(*current->parent_id) : nullptr;
+    }
+    QMatrix4x4 local_to_world;
+    for (auto iterator = chain.crbegin(); iterator != chain.crend(); ++iterator)
+    {
+        const auto* transform = editable_transform(**iterator);
+        if (transform == nullptr) continue;
+        QMatrix4x4 local;
+        local.translate(json_vector(transform->properties.value(
+            "dpe.transform.position",
+            nlohmann::ordered_json{{"x", 0.0}, {"y", 0.0}, {"z", 0.0}})));
+        local.rotate(json_quaternion(transform->properties.value(
+            "dpe.transform.rotation",
+            nlohmann::ordered_json{{"w", 1.0}, {"x", 0.0}, {"y", 0.0}, {"z", 0.0}})));
+        local.scale(json_vector(transform->properties.value(
+            "dpe.transform.scale",
+            nlohmann::ordered_json{{"x", 1.0}, {"y", 1.0}, {"z", 1.0}}),
+            QVector3D{1.0F, 1.0F, 1.0F}));
+        local_to_world *= local;
+    }
+    bool invertible = false;
+    const auto world_to_local = local_to_world.inverted(&invertible);
+    const auto* tileset = tile_document_service_->tileset();
+    if (!invertible || tileset->pixels_per_unit <= 0.0
+        || tileset->cell_size.x <= 0 || tileset->cell_size.y <= 0)
+    {
+        return std::nullopt;
+    }
+    return TileSceneTarget{
+        selected.front(), local_to_world, world_to_local,
+        static_cast<float>(tileset->cell_size.x / tileset->pixels_per_unit),
+        static_cast<float>(tileset->cell_size.y / tileset->pixels_per_unit)};
+}
+
+QPoint EditorWindow::tile_cell_at(
+    const QVector3D& world_position,
+    const TileSceneTarget& target)
+{
+    const auto local = target.world_to_local.map(world_position);
+    return {
+        static_cast<int>(std::floor(local.x() / target.cell_width)),
+        static_cast<int>(std::floor(local.y() / target.cell_height)),
+    };
+}
+
+void EditorWindow::update_tile_scene_overlay(
+    const QPoint& cell,
+    const TileSceneTarget& target)
+{
+    const QVector3D local_origin{
+        cell.x() * target.cell_width,
+        cell.y() * target.cell_height,
+        0.0F};
+    viewport_->set_tile_cell_overlay(
+        target.local_to_world.map(local_origin),
+        target.local_to_world.mapVector({target.cell_width, 0.0F, 0.0F}),
+        target.local_to_world.mapVector({0.0F, target.cell_height, 0.0F}));
+}
+
+void EditorWindow::update_tile_scene_edit_state()
+{
+    const auto target = tile_scene_target();
+    const auto enabled = target.has_value() && !play_running_
+        && viewport_->view_mode() == AuthoringViewport::ViewMode::two_d;
+    if (tile_scene_stroke_active_
+        && (!enabled || !tile_scene_stroke_target_
+            || tile_scene_stroke_target_->entity_id != target->entity_id))
+    {
+        cancel_tile_scene_stroke();
+    }
+    viewport_->set_tile_edit_enabled(enabled);
+    if (!enabled)
+    {
+        viewport_->clear_tile_cell_overlay();
+        return;
+    }
+    update_tile_scene_overlay(tile_scene_last_cell_.value_or(QPoint{}), *target);
+}
+
+void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
+{
+    cancel_tile_scene_stroke();
+    const auto target = tile_scene_target();
+    if (!target || play_running_
+        || viewport_->view_mode() != AuthoringViewport::ViewMode::two_d)
+    {
+        return;
+    }
+    const auto cell = tile_cell_at(world_position, *target);
+    tile_scene_last_cell_ = cell;
+    update_tile_scene_overlay(cell, *target);
+    const auto layer = tile_palette_->active_layer();
+    const auto tool = tile_palette_->active_tool();
+    if (tool == TileCanvas::Tool::eyedropper)
+    {
+        if (const auto brush = tile_document_service_->brush_at(layer, cell.x(), cell.y()))
+            tile_palette_->select_brush(*brush);
+        return;
+    }
+    if (tool == TileCanvas::Tool::select) return;
+    const auto brush = tile_palette_->active_brush();
+    if (tool != TileCanvas::Tool::erase && !brush) return;
+
+    tile_document_service_->begin_stroke();
+    tile_scene_stroke_active_ = true;
+    tile_scene_stroke_start_ = cell;
+    tile_scene_stroke_target_ = target;
+    tile_scene_stroke_tool_ = tool;
+    tile_scene_stroke_layer_ = layer;
+    tile_scene_stroke_brush_ = brush;
+    if (tool == TileCanvas::Tool::paint)
+        static_cast<void>(tile_document_service_->paint_cell(
+            layer, cell.x(), cell.y(), *brush));
+    else if (tool == TileCanvas::Tool::erase)
+        static_cast<void>(tile_document_service_->erase_cell(
+            layer, cell.x(), cell.y()));
+    else if (tool == TileCanvas::Tool::rectangle)
+        static_cast<void>(tile_document_service_->preview_rectangle(
+            layer, cell.x(), cell.y(), cell.x(), cell.y(), brush->tile_id,
+            false, brush->flip_x, brush->flip_y,
+            brush->rotation_quarter_turns));
+    else if (tool == TileCanvas::Tool::fill)
+    {
+        static_cast<void>(tile_document_service_->flood_fill(
+            layer, cell.x(), cell.y(), *brush));
+        tile_document_service_->commit_stroke();
+        tile_scene_stroke_active_ = false;
+        tile_scene_stroke_start_.reset();
+        tile_scene_stroke_target_.reset();
+        tile_scene_stroke_brush_.reset();
+    }
+}
+
+void EditorWindow::update_tile_scene_stroke(const QVector3D& world_position)
+{
+    if (!tile_scene_stroke_active_ || !tile_scene_stroke_target_) return;
+    const auto cell = tile_cell_at(world_position, *tile_scene_stroke_target_);
+    update_tile_scene_overlay(cell, *tile_scene_stroke_target_);
+    if (tile_scene_last_cell_ == cell) return;
+    const auto previous = *tile_scene_last_cell_;
+    tile_scene_last_cell_ = cell;
+    if (tile_scene_stroke_tool_ == TileCanvas::Tool::paint
+        || tile_scene_stroke_tool_ == TileCanvas::Tool::erase)
+    {
+        auto x = previous.x();
+        auto y = previous.y();
+        const auto distance_x = std::abs(cell.x() - x);
+        const auto step_x = x < cell.x() ? 1 : -1;
+        const auto distance_y = -std::abs(cell.y() - y);
+        const auto step_y = y < cell.y() ? 1 : -1;
+        auto error = distance_x + distance_y;
+        const auto maximum_steps = static_cast<std::size_t>(
+            std::max(distance_x, -distance_y)) + 1U;
+        if (maximum_steps > 4096U)
+        {
+            append_console(QStringLiteral("Tile stroke segment exceeded the 4096-cell safety limit."),
+                QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
+            return;
+        }
+        while (true)
+        {
+            if (tile_scene_stroke_tool_ == TileCanvas::Tool::paint
+                && tile_scene_stroke_brush_)
+                static_cast<void>(tile_document_service_->paint_cell(
+                    tile_scene_stroke_layer_, x, y, *tile_scene_stroke_brush_));
+            else if (tile_scene_stroke_tool_ == TileCanvas::Tool::erase)
+                static_cast<void>(tile_document_service_->erase_cell(
+                    tile_scene_stroke_layer_, x, y));
+            if (x == cell.x() && y == cell.y()) break;
+            const auto doubled_error = 2 * error;
+            if (doubled_error >= distance_y)
+            {
+                error += distance_y;
+                x += step_x;
+            }
+            if (doubled_error <= distance_x)
+            {
+                error += distance_x;
+                y += step_y;
+            }
+        }
+    }
+    else if (tile_scene_stroke_tool_ == TileCanvas::Tool::rectangle
+        && tile_scene_stroke_brush_ && tile_scene_stroke_start_)
+        static_cast<void>(tile_document_service_->preview_rectangle(
+            tile_scene_stroke_layer_, tile_scene_stroke_start_->x(),
+            tile_scene_stroke_start_->y(), cell.x(), cell.y(),
+            tile_scene_stroke_brush_->tile_id, false,
+            tile_scene_stroke_brush_->flip_x,
+            tile_scene_stroke_brush_->flip_y,
+            tile_scene_stroke_brush_->rotation_quarter_turns));
+}
+
+void EditorWindow::end_tile_scene_stroke(const QVector3D& world_position)
+{
+    if (!tile_scene_stroke_active_) return;
+    update_tile_scene_stroke(world_position);
+    tile_document_service_->commit_stroke();
+    tile_scene_stroke_active_ = false;
+    tile_scene_stroke_start_.reset();
+    tile_scene_stroke_target_.reset();
+    tile_scene_stroke_brush_.reset();
+    if (tile_preview_timer_) tile_preview_timer_->start();
+}
+
+void EditorWindow::cancel_tile_scene_stroke()
+{
+    if (tile_scene_stroke_active_)
+    {
+        tile_document_service_->cancel_stroke();
+    }
+    tile_scene_stroke_active_ = false;
+    tile_scene_stroke_start_.reset();
+    tile_scene_stroke_target_.reset();
+    tile_scene_stroke_brush_.reset();
 }
 
 std::string EditorWindow::runtime_snapshot_json(const dragonpixel::scene::scene& source_scene) const
@@ -7073,6 +7356,7 @@ void EditorWindow::start_play()
     game_view_dock_->raise();
     play_running_ = true;
     play_paused_ = false;
+    update_tile_scene_edit_state();
     update_action_states();
     play_worker_->start_session(adapter_->currentData().toString(), snapshot_path);
     if (!play_running_)
@@ -7094,6 +7378,7 @@ void EditorWindow::stop_play()
     }
     play_running_ = false;
     play_paused_ = false;
+    update_tile_scene_edit_state();
     update_action_states();
 }
 

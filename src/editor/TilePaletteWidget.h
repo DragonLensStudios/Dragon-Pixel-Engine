@@ -78,6 +78,7 @@ public:
     [[nodiscard]] TileCanvas::Tool active_tool() const noexcept;
     [[nodiscard]] int active_layer() const noexcept;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
+    void select_brush(const TileDocumentService::Brush& brush);
 
 signals:
     void authoringStateChanged();

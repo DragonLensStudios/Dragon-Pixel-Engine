@@ -105,6 +105,12 @@ bool TileDocumentService::save()
 
 std::optional<std::string> TileDocumentService::prepare_save()
 {
+    if (stroke_before_)
+    {
+        error_ = QStringLiteral("Finish or cancel the active tile stroke before saving.");
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
     if (!tilemap_ || tilemap_path_.isEmpty())
     {
         error_ = QStringLiteral("No loaded tilemap is available to save.");

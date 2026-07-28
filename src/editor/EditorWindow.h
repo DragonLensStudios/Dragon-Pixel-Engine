@@ -28,6 +28,7 @@
 #include <QJsonObject>
 #include <QListView>
 #include <QMainWindow>
+#include <QMatrix4x4>
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -51,6 +52,7 @@ class QMimeData;
 class QProcess;
 class QPushButton;
 class QStackedWidget;
+class QTimer;
 class QToolButton;
 class EditorInteractionTests;
 
@@ -217,6 +219,26 @@ private:
     void update_window_title();
     void update_worker_viewport();
     void update_viewport_selection_geometry(const dragonpixel::scene::scene& geometry_scene);
+    struct TileSceneTarget final
+    {
+        dragonpixel::core::uuid entity_id;
+        QMatrix4x4 local_to_world;
+        QMatrix4x4 world_to_local;
+        float cell_width{1.0F};
+        float cell_height{1.0F};
+    };
+    [[nodiscard]] std::optional<TileSceneTarget> tile_scene_target() const;
+    [[nodiscard]] static QPoint tile_cell_at(
+        const QVector3D& world_position,
+        const TileSceneTarget& target);
+    void update_tile_scene_edit_state();
+    void update_tile_scene_overlay(
+        const QPoint& cell,
+        const TileSceneTarget& target);
+    void begin_tile_scene_stroke(const QVector3D& world_position);
+    void update_tile_scene_stroke(const QVector3D& world_position);
+    void end_tile_scene_stroke(const QVector3D& world_position);
+    void cancel_tile_scene_stroke();
     void begin_gizmo_preview(AuthoringViewport::GizmoTool tool);
     void preview_gizmo_delta(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void cancel_gizmo_preview();
@@ -329,6 +351,14 @@ private:
 
     TileDocumentService* tile_document_service_{};
     TilePaletteWidget* tile_palette_{};
+    QTimer* tile_preview_timer_{};
+    bool tile_scene_stroke_active_{};
+    std::optional<QPoint> tile_scene_stroke_start_;
+    std::optional<QPoint> tile_scene_last_cell_;
+    std::optional<TileSceneTarget> tile_scene_stroke_target_;
+    TileCanvas::Tool tile_scene_stroke_tool_{TileCanvas::Tool::paint};
+    int tile_scene_stroke_layer_{};
+    std::optional<TileDocumentService::Brush> tile_scene_stroke_brush_;
 
     QAction* save_action_{};
     QAction* new_scene_action_{};

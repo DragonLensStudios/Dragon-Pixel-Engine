@@ -447,6 +447,181 @@ private slots:
         QVERIFY(tilemap != window.project_index_.candidate->entries.cend());
     }
 
+    void scene_view_tile_editing_maps_cells_guards_modes_and_refreshes_preview()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("SceneTileProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(
+            QStringLiteral("DragonPixelProject.json"));
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        const auto tileset = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.asset_type.contains(
+                    QStringLiteral("tileset"), Qt::CaseInsensitive);
+            });
+        QVERIFY(tileset != window.project_index_.candidate->entries.cend());
+        const auto tileset_id = tileset->id;
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset_id, QStringLiteral("Scene Paint Map")));
+        const auto map = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.asset_type.contains(
+                           QStringLiteral("tilemap"), Qt::CaseInsensitive)
+                    && QFileInfo{entry.resolved_source_path}.completeBaseName()
+                        == QStringLiteral("Scene Paint Map");
+            });
+        QVERIFY(map != window.project_index_.candidate->entries.cend());
+        const auto map_id = map->id;
+        const auto map_path = map->absolute_path;
+        window.viewport_->project_item_dropped(
+            window.project_index_.candidate->project_id,
+            static_cast<qint64>(window.project_model_->drag_revision()),
+            map_path, QStringLiteral("asset"),
+            QStringLiteral("tilemap"), map_id);
+        window.apply_workspace(QStringLiteral("2D"));
+        QCoreApplication::processEvents();
+        QVERIFY(window.viewport_->tile_edit_enabled());
+        const auto target = window.tile_scene_target();
+        QVERIFY(target.has_value());
+
+        const auto point_for_cell = [&](const QPoint& requested) {
+            for (int y = 1; y < window.viewport_->height(); y += 2)
+            {
+                for (int x = 1; x < window.viewport_->width(); x += 2)
+                {
+                    const QPoint position{x, y};
+                    const auto world = window.viewport_->map_to_world_2d(position);
+                    if (world && EditorWindow::tile_cell_at(*world, *target) == requested)
+                        return position;
+                }
+            }
+            return QPoint{-1, -1};
+        };
+        const auto cell_0_0 = point_for_cell({0, 0});
+        const auto cell_1_0 = point_for_cell({1, 0});
+        const auto cell_1_1 = point_for_cell({1, 1});
+        const auto cell_2_0 = point_for_cell({2, 0});
+        const auto cell_3_0 = point_for_cell({3, 0});
+        QVERIFY(cell_0_0.x() >= 0 && cell_1_0.x() >= 0
+            && cell_1_1.x() >= 0 && cell_2_0.x() >= 0
+            && cell_3_0.x() >= 0);
+
+        const auto tile_id = window.tile_document_service_->tileset()->tiles.front().tile_id;
+        const TileDocumentService::Brush transformed{tile_id, true, false, 1U};
+        window.tile_palette_->select_brush(transformed);
+        QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
+        QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
+        QVERIFY(window.tile_document_service_->brush_at(0, 0, 0)
+            == std::optional{transformed});
+
+        window.tile_palette_->select_brush({tile_id, false, false, 0U});
+        auto* eyedropper = window.findChild<QAction*>(QStringLiteral("TileEyedropperTool"));
+        auto* rectangle = window.findChild<QAction*>(QStringLiteral("TileRectangleTool"));
+        auto* paint = window.findChild<QAction*>(QStringLiteral("TilePaintTool"));
+        QVERIFY(eyedropper != nullptr && rectangle != nullptr && paint != nullptr);
+        eyedropper->trigger();
+        QTest::mouseClick(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
+        QVERIFY(window.tile_palette_->active_brush() == std::optional{transformed});
+
+        rectangle->trigger();
+        window.tile_palette_->select_brush({tile_id, false, true, 2U});
+        QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
+        QTest::mouseMove(window.viewport_, cell_1_1);
+        QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_1_1);
+        QVERIFY(window.tile_document_service_->tile_at(0, 0, 0).has_value());
+        QVERIFY(window.tile_document_service_->tile_at(0, 1, 0).has_value());
+        QVERIFY(window.tile_document_service_->tile_at(0, 0, 1).has_value());
+        QVERIFY(window.tile_document_service_->tile_at(0, 1, 1).has_value());
+
+        paint->trigger();
+        QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_2_0);
+        QTest::keyClick(window.viewport_, Qt::Key_Escape);
+        QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_2_0);
+        QVERIFY(!window.tile_document_service_->tile_at(0, 2, 0).has_value());
+
+        const auto world_3_0 = window.viewport_->map_to_world_2d(cell_3_0);
+        QVERIFY(world_3_0.has_value());
+        window.play_running_ = true;
+        window.update_tile_scene_edit_state();
+        QVERIFY(!window.viewport_->tile_edit_enabled());
+        window.begin_tile_scene_stroke(*world_3_0);
+        QVERIFY(!window.tile_document_service_->tile_at(0, 3, 0).has_value());
+        window.play_running_ = false;
+        window.apply_workspace(QStringLiteral("3D"));
+        QVERIFY(!window.viewport_->tile_edit_enabled());
+        window.begin_tile_scene_stroke(*world_3_0);
+        QVERIFY(!window.tile_document_service_->tile_at(0, 3, 0).has_value());
+
+        window.apply_workspace(QStringLiteral("2D"));
+        const auto entity_id = window.selected_entity_id();
+        QVERIFY(entity_id.has_value());
+        QVERIFY(window.apply_authoring_transaction({
+            dragonpixel::scene::set_component_property_command{
+                *entity_id, std::string{dragonpixel::metadata::builtin_component_ids::transform},
+                "dpe.transform.position", nlohmann::ordered_json{{"x", 2.0}, {"y", 3.0}, {"z", 0.0}}},
+            dragonpixel::scene::set_component_property_command{
+                *entity_id, std::string{dragonpixel::metadata::builtin_component_ids::transform},
+                "dpe.transform.scale", nlohmann::ordered_json{{"x", 2.0}, {"y", 0.5}, {"z", 1.0}}},
+            dragonpixel::scene::set_component_property_command{
+                *entity_id, std::string{dragonpixel::metadata::builtin_component_ids::transform},
+                "dpe.transform.rotation", nlohmann::ordered_json{{"w", 0.70710678}, {"x", 0.0}, {"y", 0.0}, {"z", 0.70710678}}},
+        }, "Transform tilemap for Scene View mapping"));
+        const auto transformed_target = window.tile_scene_target();
+        QVERIFY(transformed_target.has_value());
+        const QVector3D local_sample{
+            2.25F * transformed_target->cell_width,
+            -0.25F * transformed_target->cell_height,
+            0.0F};
+        QCOMPARE(EditorWindow::tile_cell_at(
+            transformed_target->local_to_world.map(local_sample),
+            *transformed_target), QPoint(2, -1));
+
+        window.tile_preview_timer_->start();
+        const auto snapshot_path = window.runtime_directory_.filePath(
+            QStringLiteral("preview-mirror.dpescene"));
+        const auto snapshot_has_painted_cells = [&] {
+            QFile candidate{snapshot_path};
+            if (!candidate.open(QIODevice::ReadOnly)) return false;
+            const auto parsed = nlohmann::ordered_json::parse(
+                candidate.readAll().toStdString(), nullptr, false);
+            if (parsed.is_discarded() || !parsed.contains("tilemaps")) return false;
+            const auto candidate_map = std::find_if(
+                parsed.at("tilemaps").cbegin(), parsed.at("tilemaps").cend(),
+                [&](const auto& value) { return value.value("assetId", std::string{})
+                    == map_id.toStdString(); });
+            return candidate_map != parsed.at("tilemaps").cend()
+                && candidate_map->at("layers").at(0).at("cells").size() >= 4;
+        };
+        QTRY_VERIFY_WITH_TIMEOUT(snapshot_has_painted_cells(), 5000);
+        QFile snapshot{snapshot_path};
+        QVERIFY(snapshot.open(QIODevice::ReadOnly));
+        const auto root = nlohmann::ordered_json::parse(snapshot.readAll().toStdString());
+        const auto runtime_map = std::find_if(
+            root.at("tilemaps").cbegin(), root.at("tilemaps").cend(),
+            [&](const auto& value) { return value.value("assetId", std::string{})
+                == map_id.toStdString(); });
+        QVERIFY(runtime_map != root.at("tilemaps").cend());
+        QVERIFY(runtime_map->at("layers").at(0).at("cells").size() >= 4);
+        const auto runtime_set = std::find_if(
+            root.at("tileSets").cbegin(), root.at("tileSets").cend(),
+            [&](const auto& value) { return value.value("assetId", std::string{})
+                == tileset_id.toStdString(); });
+        QVERIFY(runtime_set != root.at("tileSets").cend());
+        QCOMPARE(runtime_set->at("pixelsPerUnit").get<double>(), 32.0);
+    }
+
     void worker_client_rejects_downgraded_regressing_and_future_correlated_frames()
     {
         WorkerClient client{QStringLiteral("play")};
@@ -1578,6 +1753,7 @@ private slots:
         QVERIFY(tiles.tile_at(0, 32, 0).has_value());
         tiles.begin_stroke();
         QVERIFY(tiles.preview_rectangle(0, 3, 3, 4, 4, tile_id, false));
+        QVERIFY(!tiles.prepare_save().has_value());
         tiles.cancel_stroke();
         QVERIFY(!tiles.tile_at(0, 4, 4).has_value());
         QVERIFY(tiles.save());

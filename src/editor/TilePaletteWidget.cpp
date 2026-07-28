@@ -401,21 +401,10 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     });
     connect(canvas_, &TileCanvas::brushPicked, this,
         [this](const QString& id, bool flip_x, bool flip_y, int rotation) {
-        for (int row = 0; row < tiles_->count(); ++row)
-        {
-            if (tiles_->item(row)->data(Qt::UserRole).toString() == id)
-            {
-                tiles_->setCurrentRow(row);
-                break;
-            }
-        }
-        const QSignalBlocker flip_x_blocker{flip_x_};
-        const QSignalBlocker flip_y_blocker{flip_y_};
-        flip_x_->setChecked(flip_x);
-        flip_y_->setChecked(flip_y);
-        brush_rotation_ = static_cast<unsigned>(std::clamp(rotation, 0, 3));
-        rotate_->setText(QStringLiteral("Rotate %1 deg").arg(brush_rotation_ * 90U));
-        update_brush();
+        const auto tile_id = dragonpixel::core::uuid::parse(id.toStdString());
+        if (tile_id) select_brush(TileDocumentService::Brush{
+            *tile_id, flip_x, flip_y,
+            static_cast<unsigned>(std::clamp(rotation, 0, 3))});
     });
     connect(canvas_, &TileCanvas::selectionChanged, this, [this](int x, int y) {
         status_->setText(QStringLiteral("Selected cell (%1, %2)%3")
@@ -531,6 +520,27 @@ std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush() cons
     if (!tile_id) return std::nullopt;
     return TileDocumentService::Brush{
         *tile_id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_ % 4U};
+}
+
+void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
+{
+    const auto id = QString::fromStdString(brush.tile_id.to_string());
+    const QSignalBlocker tile_blocker{tiles_};
+    for (int row = 0; row < tiles_->count(); ++row)
+    {
+        if (tiles_->item(row)->data(Qt::UserRole).toString() == id)
+        {
+            tiles_->setCurrentRow(row);
+            break;
+        }
+    }
+    const QSignalBlocker flip_x_blocker{flip_x_};
+    const QSignalBlocker flip_y_blocker{flip_y_};
+    flip_x_->setChecked(brush.flip_x);
+    flip_y_->setChecked(brush.flip_y);
+    brush_rotation_ = brush.rotation_quarter_turns % 4U;
+    rotate_->setText(QStringLiteral("Rotate %1 deg").arg(brush_rotation_ * 90U));
+    update_brush();
 }
 
 void TilePaletteWidget::update_brush()

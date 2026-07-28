@@ -34,6 +34,7 @@ public:
     void accept_save(std::string_view encoded);
     [[nodiscard]] bool is_loaded() const noexcept { return tilemap_.has_value() && tileset_.has_value(); }
     [[nodiscard]] bool is_dirty() const noexcept;
+    [[nodiscard]] bool has_active_stroke() const noexcept { return stroke_before_.has_value(); }
     [[nodiscard]] const QString& tilemap_path() const noexcept { return tilemap_path_; }
     [[nodiscard]] const QString& error() const noexcept { return error_; }
     [[nodiscard]] const dragonpixel::tiles::tilemap_document* tilemap() const noexcept;
