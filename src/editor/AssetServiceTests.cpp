@@ -161,6 +161,8 @@ private slots:
         QCOMPARE(QString::fromStdString(parsed.document->layers.front().name),
             QStringLiteral("Layer 1"));
         QVERIFY(parsed.document->layers.front().chunks.empty());
+        QCOMPARE(parsed.document->grid.layout,
+            dragonpixel::tiles::grid_layout::rectangular);
 
         const auto* palette_entry = indexed.candidate->find_by_id(result.asset_ids.at(1));
         QVERIFY(palette_entry != nullptr);
@@ -205,6 +207,17 @@ private slots:
         QVERIFY(!invalid_name.succeeded);
         QCOMPARE(invalid_name.diagnostics.constFirst().code,
             QStringLiteral("DPE-ASSET-TILEMAP-NAME"));
+
+        const auto invalid_layout = service.create_tilemap({
+            manifest,
+            imported.asset_ids.at(1),
+            QStringLiteral("Invalid Layout"),
+            true,
+            QStringLiteral("triangle"),
+        });
+        QVERIFY(!invalid_layout.succeeded);
+        QCOMPARE(invalid_layout.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILEMAP-LAYOUT"));
 
         const auto created = service.create_tilemap({
             manifest,

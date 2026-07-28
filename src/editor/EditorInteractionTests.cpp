@@ -2004,6 +2004,9 @@ private slots:
         const auto parsed = dragonpixel::tiles::read_tile_set(tiles.readAll().toStdString());
         QVERIFY(parsed.succeeded());
         QCOMPARE(parsed.document->tiles.size(), std::size_t{2});
+        QCOMPARE(parsed.document->slicing.mode, dragonpixel::tiles::slice_mode::cell_size);
+        QCOMPARE(parsed.document->slicing.cell_count, (dragonpixel::tiles::integer_point{2, 1}));
+        QCOMPARE(parsed.document->slicing.pivot, (dragonpixel::tiles::double_point{0.5, 0.5}));
         QSet<int> source_x;
         for (const auto& tile : parsed.document->tiles) source_x.insert(tile.source.x);
         QCOMPARE(source_x, QSet<int>({0, 32}));
@@ -2076,6 +2079,18 @@ private slots:
         QVERIFY2(wizard.result().succeeded, qPrintable(wizard.result().error));
         QCOMPARE(wizard.result().tile_count, 2);
 
+        auto* slicing_mode = wizard.findChild<QComboBox*>(QStringLiteral("TileSlicingMode"));
+        auto* column_count = wizard.findChild<QSpinBox*>(QStringLiteral("TileColumnCount"));
+        auto* row_count = wizard.findChild<QSpinBox*>(QStringLiteral("TileRowCount"));
+        auto* pivot_x = wizard.findChild<QDoubleSpinBox*>(QStringLiteral("TilePivotX"));
+        auto* keep_empty = wizard.findChild<QCheckBox*>(QStringLiteral("TileKeepEmptyCells"));
+        auto* grid_layout = wizard.findChild<QComboBox*>(QStringLiteral("TileGridLayout"));
+        QVERIFY(slicing_mode != nullptr && column_count != nullptr && row_count != nullptr
+            && pivot_x != nullptr && keep_empty != nullptr && grid_layout != nullptr);
+        QCOMPARE(slicing_mode->count(), 3);
+        QCOMPARE(grid_layout->count(), 5);
+        QCOMPARE(wizard.grid_layout(), QStringLiteral("rectangular"));
+
         const auto mislabeled_png = QDir{sources.path()}.filePath(QStringLiteral("NotAnImage.png"));
         QFile invalid_file{mislabeled_png};
         QVERIFY(invalid_file.open(QIODevice::WriteOnly));
@@ -2115,6 +2130,58 @@ private slots:
         QVERIFY(missing.error.contains(QStringLiteral("existing image")));
         QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
             QStringLiteral("Assets/Textures/Missing_Input.png"))));
+    }
+
+    void image_tileset_slicing_supports_automatic_cell_count_empty_filter_and_pivot()
+    {
+        QTemporaryDir project;
+        QVERIFY(project.isValid());
+        QVERIFY(QDir{project.path()}.mkpath(QStringLiteral("Assets")));
+        const auto source_path = QDir{project.path()}.filePath(QStringLiteral("separated.png"));
+        QImage source{40, 16, QImage::Format_ARGB32};
+        source.fill(Qt::transparent);
+        for (int y = 0; y < 16; ++y)
+        {
+            for (int x = 0; x < 8; ++x) source.setPixelColor(x, y, QColor{20, 180, 80});
+            for (int x = 32; x < 40; ++x) source.setPixelColor(x, y, QColor{180, 60, 20});
+        }
+        QVERIFY(source.save(source_path, "PNG"));
+
+        TileSetCreationRequest automatic;
+        automatic.project_root = project.path();
+        automatic.source_image = source_path;
+        automatic.name = QStringLiteral("Automatic Regions");
+        automatic.slicing_mode = TileSetSlicingMode::automatic;
+        automatic.pivot_x = 0.25;
+        automatic.pivot_y = 0.75;
+        const auto automatic_result = TileSetCreationService::create(automatic);
+        QVERIFY2(automatic_result.succeeded, qPrintable(automatic_result.error));
+        QCOMPARE(automatic_result.tile_count, 2);
+        QFile automatic_file{automatic_result.tile_set_path};
+        QVERIFY(automatic_file.open(QIODevice::ReadOnly));
+        const auto automatic_set = dragonpixel::tiles::read_tile_set(
+            automatic_file.readAll().toStdString());
+        QVERIFY(automatic_set.succeeded());
+        QCOMPARE(automatic_set.document->slicing.mode,
+            dragonpixel::tiles::slice_mode::automatic);
+        QCOMPARE(automatic_set.document->tiles.front().pivot,
+            (dragonpixel::tiles::double_point{0.25, 0.75}));
+
+        TileSetCreationRequest counted = automatic;
+        counted.name = QStringLiteral("Counted Regions");
+        counted.slicing_mode = TileSetSlicingMode::cell_count;
+        counted.column_count = 5;
+        counted.row_count = 1;
+        counted.keep_empty_cells = false;
+        const auto filtered = TileSetCreationService::create(counted);
+        QVERIFY2(filtered.succeeded, qPrintable(filtered.error));
+        QCOMPARE(filtered.tile_count, 2);
+
+        counted.name = QStringLiteral("Counted Empty Regions");
+        counted.keep_empty_cells = true;
+        const auto retained = TileSetCreationService::create(counted);
+        QVERIFY2(retained.succeeded, qPrintable(retained.error));
+        QCOMPARE(retained.tile_count, 5);
     }
 
     void image_tileset_creation_normalizes_supported_sources_to_png()

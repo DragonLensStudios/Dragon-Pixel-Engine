@@ -50,6 +50,7 @@ struct TilemapCreationRequest final
     QString tileset_asset_id;
     QString name;
     bool create_palette{true};
+    QString grid_layout{QStringLiteral("rectangular")};
 };
 
 struct AssetOperationResult final

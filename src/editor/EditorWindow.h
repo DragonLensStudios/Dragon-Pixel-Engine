@@ -190,7 +190,8 @@ private:
     void create_tilemap_from_selected_tileset();
     [[nodiscard]] bool create_tilemap_from_tileset(
         const QString& tileset_asset_id,
-        const QString& name);
+        const QString& name,
+        const QString& grid_layout = QStringLiteral("rectangular"));
     [[nodiscard]] bool prompt_create_tilemap_from_tileset(
         const QString& tileset_asset_id,
         const QString& suggested_name);

@@ -1844,7 +1844,8 @@ void EditorWindow::create_tile_set_from_image()
     if (wizard.complete_tilemap_workflow())
     {
         const auto map_name = QStringLiteral("%1 Map").arg(wizard.tile_set_name());
-        if (!create_tilemap_from_tileset(created.tile_set_asset_id, map_name))
+        if (!create_tilemap_from_tileset(
+                created.tile_set_asset_id, map_name, wizard.grid_layout()))
         {
             statusBar()->showMessage(QStringLiteral(
                 "TileSet created, but its Tilemap workflow could not be completed. The TileSet remains available in Project Explorer."),
@@ -1958,7 +1959,8 @@ std::optional<dragonpixel::core::uuid> EditorWindow::attach_tilemap_to_scene(
 
 bool EditorWindow::create_tilemap_from_tileset(
     const QString& tileset_asset_id,
-    const QString& name)
+    const QString& name,
+    const QString& grid_layout)
 {
     if (project_manifest_path_.isEmpty())
     {
@@ -1978,7 +1980,7 @@ bool EditorWindow::create_tilemap_from_tileset(
         }
     }
     const auto result = asset_service_.create_tilemap({
-        project_manifest_path_, tileset_asset_id, name});
+        project_manifest_path_, tileset_asset_id, name, true, grid_layout});
     for (const auto& diagnostic : result.diagnostics)
     {
         append_console(diagnostic.message,

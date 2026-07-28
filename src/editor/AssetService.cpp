@@ -850,6 +850,20 @@ AssetOperationResult AssetService::create_tilemap(
         {parsed_set.document->asset_id},
         {{*dragonpixel::core::uuid::parse(layer_id.toStdString()), "Layer 1", true, 0, {}}},
     };
+    if (request.grid_layout == QStringLiteral("hex-point-top"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::hex_point_top;
+    else if (request.grid_layout == QStringLiteral("hex-flat-top"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::hex_flat_top;
+    else if (request.grid_layout == QStringLiteral("isometric"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::isometric;
+    else if (request.grid_layout == QStringLiteral("isometric-z-as-y"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::isometric_z_as_y;
+    else if (request.grid_layout != QStringLiteral("rectangular"))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-LAYOUT"),
+            QStringLiteral("The selected Tilemap grid layout is unsupported."), request.grid_layout);
+        return result;
+    }
     const auto map_bytes = QByteArray::fromStdString(
         dragonpixel::tiles::write_tilemap(map));
     dragonpixel::tiles::tile_palette_document palette;
@@ -937,7 +951,7 @@ AssetOperationResult AssetService::create_tilemap(
             {QStringLiteral("assetId"), tileset_id},
             {QStringLiteral("sourceHash"), tileset_hash}}}},
         {QStringLiteral("importSettings"), QJsonObject{
-            {QStringLiteral("grid"), QStringLiteral("orthogonal")}}},
+            {QStringLiteral("gridLayout"), request.grid_layout}}},
         {QStringLiteral("recoveryState"), QJsonObject{
             {QStringLiteral("state"), QStringLiteral("ready")}}},
         {QStringLiteral("importerDiagnostics"), QJsonArray{}},
