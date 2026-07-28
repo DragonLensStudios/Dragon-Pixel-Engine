@@ -214,8 +214,15 @@ void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
     switch (tool_)
     {
         case Tool::paint:
-            if (const auto brush = brush_provider_ ? brush_provider_(cell.x(), cell.y()) : selected_brush_)
+            if (pattern_provider_)
+            {
+                for (const auto& [target, brush] : pattern_provider_(cell.x(), cell.y()))
+                    static_cast<void>(service_->paint_cell(layer_, target.x(), target.y(), brush));
+            }
+            else if (const auto brush = brush_provider_ ? brush_provider_(cell.x(), cell.y()) : selected_brush_)
+            {
                 static_cast<void>(service_->paint_cell(layer_, cell.x(), cell.y(), *brush));
+            }
             break;
         case Tool::erase:
             static_cast<void>(service_->erase_cell(layer_, cell.x(), cell.y()));
@@ -479,8 +486,9 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     brush_behavior_->setAccessibleName(QStringLiteral("Tile brush behavior"));
     brush_behavior_->addItem(QStringLiteral("Basic"), QStringLiteral("basic"));
     brush_behavior_->addItem(QStringLiteral("Random Selection"), QStringLiteral("random"));
+    brush_behavior_->addItem(QStringLiteral("Group Stamp"), QStringLiteral("group"));
     brush_behavior_->setToolTip(QStringLiteral(
-        "Random Selection deterministically chooses among the selected palette tiles for each target cell."));
+        "Random Selection chooses deterministically; Group Stamp preserves selected palette offsets."));
     controls->addWidget(brush_behavior_);
     controls->addWidget(new QLabel{QStringLiteral("Active Target"), this});
     layers_ = new QComboBox{this};
@@ -570,6 +578,17 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     brush_elevation_->setObjectName(QStringLiteral("TileBrushElevation"));
     brush_elevation_->setRange(-1'000'000, 1'000'000);
     brush_form->addRow(QStringLiteral("Elevation"), brush_elevation_);
+    group_gap_ = new QSpinBox{brush_inspector};
+    group_gap_->setObjectName(QStringLiteral("TileGroupBrushGap"));
+    group_gap_->setAccessibleName(QStringLiteral("Group Brush cell gap"));
+    group_gap_->setRange(0, 64);
+    brush_form->addRow(QStringLiteral("Group gap"), group_gap_);
+    group_limit_ = new QSpinBox{brush_inspector};
+    group_limit_->setObjectName(QStringLiteral("TileGroupBrushLimit"));
+    group_limit_->setAccessibleName(QStringLiteral("Group Brush cell limit"));
+    group_limit_->setRange(1, 4096);
+    group_limit_->setValue(256);
+    brush_form->addRow(QStringLiteral("Group limit"), group_limit_);
     brush_lock_color_ = new QCheckBox{QStringLiteral("Lock color"), brush_inspector};
     brush_lock_color_->setObjectName(QStringLiteral("TileBrushLockColor"));
     brush_form->addRow(QString{}, brush_lock_color_);
@@ -596,6 +615,7 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tiles_->viewport()->installEventFilter(this);
     canvas_ = new TileCanvas{service_, splitter};
     canvas_->set_brush_provider([this](int x, int y) { return active_brush_at(x, y); });
+    canvas_->set_pattern_provider([this](int x, int y) { return active_brush_pattern_at(x, y); });
     splitter->addWidget(tiles_);
     splitter->addWidget(canvas_);
     splitter->setStretchFactor(1, 1);
@@ -672,6 +692,8 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
              brush_scale_x_, brush_scale_y_})
         connect(field, &QDoubleSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
     connect(brush_elevation_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
+    connect(group_gap_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
+    connect(group_limit_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_color_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_transform_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
 
@@ -936,6 +958,58 @@ std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush_at(int
     return brush;
 }
 
+std::vector<std::pair<QPoint, TileDocumentService::Brush>>
+TilePaletteWidget::active_brush_pattern_at(int x, int y) const
+{
+    auto brush = active_brush_at(x, y);
+    if (!brush) return {};
+    if (brush_behavior_ == nullptr
+        || brush_behavior_->currentData().toString() != QStringLiteral("group"))
+    {
+        return {{{x, y}, *brush}};
+    }
+    std::vector<dragonpixel::tiles::brush_cell> occupied;
+    auto minimum = dragonpixel::tiles::integer_point{};
+    auto maximum = dragonpixel::tiles::integer_point{};
+    bool first = true;
+    for (const auto* item : tiles_->selectedItems())
+    {
+        const auto tile_id = dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole).toString().toStdString());
+        const auto set_id = dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole + 1).toString().toStdString());
+        if (!tile_id || !set_id) continue;
+        const dragonpixel::tiles::integer_point position{
+            item->data(Qt::UserRole + 5).toInt(), item->data(Qt::UserRole + 6).toInt()};
+        occupied.push_back({position, {*set_id, *tile_id}});
+        if (first)
+        {
+            minimum = maximum = position;
+            first = false;
+        }
+        else
+        {
+            minimum.x = std::min(minimum.x, position.x);
+            minimum.y = std::min(minimum.y, position.y);
+            maximum.x = std::max(maximum.x, position.x);
+            maximum.y = std::max(maximum.y, position.y);
+        }
+    }
+    if (occupied.empty()) return {{{x, y}, *brush}};
+    const auto picked = dragonpixel::tiles::group_pick(occupied, minimum, maximum,
+        group_gap_->value(), static_cast<std::size_t>(group_limit_->value()));
+    std::vector<std::pair<QPoint, TileDocumentService::Brush>> result;
+    result.reserve(picked.size());
+    for (const auto& cell : picked)
+    {
+        auto stamped = *brush;
+        stamped.tile_set_id = cell.tile.tile_set_id;
+        stamped.tile_id = cell.tile.tile_id;
+        result.push_back({QPoint{x + cell.u, y + cell.v}, stamped});
+    }
+    return result;
+}
+
 void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
 {
     const auto id = QString::fromStdString(brush.tile_id.to_string());
@@ -1028,7 +1102,7 @@ void TilePaletteWidget::rebuild()
     tiles_->clear();
     const auto append_tile = [&](const dragonpixel::tiles::tile_set_document& owner,
                                  const dragonpixel::tiles::tile_definition& tile,
-                                 bool flip_x, bool flip_y, unsigned rotation) {
+                                 bool flip_x, bool flip_y, unsigned rotation, int u, int v) {
         const auto owner_id = QString::fromStdString(owner.asset_id.to_string());
         QPixmap preview;
         const auto image = tile_image(atlases_.value(owner_id, atlas_), tile,
@@ -1049,6 +1123,8 @@ void TilePaletteWidget::rebuild()
         item->setData(Qt::UserRole + 2, flip_x);
         item->setData(Qt::UserRole + 3, flip_y);
         item->setData(Qt::UserRole + 4, rotation);
+        item->setData(Qt::UserRole + 5, u);
+        item->setData(Qt::UserRole + 6, v);
         item->setToolTip(QStringLiteral("%1\n%2")
             .arg(QString::fromStdString(tile.name), QString::fromStdString(tile.tile_id.to_string())));
         if (item->data(Qt::UserRole).toString() == selected_tile
@@ -1068,13 +1144,20 @@ void TilePaletteWidget::rebuild()
             const auto tile = std::find_if(owner->tiles.begin(), owner->tiles.end(),
                 [&](const auto& candidate) { return candidate.tile_id == cell.tile.tile_id; });
             if (tile != owner->tiles.end())
-                append_tile(*owner, *tile, cell.flip_x, cell.flip_y, cell.rotation_quarter_turns);
+                append_tile(*owner, *tile, cell.flip_x, cell.flip_y,
+                    cell.rotation_quarter_turns, cell.u, cell.v);
         }
     }
     else
     {
+        int preview_index{};
         for (const auto& owner : service_->tilesets())
-            for (const auto& tile : owner.tiles) append_tile(owner, tile, false, false, 0U);
+            for (const auto& tile : owner.tiles)
+            {
+                append_tile(owner, tile, false, false, 0U,
+                    preview_index % 16, preview_index / 16);
+                ++preview_index;
+            }
     }
     if (tiles_->currentItem() == nullptr && tiles_->count() > 0) tiles_->setCurrentRow(0);
     rebuilding_ = false;

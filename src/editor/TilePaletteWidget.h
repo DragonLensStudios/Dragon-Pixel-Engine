@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <functional>
+#include <vector>
 
 class QActionGroup;
 class QComboBox;
@@ -48,6 +49,11 @@ public:
     {
         brush_provider_ = std::move(provider);
     }
+    void set_pattern_provider(std::function<std::vector<std::pair<QPoint,
+        TileDocumentService::Brush>>(int, int)> provider)
+    {
+        pattern_provider_ = std::move(provider);
+    }
     void set_zoom(double zoom) noexcept;
 
     [[nodiscard]] Tool tool() const noexcept { return tool_; }
@@ -77,6 +83,7 @@ private:
     double zoom_{1.0};
     std::optional<TileDocumentService::Brush> selected_brush_;
     std::function<std::optional<TileDocumentService::Brush>(int, int)> brush_provider_;
+    std::function<std::vector<std::pair<QPoint, TileDocumentService::Brush>>(int, int)> pattern_provider_;
     QImage atlas_;
     QHash<QString, QImage> atlases_;
     std::optional<QPoint> stroke_start_;
@@ -106,6 +113,8 @@ public:
     [[nodiscard]] int active_layer() const noexcept;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
     [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush_at(int x, int y) const;
+    [[nodiscard]] std::vector<std::pair<QPoint, TileDocumentService::Brush>>
+        active_brush_pattern_at(int x, int y) const;
     void select_brush(const TileDocumentService::Brush& brush);
 
 signals:
@@ -141,6 +150,8 @@ private:
     QDoubleSpinBox* brush_scale_x_{};
     QDoubleSpinBox* brush_scale_y_{};
     QSpinBox* brush_elevation_{};
+    QSpinBox* group_gap_{};
+    QSpinBox* group_limit_{};
     QCheckBox* brush_lock_color_{};
     QCheckBox* brush_lock_transform_{};
     QImage atlas_;

@@ -6746,8 +6746,12 @@ void EditorWindow::begin_tile_scene_stroke(const QVector3D& world_position)
     tile_scene_stroke_layer_ = layer;
     tile_scene_stroke_brush_ = brush;
     if (tool == TileCanvas::Tool::paint)
-        static_cast<void>(tile_document_service_->paint_cell(
-            layer, cell.x(), cell.y(), *brush));
+    {
+        for (const auto& [target_cell, target_brush]
+            : tile_palette_->active_brush_pattern_at(cell.x(), cell.y()))
+            static_cast<void>(tile_document_service_->paint_cell(
+                layer, target_cell.x(), target_cell.y(), target_brush));
+    }
     else if (tool == TileCanvas::Tool::erase)
         static_cast<void>(tile_document_service_->erase_cell(
             layer, cell.x(), cell.y()));
@@ -6802,10 +6806,10 @@ void EditorWindow::update_tile_scene_stroke(const QVector3D& world_position)
             if (tile_scene_stroke_tool_ == TileCanvas::Tool::paint
                 && tile_scene_stroke_brush_)
             {
-                const auto brush = tile_palette_->active_brush_at(x, y)
-                    .value_or(*tile_scene_stroke_brush_);
-                static_cast<void>(tile_document_service_->paint_cell(
-                    tile_scene_stroke_layer_, x, y, brush));
+                for (const auto& [target_cell, target_brush]
+                    : tile_palette_->active_brush_pattern_at(x, y))
+                    static_cast<void>(tile_document_service_->paint_cell(
+                        tile_scene_stroke_layer_, target_cell.x(), target_cell.y(), target_brush));
             }
             else if (tile_scene_stroke_tool_ == TileCanvas::Tool::erase)
                 static_cast<void>(tile_document_service_->erase_cell(
