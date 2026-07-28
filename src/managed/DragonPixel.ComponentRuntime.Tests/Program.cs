@@ -16,6 +16,7 @@ const string LegacyNativeModuleId = "b4717394-89f3-46f8-8350-fb64eb560e28";
 const string UnlistedTypeId = "cbfef6b1-e265-4f8e-9f5c-53d0f4c366d7";
 const string DisabledUnlistedTypeId = "6294ab6c-5689-43f9-845b-b357a0a17b18";
 const string TestEntityId = "67dcfb82-f82a-4dd1-a962-21acc55db02c";
+const string TileExtensionId = "example.weather-tile";
 
 if (args.Length != 2 || !File.Exists(args[0]) || !File.Exists(args[1]))
 {
@@ -107,6 +108,32 @@ try
     try
     {
         Require(runtime.FactoryCount == 2, "Both strictly validated worker-only factories must load.");
+        Require(runtime.TileExtensionCount == 1,
+            "The explicitly declared worker-only tile extension must load.");
+        var tileContext = new TileExtensionContext(
+            4, -7, 2, 0, 1234, 0.5,
+            "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
+            "59737391-9417-45bf-a8af-cb6e24e7aa38",
+            "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6",
+            "a9ba355a-51e8-49e9-b581-c6174026c160",
+            "{}", "{}");
+        var tileResults = runtime.EvaluateTiles(TileExtensionId, [tileContext]);
+        Require(tileResults.Count == 1 && tileResults[0].Succeeded
+                && tileResults[0].ResultJson.Contains("\"tint\"", StringComparison.Ordinal),
+            "The tile extension did not return one validated evaluation result.");
+        var malformedResults = runtime.EvaluateTiles(TileExtensionId,
+            [tileContext with { PayloadJson = "{\"malformed\":true}" }]);
+        Require(malformedResults.Count == 1 && !malformedResults[0].Succeeded
+                && malformedResults[0].ErrorCode == "DPE-TILE-EXT-MALFORMED-RESULT",
+            "Malformed tile-extension evaluation output was not contained.");
+        var proposal = runtime.ProposeBrush(TileExtensionId, tileContext, "{}");
+        Require(proposal.Succeeded && proposal.CommandCount == 1,
+            "The tile extension did not return one bounded brush command proposal.");
+        var malformedProposal = runtime.ProposeBrush(
+            TileExtensionId, tileContext, "{\"malformed\":true}");
+        Require(!malformedProposal.Succeeded
+                && malformedProposal.ErrorCode == "DPE-TILE-EXT-MALFORMED-PROPOSAL",
+            "Malformed tile-extension brush proposals were not rejected.");
         Require(runtime.Diagnostics.Any(value => value.Contains(fixture.BuildHash, StringComparison.Ordinal)),
             "The validated buildHash was not retained in the runtime evidence.");
 
@@ -418,6 +445,11 @@ JsonObject CreateValidManifest(Fixture fixture) => new()
                 ["typeId"] = NativeTypeId,
                 ["moduleId"] = NativeModuleId,
                 ["sourcePath"] = "Authoring Components/Cpp/NativeTestComponent.cpp",
+            },
+            ["tileExtension"] = new JsonObject
+            {
+                ["pluginId"] = TileExtensionId,
+                ["capabilities"] = new JsonArray("evaluate-tiles", "propose-brush"),
             },
         },
     },

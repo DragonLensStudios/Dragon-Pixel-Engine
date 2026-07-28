@@ -16,7 +16,10 @@ add_library(DragonPixel::CAbi ALIAS DragonPixelCAbi)
 if(BUILD_TESTING)
     add_library(dpe_component_runtime_test_plugin SHARED Tests/component_plugin_test.cpp)
     target_include_directories(dpe_component_runtime_test_plugin PRIVATE include)
-    target_compile_definitions(dpe_component_runtime_test_plugin PRIVATE DPE_COMPONENT_PLUGIN_BUILD)
+    target_compile_definitions(dpe_component_runtime_test_plugin PRIVATE
+        DPE_COMPONENT_PLUGIN_BUILD
+        DPE_TILE_EXTENSION_PLUGIN_BUILD
+    )
     set_target_properties(dpe_component_runtime_test_plugin PROPERTIES
         OUTPUT_NAME dpe_component_runtime_test
         CXX_VISIBILITY_PRESET hidden

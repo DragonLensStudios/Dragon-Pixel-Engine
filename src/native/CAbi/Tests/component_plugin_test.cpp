@@ -1,11 +1,70 @@
 #include <dragonpixel/cabi/component_plugin_v1.h>
+#include <dragonpixel/cabi/tile_extension_plugin_v1.h>
 
+#include <cstring>
 #include <new>
 #include <string>
 
 namespace
 {
 constexpr auto type_id = "ce9c24d8-278e-457d-b733-3671c85f6a45";
+constexpr auto tile_extension_id = "example.weather-tile";
+
+dpe_tile_extension_string_v1 extension_string(std::string value)
+{
+    auto* bytes = new (std::nothrow) char[value.size()];
+    if (bytes == nullptr) return {};
+    std::memcpy(bytes, value.data(), value.size());
+    return {bytes, value.size()};
+}
+
+int32_t DPE_TILE_EXTENSION_PLUGIN_CALL evaluate_tiles(
+    const dpe_tile_extension_context_v1* contexts,
+    size_t context_count,
+    dpe_tile_extension_result_v1* results,
+    size_t result_count)
+{
+    if (contexts == nullptr || results == nullptr || context_count == 0
+        || context_count > DPE_TILE_EXTENSION_MAX_BATCH_V1 || result_count != context_count)
+    {
+        return -1;
+    }
+    for (size_t index = 0; index < context_count; ++index)
+    {
+        if (contexts[index].struct_size < sizeof(dpe_tile_extension_context_v1)) return -2;
+        const std::string payload{contexts[index].payload_json.data,
+            contexts[index].payload_json.length};
+        auto json = payload.find("\"malformed\":true") != std::string::npos
+            ? std::string{"{"}
+            : std::string{"{\"tint\":{\"r\":0.25,\"g\":0.5,\"b\":0.75,\"a\":1.0}}"};
+        results[index] = {static_cast<uint32_t>(sizeof(dpe_tile_extension_result_v1)), 0,
+            extension_string(std::move(json)), {}, {}};
+    }
+    return 0;
+}
+
+int32_t DPE_TILE_EXTENSION_PLUGIN_CALL propose_brush(
+    const dpe_tile_extension_context_v1* context,
+    dpe_tile_extension_string_v1 request,
+    dpe_tile_extension_result_v1* result)
+{
+    if (context == nullptr || result == nullptr
+        || context->struct_size < sizeof(dpe_tile_extension_context_v1)) return -1;
+    const std::string request_json{request.data, request.length};
+    auto json = request_json.find("\"malformed\":true") != std::string::npos
+        ? std::string{"[]"}
+        : std::string{"{\"commands\":[{\"kind\":\"paint\",\"x\":2,\"y\":-3,"
+                      "\"tileSetId\":\"4fe655df-c40f-4e48-a5cc-fbe9bd356ac6\","
+                      "\"tileId\":\"b4a8bd46-f46a-4490-be95-f8a149187deb\"}]}"};
+    *result = {static_cast<uint32_t>(sizeof(dpe_tile_extension_result_v1)), 0,
+        extension_string(std::move(json)), {}, {}};
+    return 0;
+}
+
+void DPE_TILE_EXTENSION_PLUGIN_CALL release_extension_string(dpe_tile_extension_string_v1 value)
+{
+    delete[] value.data;
+}
 
 struct test_component final
 {
@@ -162,6 +221,16 @@ const dpe_component_plugin_v2 api_v2{
     &set_properties,
     &dispatch_lifecycle,
     &last_error};
+const dpe_tile_extension_plugin_v1 tile_extension_api{
+    DPE_TILE_EXTENSION_ABI_V1,
+    static_cast<uint32_t>(sizeof(dpe_tile_extension_plugin_v1)),
+    DPE_TILE_EXTENSION_CAPABILITY_EVALUATE_TILES_V1
+        | DPE_TILE_EXTENSION_CAPABILITY_PROPOSE_BRUSH_V1,
+    0,
+    {tile_extension_id, sizeof("example.weather-tile") - 1},
+    &evaluate_tiles,
+    &propose_brush,
+    &release_extension_string};
 }
 
 extern "C" DPE_COMPONENT_PLUGIN_EXPORT const dpe_component_plugin_v1* DPE_COMPONENT_PLUGIN_CALL
@@ -174,4 +243,10 @@ extern "C" DPE_COMPONENT_PLUGIN_EXPORT const dpe_component_plugin_v2* DPE_COMPON
 dpe_component_plugin_get_v2(void)
 {
     return &api_v2;
+}
+
+extern "C" DPE_TILE_EXTENSION_PLUGIN_EXPORT const dpe_tile_extension_plugin_v1*
+DPE_TILE_EXTENSION_PLUGIN_CALL dpe_tile_extension_plugin_get_v1(void)
+{
+    return &tile_extension_api;
 }
