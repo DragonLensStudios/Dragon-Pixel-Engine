@@ -1,18 +1,18 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Ready for review; Windows transient-sharing save correction verified and pushed
-> **Disposition:** Implementation correction in progress; not merged
+> **Status:** In progress; DPE-ARCH-0015 parity expansion accepted
+> **Disposition:** Reopened on existing draft PR #6; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
 > **Started:** 2026-07-27
-> **Updated:** 2026-07-27
-> **Governing architecture:** `DPE-ARCH-0014`
+> **Updated:** 2026-07-28
+> **Governing architecture:** `DPE-ARCH-0015`
 > **Base commit:** `8aac0e7fbc1affcbaadb26421dce6585df017a4d`
 
 ## Goal
 
-Complete a practical orthogonal 2D tilemap-authoring workspace around Dragon Pixel's existing TileSet, Tilemap, palette, Project Explorer, Inspector, Scene View, runtime rendering, picking, collision, save, and recovery owners.
+Complete a Dragon Pixel-owned 2D Tilemap Editor with Unity-familiar functional behavior around the existing TileSet, Tilemap, palette, Project Explorer, Inspector, Scene View, runtime rendering, picking, collision, save, and recovery owners. The reopened scope adds durable palettes, five grid layouts, multiple TileSets, typed tiles and brushes, full selection/slicing workflows, richer runtime behavior, expanded Tiled JSON conversion, and worker-only native extensions without copying Unity branding or implementation.
 
 The workflow should feel familiar to users of component-based editors: create or import tile assets in Project Explorer, drag a Tilemap into a scene or compatible Inspector field, choose tiles and layers in a palette, paint in the 2D Scene View, inspect useful asset facts, and save or undo without editing JSON. Dragon Pixel retains its own labels, arrangement, visual treatment, contracts, and implementation.
 
@@ -26,7 +26,7 @@ The merged `feature/tiled-tilemap-import` work converts the accepted Tiled JSON 
 
 The remaining user-facing gaps are connected rather than format-level: the TileSet wizard does not create an empty Tilemap, no Tilemap preset exists, Scene/Hierarchy drops reject tilemaps, the Project details pane reports only kind/status/path, the palette uses generated color blocks rather than atlas pixels, layers cannot be managed publicly, brush transforms cannot be authored, and painting is confined to the palette canvas instead of the 2D Scene View.
 
-## Scope
+## Original Scope (implemented before DPE-ARCH-0015)
 
 - Add an `AssetService` operation that creates one empty `dpe.tilemap` v1 and one `dpe.asset` v3 sidecar from one structurally valid indexed TileSet, with a stable generated asset ID, one initial layer, dependency revision binding, collision checks, atomic publication, and post-commit index validation.
 - Add **Assets > Create Tilemap from Selected TileSet...** and a matching Project Explorer context action with a validated name prompt, refresh, automatic palette opening, and clear diagnostics.
@@ -42,7 +42,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Preserve the existing atomic scene-plus-dirty-tilemap save and unsaved-document prompts.
 - Tolerate bounded transient Windows sharing violations during atomic scene/tile publication without falling back to an in-place overwrite; preserve the prior valid documents and actionable recovery guidance when a lock persists.
 
-## Non-Goals
+## Original Non-Goals (superseded by the accepted parity expansion below)
 
 - Copying Unity branding, artwork, proprietary behavior, exact layouts, menu text, or serialized formats.
 - Isometric, hexagonal, staggered, 3D, rule, terrain, animated, or procedural tiles.
@@ -52,6 +52,83 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - A standalone Tile asset durable format, tile inheritance, or project-authored editor widgets.
 - Promotion of POC K, POC O, ADR-0016, ADR-0020, Slice 2, Slice 3, KNI production support, or any platform support claim.
 - Completing the full three-platform designer/accessibility matrix in this Windows implementation feature.
+
+## DPE-ARCH-0015 Parity Expansion
+
+The user explicitly reopened draft PR #6 on 2026-07-28 and selected the broader cohesive Tilemap Editor boundary. This section supersedes the original static-orthogonal/multi-TileSet/type/layout non-goals while preserving their implementation evidence as history.
+
+### Accepted scope and user workflow
+
+- Add `dpe.tileset` v2, `dpe.tilepalette` v1, `dpe.tilemap` v2, and runtime snapshot v5 with deterministic readers for TileSet/Tilemap v1 and explicit snapshot-v4 compatibility.
+- Support Rectangular, Hex Point Top, Hex Flat Top, Isometric, and Isometric Z-as-Y through one portable grid projection/picking/topology owner. Z-as-Y uses signed per-cell elevation.
+- Let one Tilemap and one universal logical palette reference tiles from multiple TileSets/textures. Keep one Tilemap asset with internal layers; each layer is an explicit Active Target.
+- Add typed Basic, Animated, Rule, Rule Override, and opaque Custom tile definitions; deterministic Random, Line, Group, and GameObject brushes; complete multi-cell selection editing; per-cell tint/offset/rotation/scale/elevation/locks; and per-layer renderer settings.
+- Expand Create TileSet from Image with automatic/cell-size/cell-count slicing, offset, padding, empty-cell policy, pivot, safe reslicing, and layout selection. Default success publishes and opens the texture, TileSet, palette, Tilemap, assigned Tilemap2D GameObject, and optional collider.
+- Replace the combined palette/live-map canvas with Active Palette, following/pinnable Active Target, neutral multi-cell clipboard, separate palette organization controls, Brush Inspector, dedicated TileSet editors, configurable shortcut profiles, accessible keyboard operation, and Scene View previews.
+- Add None/Grid/Sprite Outline collision, layout-aware shapes, composite merging, and controlled animated physics refresh behind the engine-owned Box2D boundary.
+- Implement the complete snapshot-v5 behavior independently in MonoGame and KNI; keep KNI experimental and evidence separate.
+- Expand the isolated Tiled JSON importer to multiple atlas TileSets, orthogonal/isometric/staggered/hexagonal layouts, animation, representable Wang/terrain rules, palette publication, and optional isometric-Z-as-Y interpretation.
+- Add a size-tagged worker-only `dpe_tile_extension_plugin_v1` C ABI for bounded batched tile evaluation and brush command proposals. Project-local explicit-build modules cannot load in the editor or write project files.
+
+### Current non-goals
+
+- Unity branding, icons, artwork, pixel-identical arrangement, serialized formats, C# TileBase/GridBrush API, or render-pipeline-specific fields.
+- A Grid-parent/child-Tilemap hierarchy migration; internal Tilemap layers remain authoritative.
+- TMX/TSX XML, encoded/compressed Tiled layers, object layers, image-collection TileSets, in-place reimport/merge, source watching, or arbitrary third-party importers.
+- Full plugin installation/update/distribution, a marketplace, or trusted in-process Qt tile extensions. Those remain under POC P.
+- Promotion of an ADR, POC, slice, platform, release, or KNI support claim without its complete existing gate.
+
+### Contract, ABI, protocol, and support impact
+
+- Durable tile documents gain explicit new versions and golden migration fixtures. Opening an older asset does not write it; the first successful mutation/save upgrades it atomically.
+- Snapshot v5 is a managed/runtime contract addition with an explicit v4 reader path. The worker control protocol and shared-frame layout change only if implementation proves a new negotiated capability is required.
+- `dpe_tile_extension_plugin_v1` is a new public C ABI separate from editor-private C++ APIs. It uses fixed-width values, size tags, explicit buffers/ownership, capability negotiation, stable errors, resource limits, and exception containment.
+- Scene v3 remains compatible. GameObject Brush placements use normal linked-prefab/duplicate scene commands plus stable grid-placement component metadata; missing metadata never authorizes broad deletion.
+- `dpe.asset` remains version 3 but indexes `tilepalette`, additional dependency edges, importer settings, and generated outputs.
+- KNI stays experimental. Hosted or local partial results do not establish production support or close POC K/O/P.
+
+### Implementation increments and commit intent
+
+1. **Architecture and plan:** synchronize DPE-ARCH-0015 Design/Prompt, this plan, master tracker, AGENTS, and affected ADRs; verify mirrors; commit `docs(tiles): accept complete tilemap editor contract`.
+2. **Formats and grid core:** add failing golden/property tests, then implement versioned TileSet/Tilemap/palette documents, migrations, unknown preservation, qualified references, and portable projection/topology/line helpers; commit focused `test(tiles): ...` and `feat(tiles): ...` changes.
+3. **Workspace ownership and publication:** extend TileDocumentService, AssetService, project indexing, unified Undo/Redo, atomic Save All, palette creation, and failure recovery with injected-lock/partial-publication tests.
+4. **Slicing and setup:** implement the full image slicing/reslicing model, preview, layout selector, and default full asset/scene handoff with no-output and retained-asset recovery fixtures.
+5. **Palette and selection UI:** implement Active Palette/Target/pin, neutral clipboard, multi-cell brush, palette organization, Brush Inspector, shortcut preferences, drag/drop, selection properties, structural edits, keyboard/accessibility, and Scene overlays.
+6. **Typed behavior and object brushes:** implement animation, rules/overrides, deterministic random/line/group behavior, prefab/clone object placement, placement metadata, and compound scene/tile Undo.
+7. **Snapshot, adapters, and physics:** add snapshot v5, MonoGame/KNI rendering/picking/animation/rules, renderer settings, layout-aware collision/composites, and actual-device/contact fixtures.
+8. **Native tile extensions:** add the public header, manifests, disposable host, bounded batch validation, crash/timeout/malformed-result containment, sample module, and compatibility fixtures.
+9. **Tiled v2 conversion:** expand the isolated converter/publication workflow for the accepted JSON subset and prove every unsupported path leaves no output.
+10. **Evidence and handoff:** run focused/full Windows Release/ASan, hosted six-job matrix, large sparse-map gate, bundle verification, mirror checks, aggregate diff/commit review, push, update draft PR #6, and stop without merge.
+
+Each behavioral increment begins with a failing regression when practical, runs its focused build/tests before the implementation commit, and records exact results here before the next increment. No formatter, threshold, timeout, or unrelated subsystem change is used to obtain green evidence.
+
+### Affected tests and acceptance scenarios
+
+- Native document tests: v1 migration without open-time rewrite, deterministic v2/palette round trips, unknown/custom payload preservation, stable reslicing IDs, multiple TileSets, every layout, large sparse chunks, malformed limits, and interrupted save recovery.
+- Grid tests: forward/inverse projection, negative coordinates, hex neighbors, isometric/elevation sorting, layout lines, selection bounds, and collision geometry.
+- Asset/editor service tests: atomic full setup, palette sidecars/dependencies, unified compound Undo, dirty Save All, sharing violations, missing dependencies/extensions, and no partial publication.
+- Qt tests: complete Image/Tiled-to-paint journey, active target follow/pin/Play restore, palette organization, drag/drop, all tools/brushes, selection Inspector, row/column operations, configurable shortcuts/conflicts, focus order, accessible names/actions, high DPI, and high contrast.
+- Adapter/physics tests: real MonoGame and KNI pixels/picking for all layouts, deterministic rules/randomness, animation timing, chunk/individual sorting, sprite/grid/composite collision, contacts, and animated refresh.
+- Extension tests: ABI size/version negotiation, allocator pairing, batch bounds, denied capability, malformed proposal, crash/timeout quarantine, opaque preservation, and editor-process exclusion.
+- Tiled tests: current fixtures plus multiple TileSets, all representable orientations, animation, Wang conversion, Z-as-Y option, stable IDs, source mutation/tampering, and exact unsupported diagnostics.
+- Scale/acceptance: at least 1,024 by 1,024 occupied cells across multiple layers/TileSets while preserving the unchanged 1280 by 720, 30 FPS and input-latency gates.
+
+### Documentation strategy
+
+- Maintain byte-identical repository/external copies of Design, Prompt/Result, this plan, the active master tracker, affected ADRs, and a new Tilemap Editor Guide.
+- Update the historical Tiled import plan with a dated follow-up only; do not rewrite its accepted PR #5 evidence.
+- Update README and draft PR #6 with exact user workflows, format/support impact, commands/results, recovery coverage, adapter/platform separation, limitations, and follow-up work.
+- End every documentation increment and final handoff with SHA-256 mirror verification, UTF-8/LF validation, link checks, and `git diff --check`.
+
+### Added risks and mitigations
+
+- **Migration loss:** read v1 in memory, write v2 only after explicit mutation, preserve opaque data, and inject save/rollback failures.
+- **Cross-layout drift:** share one portable projection/topology implementation and golden fixtures across editor/import/runtime.
+- **Rule/animation nondeterminism:** derive random values from stable identities and consume one timing/evaluation contract in editor and workers.
+- **Object-brush overreach:** use existing scene commands plus stable placement metadata; never erase by name, proximity, or untrusted plugin output alone.
+- **Extension compromise:** load project modules only in disposable workers, validate bounded proposals, quarantine crashes, and deny direct writes.
+- **Large-map stalls:** retain sparse chunks, dirty-neighborhood rule refresh, visible-region rendering, bounded bulk-operation preflight, and unchanged performance gates.
+- **PR breadth:** preserve a reviewable test-first commit sequence and stop if a prerequisite architecture or unrelated failing gate would require scope expansion.
 
 ## Existing Architecture
 
@@ -199,6 +276,20 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 
 ## Definition of Done
 
+### DPE-ARCH-0015 parity expansion
+
+- [x] User-selected parity boundary, existing owners, current develop/branch state, Unity reference behavior, affected contracts/tests/docs, and platform-evidence policy are recorded.
+- [x] Design/Prompt, AGENTS, active/master plans, and affected ADRs are synchronized at DPE-ARCH-0015 before source changes.
+- [ ] TileSet v2, TilePalette v1, Tilemap v2, grid core, migrations, opaque preservation, and extension ABI are implemented and tested.
+- [ ] Atomic palette/full-setup publication, unified workspace ownership/Undo/Save All, and slicing/reslicing are implemented and tested.
+- [ ] Active Palette/Target, neutral clipboard, configurable shortcuts, complete selection editing, dedicated tile/brush editing, and accessible Scene workflows are implemented and tested.
+- [ ] Five layouts, typed tiles, all accepted brushes, renderer settings, collision modes, MonoGame/KNI snapshot-v5 behavior, and native extension containment are implemented and tested.
+- [ ] Expanded Tiled JSON subset and palette handoff are implemented with fail-before-publication coverage.
+- [ ] Large sparse-map, focused/full local Windows Release/ASan, six hosted jobs, production bundle, mirror, and aggregate-review evidence are recorded without weakened gates.
+- [ ] Branch is pushed and draft PR #6 is updated for human review without merge.
+
+### Original workspace and correction handoff
+
 - [x] Previous Tiled import PR merge verified and current `develop` inspected at the recorded base.
 - [x] Four required mirrors and `DPE-ARCH-0014` revision verified.
 - [x] Governing Design/Prompt context, active master, tile plan, affected ADRs, and verification policy reviewed.
@@ -267,7 +358,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Save-lock focused and aggregate verification passed | Strict Release `s1.native_core` passes in **3.13 seconds** and MSVC ASan passes in **4.45 seconds**. The first direct editor-test launch after a successful build ran outside the configured Qt/MSVC runtime and exited `0xc0000135` before assertions; it is inconclusive rather than test evidence. Rerunning in the developer environment proves the exact scene-plus-dirty-Tilemap recovery workflow in **13.044 seconds** Release and **18.846 seconds** ASan, including preserved dirty state and actionable sharing-lock dialog text. The paint-ready Tilemap workflow passes in **17.80 seconds** Release and **28.55 seconds** ASan. The complete strict Windows Release build succeeds with zero warnings/errors and the unchanged preset passes **61/61 in 512.60 seconds**, including both complete interaction aliases and POC J. The broader complete ASan preset was not repeated; its previously recorded POC J instrumentation blocker remains open. |
 | 2026-07-27 | Production bundle refreshed after editor close | Once the interactive packaged editor closed, `Build-Production-Editor.ps1 -Fast` rebuilt and deployed the patched editor without resetting the writable sample. All **189** manifest records exist and match size/SHA-256, with zero unlisted files, and the packaged MonoGame self-test passes with development-path overrides removed. Editor SHA-256 is `3C2A6F83C750B046471942DDD430DE86BA339CD2FFC79942D47A268EFE255E0E`; Tiled importer SHA-256 is `4B83ADCA6BD9E8CD81D7E2C7FC66A3455C2759D075CE2A91A42ADDD1489C3B5F`; manifest SHA-256 is `0F56A263F2F5DB6B7148F7589CB3F4E6EDC4D0837031250F7553463F5CF512E0`. |
 | 2026-07-27 | Save-lock correction review handoff updated | Reviewed the focused correction commits and seven-file diff from prior pushed head `013eb4e`, then re-reviewed the complete aggregate branch diff from `origin/develop`; `git diff --check` is clean and no unrelated format, ABI, protocol, support, platform, test threshold, or timeout change entered the correction. Pushed `feature/tilemap-authoring-workspace` and replaced the body of draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) with the root cause, recovery behavior, exact focused/full verification, bundle hashes, platform separation, and remaining limits. GitHub reports the PR open, draft, targeting `develop`, and unmerged. |
+| 2026-07-28 | Complete Tilemap Editor parity expansion accepted | Reverified all required mirrors at DPE-ARCH-0014, fetched `origin`, confirmed the clean branch and remote both at `a964ec0`, and confirmed `origin/develop` remains merged PR #5 at `8aac0e7`. The user selected durable palettes, all five layouts, all documented built-in tile/brush extras, full Grid Selection, multiple TileSets, complete slicing, both adapters, expanded Tiled JSON conversion, and a public worker-only native extension ABI on this same branch/PR. DPE-ARCH-0015 Design/Prompt, AGENTS, this plan, the master tracker, and ADR-0009/0016/0020/0022 were updated before source changes. Existing static-orthogonal evidence remains scoped to its assertions. |
 
 ## Handoff Notes
 
-The ready-to-paint Tilemap workflow, transient-sharing save correction, complete 61-entry strict Windows Release matrix, and refreshed 189-record production bundle are green and pushed. Draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) is open against `develop` and remains unmerged for human review. The previously recorded complete-ASan POC J blocker, ADR-0006 noncooperating-writer/handle-pinning limits beyond the bounded retry, current Ubuntu/macOS evidence, broader tile types/importers, complete POC K/O/J acceptance, and KNI production support remain open and unchanged.
+The prior ready-to-paint/static-orthogonal workflow, transient-sharing save correction, complete 61-entry strict Windows Release matrix, and refreshed 189-record production bundle remain valid historical evidence and are pushed. Draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) is reopened for the DPE-ARCH-0015 parity expansion and remains unmerged. Source implementation and new evidence are in progress; the previous complete-ASan POC J blocker, ADR-0006 handle-pinning limits, current hosted-platform failures, complete POC K/O/P/J acceptance, and KNI production support remain open.

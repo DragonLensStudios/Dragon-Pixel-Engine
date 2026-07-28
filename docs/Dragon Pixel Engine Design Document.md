@@ -1,8 +1,8 @@
 # Dragon Pixel Engine Design Document
 
 > **Status:** Accepted full version 1.0 delivery architecture; implementation in progress
-> **Design revision:** `DPE-ARCH-0014`
-> **Last reviewed:** 2026-07-27
+> **Design revision:** `DPE-ARCH-0015`
+> **Last reviewed:** 2026-07-28
 > **Current phase:** Gate-preserving completion of Slices 1 through 4 and the full design-defined Dragon Pixel Engine 1.0 feature set
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`
@@ -438,6 +438,46 @@ This revision accepts the user's 2026-07-27 request for a Unity-familiar first-u
 - POCs F, H, M, and O expand to cover public drag/drop, multiple locked Inspectors, template creation and recovery, asset operations, imported image device pixels/picking, path/link/case safety, accessibility, package relocatability, and current Windows/macOS/Linux Release and sanitizer evidence.
 - Dedicated Prefab Mode, cursor/surface drop placement, imported 3D/audio/font content, multi-scene editing, archive/restore, migration, packaging, plugin management, and updates remain outside this focused increment.
 - ADR-0005, ADR-0007, ADR-0008, ADR-0013, ADR-0018, and ADR-0020 remain `Proposed` until their complete gates pass. Partial or Windows-only implementation cannot close a POC, slice, platform matrix, or KNI support gate.
+
+## DPE-ARCH-0015 Complete 2D Tilemap Editor Contract
+
+This revision accepts the user's 2026-07-28 request to expand draft PR #6 from the completed static orthogonal workspace into a complete Dragon Pixel-owned 2D Tilemap Editor with Unity-familiar behavior. It adds durable palettes, typed tiles and brushes, five grid layouts, multiple TileSets, richer cell and renderer state, runtime snapshot v5, isolated native extension points, and a broader Tiled JSON conversion seam. Functional familiarity does not authorize copying Unity branding, artwork, proprietary presentation, serialized formats, or framework APIs. The existing editor, command, asset, worker, physics, recovery, platform, and support gates remain authoritative.
+
+### Durable tile documents and migration
+
+- `dpe.tileset` version 2 owns stable typed definitions for basic, animated, rule, rule-override, and custom tiles. A TileSet may depend on multiple texture assets. Each definition retains a stable tile UUID and may contain a source region/pivot, collider mode and outline, animation, rule table/output, override data, or versioned opaque custom payload. Version 1 remains readable and is not rewritten merely by opening it.
+- `dpe.tilepalette` version 1 is an independent project asset. It stores a sparse neutral two-dimensional clipboard whose cells reference `{tileSetId, tileId}` pairs across multiple TileSets. Neutral brush offsets project through the selected target's canonical grid mapping, allowing one palette to serve every supported layout while topology-specific tile definitions diagnose an unsupported target rather than silently changing semantics.
+- `dpe.tilemap` version 2 retains one asset with ordered internal layers and sparse chunks. The map owns one grid-layout contract: rectangular, point-top hexagonal, flat-top hexagonal, isometric, or isometric Z-as-Y. Cells add a qualified tile reference, tint, local offset, rotation, scale, signed elevation, flips, and color/transform locks. Layers add framework-neutral renderer settings including visibility, tint, optional material asset, sort order, chunk/individual mode, animation rate, and culling padding.
+- Readers perform deterministic in-memory v1-to-v2 migration. Writers emit v2 only after an explicit successful mutation/save. Unknown or newer typed definitions and extension data remain opaque and lossless. Reslicing preserves stable IDs by default, previews dependency impact, and never deletes referenced definitions without explicit confirmation.
+- Runtime snapshot version 5 resolves typed tiles, multiple texture/TileSet bindings, grid projection, cell properties, animation/rule data, renderer batches, and neutral collision shapes. Workers explicitly accept snapshot v4 or v5; unsupported required capabilities fail diagnostically without authoring mutation.
+
+### Authoring ownership and workflow
+
+- `TileDocumentService` evolves into the single loaded TileSet/palette/Tilemap workspace owner. All tile, palette, layer, selection, brush, and renderer mutations flow through one validated authoring command/Undo coordinator. Object-brush scene changes join the existing scene command transaction; widgets and viewports emit intent only.
+- Save and Save All prepare every dirty TileSet, palette, Tilemap, and scene document and commit them through the existing crash-recoverable multi-file publication boundary. A persistent sharing violation preserves prior valid documents and dirty in-memory state. Asset publication and scene attachment retain distinct owners; a valid published asset is never destructively removed merely because later scene attachment fails.
+- Create TileSet from Image supports automatic, cell-size, and cell-count slicing; offset, padding, empty-cell policy, pivot, preview, safe reslicing, and grid-layout selection. Its default guided success creates and opens the contained texture, TileSet, palette, Tilemap, selected Tilemap2D GameObject, and optional TilemapCollider2D through validated operations.
+- Tile Palette exposes an active palette, explicit active Tilemap/layer target, selection-following with pinning and post-Play restoration, a neutral clipboard, multi-cell brush preview, separate palette-organization controls, a brush inspector, and dedicated TileSet editors. Project Explorer drag paths remain versioned and validated.
+- Public tools are Select, Move, Paint, Box Fill, Pick, Erase, and Flood Fill, plus flip/rotation transforms. Grid Selection supports transactional move/delete, replacement, tint, offset, rotation, scale, elevation, locks, and row/column insertion or deletion. Tile shortcuts are per-user non-authoritative settings with conflict validation, familiar-letter and legacy-number profiles, and keyboard/accessibility coverage.
+
+### Layouts, typed behavior, rendering, and physics
+
+- One portable native grid owner supplies forward/inverse projection, picking, neighbor topology, grid-line traversal, sorting, and layout-aware collision geometry to the editor, importer, snapshot lowering, and runtime adapters. Isometric Z-as-Y uses a signed per-cell elevation rather than a third sparse coordinate.
+- Rule and Rule Override tiles support deterministic incremental square/hex neighbor evaluation, fixed/rotated/mirrored matching, and fixed/random/animated outputs. Random choices derive from stable map, layer, cell, and tile identities so editor, reload, MonoGame, and KNI agree.
+- Animated tiles support ordered frames, speed range, start time/frame, loop/pause, and optional physics refresh. Palette, Scene, and Game previews consume the same timing contract as Preview/Play workers.
+- Built-in brushes include Random, Line, Group, and GameObject. Prefab placement retains linked-prefab provenance; selected authoring objects use the existing duplication semantics with new stable IDs. Every placed object is a normal scene record beneath the active Tilemap2D target with stable grid-placement metadata, so erase/move cannot target unrelated objects.
+- Tile collision modes are None, Grid, and Sprite Outline. Layout-aware shapes and optional composite merging lower through engine-owned neutral DTOs to Box2D; backend handles and runtime state remain transient. Renderer behavior is implemented independently in MonoGame and experimental KNI without framework types entering portable contracts.
+
+### Native extension and importer boundary
+
+- A size-tagged `dpe_tile_extension_plugin_v1` C ABI is loaded only in disposable project workers. Batched tile evaluation consumes bounded neutral context and returns render/collision results; brush evaluation returns bounded command proposals that the editor validates atomically. C++/STL/Qt/framework objects, exceptions, allocator ambiguity, direct project writes, and editor-process project-module loading are prohibited.
+- The first public extension workflow is project-local and explicit-build only. Manifests declare stable type/version identities and capabilities. Missing, incompatible, denied, timed-out, or crashed extensions preserve opaque tile data, display diagnostics/placeholders, and disable only the affected behavior. Full plugin installation/update/distribution remains under POC P.
+- The isolated Tiled JSON worker expands to multiple inline/external atlas TileSets, orthogonal/isometric/staggered/hexagonal layouts, tile animation, representable Wang/terrain-to-rule conversion, and palette publication. Tiled isometric input may be explicitly interpreted as isometric Z-as-Y with default elevation. XML TMX/TSX, encoded/compressed layers, object layers, image collections, reimport, and semantics that cannot be represented remain rejected before publication.
+
+### Compatibility and evidence gate
+
+- POC K expands to cover v1/v2 migrations, palette assets, every layout/tool/tile/brush/collider behavior, large sparse maps, real adapter pixels/picking/animation, Box2D contacts, missing-extension preservation, and atomic recovery. POCs O and P cover the broader importer and worker-extension boundaries.
+- Review handoff requires focused and complete Windows Release/MSVC AddressSanitizer evidence plus the existing hosted Windows, Ubuntu, and macOS Release/sanitizer matrix without lowering any threshold. MonoGame and KNI are reported separately, KNI remains experimental, and a pre-existing unrelated platform failure remains visible and keeps the PR draft.
+- ADR-0006, ADR-0008, ADR-0009, ADR-0012, ADR-0016, ADR-0020, and ADR-0022 remain `Proposed` until their complete named gates pass. This revision does not claim POC, slice, platform, release, or KNI production completion.
 
 ## 1. Product Definition and Non-Goals
 
@@ -1384,3 +1424,4 @@ Additional primary sources were accessed on 2026-07-26 for DPE-ARCH-0013:
 | `DPE-ARCH-0012` | 2026-07-26 | Accepted managed GameObject controller surface | Added the backward-compatible `GameObjectController`/`IGameObjectControllerLifecycle` authoring surface, stable `Guid Id`, shared worker-owned `Transform` with `Vector3` fields, input/time access, disposable render/pick transform overlays, mover behavior, and removal of the non-authoring Lifecycle Inspector row |
 | `DPE-ARCH-0013` | 2026-07-26 | Accepted configurable input maps and rebinding | Added project-owned `dpe.inputmap` v1 documents, named control maps, validated persistent bindings, Qt keyboard/mouse capture, SDL 3 standard gamepad support, compatibility fallback, shared `InputMotion2D`/`MyMover` actions, and the expanded POC J evidence gate |
 | `DPE-ARCH-0014` | 2026-07-27 | Accepted project and daily-authoring workflow | Added the Project Hub, minimal declarative 2D/3D creation and clean scenes, project-v4/template-v1 implementation boundary, asset-v3 service and recoverable Project Browser operations, immutable imported-image runtime bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors while retaining every POC/platform gate |
+| `DPE-ARCH-0015` | 2026-07-28 | Accepted complete 2D Tilemap Editor expansion | Added TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, five grid layouts, multi-TileSet typed tiles and brushes, full palette/selection/slicing workflows, renderer/collision behavior, worker-only native tile extensions, expanded Tiled JSON conversion, and unchanged cross-platform/POC/KNI gates |

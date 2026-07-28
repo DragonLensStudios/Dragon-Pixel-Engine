@@ -1,7 +1,7 @@
 # ADR-0020: Asset Import and Cache Integrity
 
 > **Status:** Proposed
-> **Design revision:** `DPE-ARCH-0014`
+> **Design revision:** `DPE-ARCH-0015`
 > **Last reviewed:** 2026-07-27
 
 ## Context
@@ -46,3 +46,10 @@ The existing contained-PNG TileSet workflow and focused Tiled-import worker are 
 Focused importer-isolation evidence (2026-07-27): `feature/tiled-tilemap-import` launches `DragonPixelTiledImporterWorker` without a shell into an operation-owned temporary directory and gives it no project-write path. The editor assigns all three asset identities and validates the result version/importer, exact output inventory, containment, regular-file status, IDs, limits, statistics, source stability, native documents, PNG decode, atlas bounds, and dependency graph before `AssetService` publishes six collision-free files through one operation. Actual-worker success and injected start/crash/timeout/cancel, tampered path/identity, invalid PNG, collision, and no-partial-publication paths are covered. The focused Windows Release matrix passes 9/9 in 6.48 seconds and MSVC AddressSanitizer passes 9/9 in 21.05 seconds. The 189-record production-style bundle contains the importer and hash-verifies with no missing, mismatched, or unlisted files. Reimport, source watching, full cache reconstruction/corruption, broader formats, hard-link/reparse races beyond current owners, and current Ubuntu/macOS/hosted evidence remain open; this does not promote POC O or this ADR.
 
 Focused generated-Tilemap evidence (2026-07-27): `feature/tilemap-authoring-workspace` extends `AssetService` with a narrowly generated empty-Tilemap operation. It re-resolves one structurally valid indexed TileSet, reparses its native document and stable ID, generates stable Tilemap/layer UUIDs, binds the TileSet dependency revision, stages the `dpe.tilemap` v1 source and `dpe.asset` v3 sidecar together, rejects invalid names/types/documents/collisions, validates the complete post-commit project index, and removes only its newly published outputs if that validation unexpectedly fails. Focused success and failure tests prove no partial authoritative files. The complete strict Windows Release preset passes 60/60 in 446.31 seconds; the final feature-focused MSVC AddressSanitizer workflow passes 6/6 stages in 42.269 seconds without a sanitizer finding. The broader ASan preset passes 59/60 with the separate open POC J Qt-painted-FPS gate failing under instrumentation; AssetService, POC O, and both complete editor interaction aliases pass. This does not implement reimport/cache reconstruction, broaden formats, close three-platform POC O, or promote this ADR from `Proposed`.
+
+## DPE-ARCH-0015 Tilemap asset/import expansion
+
+- Asset v3 indexes `tilepalette` documents and the additional TileSet/texture/palette/Tilemap dependency graph without changing its public format version.
+- Guided image setup stages the contained texture, TileSet v2, TilePalette v1, Tilemap v2, and their sidecars as one validated asset operation before scene attachment. Pre-publication failure leaves no output; scene-only attachment failure retains valid assets and an actionable recovery path.
+- The isolated Tiled JSON worker may emit multiple contained textures/TileSets plus one palette and Tilemap for the accepted v2 subset. The editor assigns and validates every identity, output path, dependency, native document, decoded image, and limit before atomic publication.
+- XML, encoded/compressed layers, object/image-collection layers, reimport, and unrepresentable rule/terrain semantics remain fail-before-publication cases. This expanded implementation evidence cannot close POC O without cache reconstruction/reimport and the complete three-platform matrix.

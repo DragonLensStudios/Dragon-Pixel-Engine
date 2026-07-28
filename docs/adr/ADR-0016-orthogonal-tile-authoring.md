@@ -1,8 +1,8 @@
-# ADR-0016: Orthogonal Tile Authoring and Runtime Lowering
+# ADR-0016: 2D Tilemap Authoring and Runtime Lowering
 
 > **Status:** Proposed
 > **Date:** 2026-07-25
-> **Design revision:** `DPE-ARCH-0009`
+> **Design revision:** `DPE-ARCH-0015`
 
 ## Context
 
@@ -22,9 +22,18 @@ Dragon Pixel needs a usable 2D tile workflow without storing large cell arrays i
 
 Reusable sparse assets keep scenes small and permit chunk-level Undo and runtime work. The editor must coordinate multi-document dirty state, dependency watching, texture intake, and chunk serialization. Isometric, hex, rule, animated, terrain, and 3D tiles remain separate decisions.
 
+## DPE-ARCH-0015 expanded decision
+
+- `dpe.tileset` version 2, `dpe.tilepalette` version 1, `dpe.tilemap` version 2, and runtime snapshot version 5 expand the v1 orthogonal proof without invalidating it. Readers preserve v1 and unknown/newer records; writers upgrade only after explicit mutation/save.
+- One map retains internal layers and sparse chunks, but supports five grid layouts, multiple TileSets/textures, qualified tile references, rich cell properties, renderer settings, deterministic typed tiles/brushes, layout-aware collision, and universal logical palettes.
+- One portable grid implementation owns projection, inverse picking, neighbors, lines, sorting, and collision geometry. MonoGame and KNI consume the same neutral snapshot while keeping framework objects private.
+- TileDocumentService remains the sole loaded tile-workspace mutation owner. Palette/Scene/Inspector operations, object-brush scene commands, unified Undo, and atomic Save All cannot become alternate file writers.
+- Project-local custom tile/brush modules run only through `dpe_tile_extension_plugin_v1` in disposable workers. Unknown or failed types remain opaque, visible, and non-destructive.
+- The isolated Tiled JSON seam may populate v2 documents and palettes for the explicitly accepted subset; Tiled concepts do not enter runtime contracts.
+
 ## Validation and acceptance gate
 
-POC K must prove deterministic formats, stable IDs across reslicing, contained PNG intake, all public Qt tools, chunk-boundary Undo/Redo, save/recovery, missing dependency preservation, real MonoGame/KNI device pixels and picking, and Box2D collision on Windows, macOS, and Linux. This ADR remains `Proposed` until that evidence is reviewed.
+POC K must prove deterministic v1/v2/palette formats, stable IDs across reslicing, contained image intake, all public Qt tools and grid layouts, chunk-boundary and compound Undo/Redo, save/recovery, missing dependency/extension preservation, a representative 1,024-by-1,024 occupied sparse map, real MonoGame/KNI device pixels/picking/animation/rules, and Box2D collision/contact behavior on Windows, macOS, and Linux. The existing 30 FPS and latency thresholds remain unchanged. This ADR remains `Proposed` until that evidence is reviewed.
 
 Current Windows evidence (2026-07-25): native tests prove deterministic TileSet/Tilemap v1 documents, stable tile IDs, sparse 32-by-32 chunks, ordered layers, and command-backed edits. Public Qt tests exercise the contained-PNG wizard, deterministic grid validation, non-overwrite behavior, palette tools, dirty state, Undo/Redo, atomic save/reopen, and external-change diagnostics. Snapshot-v4 flattening embeds immutable PNG bytes and tile source rectangles; both framework adapters load/cache those textures and batch tile draws, while resolved collision cells lower to engine-owned static Box2D data. The current Windows strict Release and MSVC AddressSanitizer matrices both pass 45 of 45 tests.
 
