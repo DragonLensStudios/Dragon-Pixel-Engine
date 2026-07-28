@@ -571,13 +571,12 @@ void verify_hierarchy_duplicate_and_delete()
             && value.find_entity(external_id)->sibling_order == 0,
         "Undo did not restore reparent and root ordering.");
 
-    const duplicate_subtree_command duplicate{
-        root_id,
-        {
-            entity_id_remap{root_id, duplicate_root_id},
-            entity_id_remap{child_id, duplicate_child_id},
-            entity_id_remap{grandchild_id, duplicate_grandchild_id},
-        },
+    duplicate_subtree_command duplicate{};
+    duplicate.root_entity_id = root_id;
+    duplicate.id_remaps = {
+        entity_id_remap{root_id, duplicate_root_id},
+        entity_id_remap{child_id, duplicate_child_id},
+        entity_id_remap{grandchild_id, duplicate_grandchild_id},
     };
     require(value.apply(command{duplicate}, "Duplicate hierarchy").succeeded,
         "Subtree duplication with deterministic caller-supplied IDs failed.");

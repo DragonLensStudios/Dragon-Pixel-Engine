@@ -4970,13 +4970,11 @@ void EditorWindow::duplicate_selected()
             }
         }
         duplicates.push_back(remaps.front().duplicate_id);
-        commands.emplace_back(dragonpixel::scene::duplicate_subtree_command{
-            root_id,
-            std::move(remaps),
-            std::nullopt,
-            std::nullopt,
-            root->name + " Copy",
-            true});
+        dragonpixel::scene::duplicate_subtree_command duplicate{};
+        duplicate.root_entity_id = root_id;
+        duplicate.id_remaps = std::move(remaps);
+        duplicate.duplicate_root_name = root->name + " Copy";
+        commands.emplace_back(std::move(duplicate));
     }
     if (apply_authoring_transaction(std::move(commands), "Duplicate GameObject subtrees"))
     {
