@@ -11,6 +11,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDragEnterEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDropEvent>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -24,6 +26,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QKeySequenceEdit>
 #include <QGroupBox>
 #include <QPainter>
 #include <QPushButton>
@@ -34,6 +37,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSettings>
+#include <QSet>
 #include <QSplitter>
 #include <QToolBar>
 #include <QToolButton>
@@ -409,16 +413,33 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     shortcut_profile->setAccessibleName(QStringLiteral("Tile tool shortcut profile"));
     shortcut_profile->addItem(QStringLiteral("Familiar letters"), QStringLiteral("letters"));
     shortcut_profile->addItem(QStringLiteral("Legacy numbers"), QStringLiteral("numbers"));
+    shortcut_profile->addItem(QStringLiteral("Custom"), QStringLiteral("custom"));
     toolbar->addWidget(shortcut_profile);
+    const std::array actions{paint_action, erase_action, box_action, line_action, fill_action,
+        pick_action, select_action, move_action};
+    const std::array binding_ids{QStringLiteral("Paint"), QStringLiteral("Erase"),
+        QStringLiteral("Box"), QStringLiteral("Line"), QStringLiteral("Flood"),
+        QStringLiteral("Pick"), QStringLiteral("Select"), QStringLiteral("Move")};
     const auto apply_shortcuts = [paint_action, erase_action, box_action, line_action, fill_action,
-                                     pick_action, select_action, move_action](const QString& profile) {
-        const QStringList keys = profile == QStringLiteral("numbers")
+                                     pick_action, select_action, move_action,
+                                     binding_ids](const QString& profile) {
+        auto keys = profile == QStringLiteral("numbers")
             ? QStringList{QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("3"),
                   QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"),
                   QStringLiteral("7"), QStringLiteral("8")}
             : QStringList{QStringLiteral("P"), QStringLiteral("E"), QStringLiteral("B"),
                   QStringLiteral("L"), QStringLiteral("F"), QStringLiteral("I"),
                   QStringLiteral("S"), QStringLiteral("M")};
+        if (profile == QStringLiteral("custom"))
+        {
+            QSettings settings;
+            for (std::size_t index = 0; index < binding_ids.size(); ++index)
+            {
+                keys[static_cast<qsizetype>(index)] = settings.value(
+                    QStringLiteral("tiles/customShortcuts/%1").arg(binding_ids[index]),
+                    keys.at(static_cast<qsizetype>(index))).toString();
+            }
+        }
         const std::array actions{paint_action, erase_action, box_action, line_action, fill_action,
             pick_action, select_action, move_action};
         for (std::size_t index = 0; index < actions.size(); ++index)
@@ -431,7 +452,8 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     QSettings tile_settings;
     const auto saved_profile = tile_settings.value(
         QStringLiteral("tiles/shortcutProfile"), QStringLiteral("letters")).toString();
-    shortcut_profile->setCurrentIndex(saved_profile == QStringLiteral("numbers") ? 1 : 0);
+    const auto saved_profile_index = shortcut_profile->findData(saved_profile);
+    shortcut_profile->setCurrentIndex(saved_profile_index >= 0 ? saved_profile_index : 0);
     apply_shortcuts(shortcut_profile->currentData().toString());
     connect(shortcut_profile, &QComboBox::currentIndexChanged, this,
         [shortcut_profile, apply_shortcuts](int) {
@@ -439,13 +461,103 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
             apply_shortcuts(profile);
             QSettings{}.setValue(QStringLiteral("tiles/shortcutProfile"), profile);
         });
+    auto* edit_shortcuts = new QToolButton{toolbar};
+    edit_shortcuts->setObjectName(QStringLiteral("EditTileShortcuts"));
+    edit_shortcuts->setText(QStringLiteral("Edit Keys..."));
+    edit_shortcuts->setAccessibleName(QStringLiteral("Edit Tile tool shortcuts"));
+    edit_shortcuts->setToolTip(QStringLiteral(
+        "Assign a unique, non-empty key sequence to every Tile tool."));
+    toolbar->addWidget(edit_shortcuts);
+    connect(edit_shortcuts, &QToolButton::clicked, this,
+        [this, shortcut_profile, apply_shortcuts, actions, binding_ids] {
+            QDialog dialog{this};
+            dialog.setObjectName(QStringLiteral("TileShortcutEditor"));
+            dialog.setWindowTitle(QStringLiteral("Edit Tile Tool Shortcuts"));
+            dialog.setAccessibleName(QStringLiteral("Edit Tile tool shortcuts"));
+            auto* dialog_layout = new QVBoxLayout{&dialog};
+            auto* form = new QFormLayout;
+            std::array<QKeySequenceEdit*, 8> edits{};
+            for (std::size_t index = 0; index < edits.size(); ++index)
+            {
+                auto* edit = new QKeySequenceEdit{actions[index]->shortcut(), &dialog};
+                edit->setObjectName(QStringLiteral("TileShortcutEdit%1").arg(binding_ids[index]));
+                edit->setAccessibleName(QStringLiteral("%1 Tile tool shortcut").arg(binding_ids[index]));
+                edit->setClearButtonEnabled(true);
+                edits[index] = edit;
+                form->addRow(actions[index]->text(), edit);
+            }
+            dialog_layout->addLayout(form);
+            auto* validation = new QLabel{&dialog};
+            validation->setObjectName(QStringLiteral("TileShortcutValidation"));
+            validation->setAccessibleName(QStringLiteral("Tile shortcut validation"));
+            validation->setWordWrap(true);
+            dialog_layout->addWidget(validation);
+            auto* buttons = new QDialogButtonBox{
+                QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog};
+            dialog_layout->addWidget(buttons);
+            connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+            const auto validate = [edits, validation, buttons] {
+                QSet<QString> used;
+                QString error;
+                for (const auto* edit : edits)
+                {
+                    const auto encoded = edit->keySequence().toString(QKeySequence::PortableText);
+                    if (encoded.isEmpty())
+                    {
+                        error = QStringLiteral("Every Tile tool requires a shortcut.");
+                        break;
+                    }
+                    if (used.contains(encoded))
+                    {
+                        error = QStringLiteral("Shortcut conflict: %1 is assigned more than once.")
+                            .arg(encoded);
+                        break;
+                    }
+                    used.insert(encoded);
+                }
+                validation->setText(error);
+                buttons->button(QDialogButtonBox::Ok)->setEnabled(error.isEmpty());
+            };
+            for (auto* edit : edits)
+                connect(edit, &QKeySequenceEdit::keySequenceChanged, &dialog,
+                    [validate](const QKeySequence&) { validate(); });
+            connect(buttons->button(QDialogButtonBox::Ok), &QPushButton::clicked, &dialog,
+                [&dialog, edits, shortcut_profile, apply_shortcuts, binding_ids] {
+                    QSettings settings;
+                    for (std::size_t index = 0; index < edits.size(); ++index)
+                    {
+                        settings.setValue(
+                            QStringLiteral("tiles/customShortcuts/%1").arg(binding_ids[index]),
+                            edits[index]->keySequence().toString(QKeySequence::PortableText));
+                    }
+                    settings.setValue(
+                        QStringLiteral("tiles/shortcutProfile"), QStringLiteral("custom"));
+                    settings.sync();
+                    const QSignalBlocker blocker{shortcut_profile};
+                    shortcut_profile->setCurrentIndex(
+                        shortcut_profile->findData(QStringLiteral("custom")));
+                    apply_shortcuts(QStringLiteral("custom"));
+                    dialog.accept();
+                });
+            validate();
+            static_cast<void>(dialog.exec());
+        });
     auto* reset_shortcuts = new QToolButton{toolbar};
     reset_shortcuts->setObjectName(QStringLiteral("ResetTileShortcuts"));
     reset_shortcuts->setText(QStringLiteral("Reset Keys"));
     reset_shortcuts->setAccessibleName(QStringLiteral("Reset Tile tool shortcuts"));
     toolbar->addWidget(reset_shortcuts);
     connect(reset_shortcuts, &QToolButton::clicked, shortcut_profile,
-        [shortcut_profile] { shortcut_profile->setCurrentIndex(0); });
+        [shortcut_profile, apply_shortcuts] {
+            QSettings settings;
+            settings.remove(QStringLiteral("tiles/customShortcuts"));
+            settings.setValue(QStringLiteral("tiles/shortcutProfile"), QStringLiteral("letters"));
+            settings.sync();
+            const QSignalBlocker blocker{shortcut_profile};
+            shortcut_profile->setCurrentIndex(
+                shortcut_profile->findData(QStringLiteral("letters")));
+            apply_shortcuts(QStringLiteral("letters"));
+        });
     toolbar->addSeparator();
     flip_x_ = new QToolButton{toolbar};
     flip_x_->setObjectName(QStringLiteral("TileBrushFlipX"));
