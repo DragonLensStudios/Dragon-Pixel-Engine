@@ -445,6 +445,23 @@ TileSetCreationResult TileSetCreationService::create(const TileSetCreationReques
     return result;
 }
 
+TileSetSlicePlan TileSetCreationService::plan_slices(
+    const QImage& image,
+    const TileSetCreationRequest& request)
+{
+    const auto internal = build_slice_plan(image, request);
+    TileSetSlicePlan result;
+    result.columns = internal.columns;
+    result.rows = internal.rows;
+    result.cell_width = internal.cell_width;
+    result.cell_height = internal.cell_height;
+    result.error = internal.error;
+    result.regions.reserve(internal.regions.size());
+    for (const auto& region : internal.regions)
+        result.regions.push_back({region.source, region.column, region.row});
+    return result;
+}
+
 TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
     : QDialog(parent), project_root_(std::move(project_root))
 {

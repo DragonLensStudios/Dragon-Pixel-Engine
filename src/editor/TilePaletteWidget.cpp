@@ -1,4 +1,5 @@
 #include "TilePaletteWidget.h"
+#include "TileSetWizard.h"
 
 #include <dragonpixel/tiles/tile_grid.h>
 #include <dragonpixel/tiles/tile_evaluator.h>
@@ -896,6 +897,14 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tile_custom_payload_ = new QLineEdit{QStringLiteral("{}"), tile_editor};
     tile_custom_payload_->setObjectName(QStringLiteral("TileDefinitionCustomPayload"));
     tile_form->addRow(QStringLiteral("Custom JSON"), tile_custom_payload_);
+    auto* reslice_tileset = new QPushButton{
+        QStringLiteral("Re-slice TileSet..."), tile_editor};
+    reslice_tileset->setObjectName(QStringLiteral("ResliceTileSet"));
+    reslice_tileset->setAccessibleName(QStringLiteral(
+        "Preview and apply safe TileSet sprite re-slicing"));
+    reslice_tileset->setToolTip(QStringLiteral(
+        "Keeps stable IDs and authored data for unchanged sprite rectangles; referenced removals are rejected."));
+    tile_form->addRow(QStringLiteral("Sprite slicing"), reslice_tileset);
     auto* apply_tile_definition = new QPushButton{
         QStringLiteral("Apply Tile Definition"), tile_editor};
     apply_tile_definition->setObjectName(QStringLiteral("ApplyTileDefinition"));
@@ -903,6 +912,238 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         "Apply selected tile definition through Tile workspace Undo"));
     tile_form->addRow(QString{}, apply_tile_definition);
     layout->addWidget(tile_editor);
+
+    connect(reslice_tileset, &QPushButton::clicked, this, [this] {
+        const auto* selected_item = tiles_ == nullptr ? nullptr : tiles_->currentItem();
+        const auto selected_set_id = selected_item == nullptr
+            ? std::optional<dragonpixel::core::uuid>{}
+            : dragonpixel::core::uuid::parse(
+                  selected_item->data(Qt::UserRole + 1).toString().toStdString());
+        if (!selected_set_id)
+        {
+            status_->setText(QStringLiteral("Select a TileSet tile before re-slicing."));
+            return;
+        }
+        const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& set) { return set.asset_id == *selected_set_id; });
+        if (owner == service_->tilesets().end()) return;
+        const auto atlas = atlases_.value(
+            QString::fromStdString(selected_set_id->to_string()), atlas_);
+        if (atlas.isNull())
+        {
+            status_->setText(QStringLiteral(
+                "The TileSet source image is unavailable; re-slicing was not started."));
+            return;
+        }
+
+        QDialog dialog{this};
+        dialog.setObjectName(QStringLiteral("TileSetResliceDialog"));
+        dialog.setWindowTitle(QStringLiteral("Re-slice TileSet"));
+        dialog.setAccessibleName(QStringLiteral("Re-slice selected TileSet"));
+        dialog.resize(560, 620);
+        auto* dialog_layout = new QVBoxLayout{&dialog};
+        auto* form = new QFormLayout;
+        auto* mode = new QComboBox{&dialog};
+        mode->setObjectName(QStringLiteral("ResliceTileMode"));
+        mode->setAccessibleName(QStringLiteral("TileSet re-slicing mode"));
+        mode->addItem(QStringLiteral("Automatic"), static_cast<int>(TileSetSlicingMode::automatic));
+        mode->addItem(QStringLiteral("Cell Size"), static_cast<int>(TileSetSlicingMode::cell_size));
+        mode->addItem(QStringLiteral("Cell Count"), static_cast<int>(TileSetSlicingMode::cell_count));
+        const auto current_mode = owner->slicing.mode == dragonpixel::tiles::slice_mode::automatic
+            ? TileSetSlicingMode::automatic
+            : owner->slicing.mode == dragonpixel::tiles::slice_mode::cell_count
+                ? TileSetSlicingMode::cell_count : TileSetSlicingMode::cell_size;
+        mode->setCurrentIndex(mode->findData(static_cast<int>(current_mode)));
+        form->addRow(QStringLiteral("Slicing"), mode);
+        const auto add_integer = [&dialog, form](const QString& label, const QString& name,
+                                     int minimum, int maximum, int value) {
+            auto* field = new QSpinBox{&dialog};
+            field->setObjectName(name);
+            field->setAccessibleName(label);
+            field->setRange(minimum, maximum);
+            field->setValue(value);
+            form->addRow(label, field);
+            return field;
+        };
+        auto* cell_width = add_integer(QStringLiteral("Cell width"),
+            QStringLiteral("ResliceTileCellWidth"), 1, 8192, owner->cell_size.x);
+        auto* cell_height = add_integer(QStringLiteral("Cell height"),
+            QStringLiteral("ResliceTileCellHeight"), 1, 8192, owner->cell_size.y);
+        auto* columns = add_integer(QStringLiteral("Column count"),
+            QStringLiteral("ResliceTileColumnCount"), 1, 8192, owner->slicing.cell_count.x);
+        auto* rows = add_integer(QStringLiteral("Row count"),
+            QStringLiteral("ResliceTileRowCount"), 1, 8192, owner->slicing.cell_count.y);
+        auto* margin_x = add_integer(QStringLiteral("Offset X"),
+            QStringLiteral("ResliceTileMarginX"), 0, 8192, owner->margin.x);
+        auto* margin_y = add_integer(QStringLiteral("Offset Y"),
+            QStringLiteral("ResliceTileMarginY"), 0, 8192, owner->margin.y);
+        auto* spacing_x = add_integer(QStringLiteral("Padding X"),
+            QStringLiteral("ResliceTileSpacingX"), 0, 8192, owner->spacing.x);
+        auto* spacing_y = add_integer(QStringLiteral("Padding Y"),
+            QStringLiteral("ResliceTileSpacingY"), 0, 8192, owner->spacing.y);
+        auto* pivot_x = new QDoubleSpinBox{&dialog};
+        auto* pivot_y = new QDoubleSpinBox{&dialog};
+        for (auto* pivot : {pivot_x, pivot_y})
+        {
+            pivot->setRange(0.0, 1.0);
+            pivot->setSingleStep(0.05);
+            pivot->setDecimals(3);
+        }
+        pivot_x->setObjectName(QStringLiteral("ResliceTilePivotX"));
+        pivot_y->setObjectName(QStringLiteral("ResliceTilePivotY"));
+        pivot_x->setAccessibleName(QStringLiteral("Re-sliced tile pivot X"));
+        pivot_y->setAccessibleName(QStringLiteral("Re-sliced tile pivot Y"));
+        pivot_x->setValue(owner->slicing.pivot.x);
+        pivot_y->setValue(owner->slicing.pivot.y);
+        form->addRow(QStringLiteral("Pivot X"), pivot_x);
+        form->addRow(QStringLiteral("Pivot Y"), pivot_y);
+        auto* keep_empty = new QCheckBox{QStringLiteral("Keep empty cells"), &dialog};
+        keep_empty->setObjectName(QStringLiteral("ResliceTileKeepEmpty"));
+        keep_empty->setAccessibleName(QStringLiteral("Keep transparent re-sliced cells"));
+        keep_empty->setChecked(owner->slicing.keep_empty_rects);
+        form->addRow(QString{}, keep_empty);
+        auto* collision = new QCheckBox{
+            QStringLiteral("Generate Grid collision for new tiles"), &dialog};
+        collision->setObjectName(QStringLiteral("ResliceTileCollision"));
+        collision->setAccessibleName(QStringLiteral("Generate Grid collision for newly sliced tiles"));
+        collision->setChecked(std::any_of(owner->tiles.begin(), owner->tiles.end(), [](const auto& tile) {
+            return tile.collider_mode == dragonpixel::tiles::tile_collider_mode::grid;
+        }));
+        form->addRow(QString{}, collision);
+        dialog_layout->addLayout(form);
+        auto* preview = new QLabel{&dialog};
+        preview->setObjectName(QStringLiteral("TileSetReslicePreview"));
+        preview->setAccessibleName(QStringLiteral("TileSet re-slicing preview"));
+        preview->setAlignment(Qt::AlignCenter);
+        preview->setMinimumHeight(180);
+        preview->setFrameShape(QFrame::StyledPanel);
+        dialog_layout->addWidget(preview, 1);
+        auto* validation = new QLabel{&dialog};
+        validation->setObjectName(QStringLiteral("TileSetResliceValidation"));
+        validation->setAccessibleName(QStringLiteral("TileSet re-slicing validation"));
+        validation->setWordWrap(true);
+        dialog_layout->addWidget(validation);
+        auto* buttons = new QDialogButtonBox{
+            QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog};
+        buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Apply"));
+        dialog_layout->addWidget(buttons);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+        const auto request_from_controls = [=] {
+            TileSetCreationRequest request;
+            request.slicing_mode = static_cast<TileSetSlicingMode>(mode->currentData().toInt());
+            request.cell_width = cell_width->value();
+            request.cell_height = cell_height->value();
+            request.column_count = columns->value();
+            request.row_count = rows->value();
+            request.margin_x = margin_x->value();
+            request.margin_y = margin_y->value();
+            request.spacing_x = spacing_x->value();
+            request.spacing_y = spacing_y->value();
+            request.pivot_x = pivot_x->value();
+            request.pivot_y = pivot_y->value();
+            request.keep_empty_cells = keep_empty->isChecked();
+            request.rectangular_collision = collision->isChecked();
+            return request;
+        };
+        const auto update_preview = [=] {
+            const auto request = request_from_controls();
+            const auto plan = TileSetCreationService::plan_slices(atlas, request);
+            const auto automatic = request.slicing_mode == TileSetSlicingMode::automatic;
+            const auto by_count = request.slicing_mode == TileSetSlicingMode::cell_count;
+            cell_width->setEnabled(!automatic && !by_count);
+            cell_height->setEnabled(!automatic && !by_count);
+            columns->setEnabled(by_count);
+            rows->setEnabled(by_count);
+            for (auto* field : {margin_x, margin_y, spacing_x, spacing_y})
+                field->setEnabled(!automatic);
+            buttons->button(QDialogButtonBox::Ok)->setEnabled(plan.error.isEmpty());
+            if (!plan.error.isEmpty())
+            {
+                validation->setText(plan.error);
+                preview->setPixmap({});
+                return;
+            }
+            int preserved{};
+            for (const auto& region : plan.regions)
+                if (std::any_of(owner->tiles.begin(), owner->tiles.end(), [&](const auto& tile) {
+                        return tile.source.x == region.source.x()
+                            && tile.source.y == region.source.y()
+                            && tile.source.width == region.source.width()
+                            && tile.source.height == region.source.height();
+                    })) ++preserved;
+            const auto removed = static_cast<int>(owner->tiles.size()) - preserved;
+            validation->setText(QStringLiteral(
+                "%1 tiles | %2 stable IDs preserved | %3 removed after reference validation")
+                .arg(plan.regions.size()).arg(preserved).arg(std::max(0, removed)));
+            auto picture = atlas.convertToFormat(QImage::Format_ARGB32);
+            QPainter painter{&picture};
+            painter.setPen(QPen{QColor{255, 210, 32, 220}, 1});
+            for (const auto& region : plan.regions) painter.drawRect(region.source);
+            painter.end();
+            preview->setPixmap(QPixmap::fromImage(picture).scaled(
+                preview->size(), Qt::KeepAspectRatio, Qt::FastTransformation));
+        };
+        connect(mode, &QComboBox::currentIndexChanged, &dialog,
+            [update_preview](int) { update_preview(); });
+        for (auto* field : {cell_width, cell_height, columns, rows,
+                 margin_x, margin_y, spacing_x, spacing_y})
+            connect(field, &QSpinBox::valueChanged, &dialog,
+                [update_preview](int) { update_preview(); });
+        for (auto* field : {pivot_x, pivot_y})
+            connect(field, &QDoubleSpinBox::valueChanged, &dialog,
+                [update_preview](double) { update_preview(); });
+        connect(keep_empty, &QCheckBox::toggled, &dialog,
+            [update_preview](bool) { update_preview(); });
+        connect(buttons->button(QDialogButtonBox::Ok), &QPushButton::clicked, &dialog,
+            [=, this, &dialog] {
+                const auto creation_request = request_from_controls();
+                const auto plan = TileSetCreationService::plan_slices(atlas, creation_request);
+                if (!plan.error.isEmpty()) return;
+                int preserved{};
+                for (const auto& region : plan.regions)
+                    if (std::any_of(owner->tiles.begin(), owner->tiles.end(), [&](const auto& tile) {
+                            return tile.source.x == region.source.x()
+                                && tile.source.y == region.source.y()
+                                && tile.source.width == region.source.width()
+                                && tile.source.height == region.source.height();
+                        })) ++preserved;
+                const auto removed = static_cast<int>(owner->tiles.size()) - preserved;
+                if (removed > 0 && QMessageBox::question(&dialog,
+                        QStringLiteral("Apply TileSet Re-slicing"),
+                        QStringLiteral(
+                            "This will remove %1 unreferenced tile definition(s). Referenced removals are rejected. Continue?")
+                            .arg(removed), QMessageBox::Yes | QMessageBox::Cancel,
+                        QMessageBox::Cancel) != QMessageBox::Yes) return;
+                TileDocumentService::ResliceRequest request;
+                request.tile_set_id = *selected_set_id;
+                request.cell_size = {plan.cell_width, plan.cell_height};
+                request.margin = {creation_request.margin_x, creation_request.margin_y};
+                request.spacing = {creation_request.spacing_x, creation_request.spacing_y};
+                request.slicing.mode = creation_request.slicing_mode == TileSetSlicingMode::automatic
+                    ? dragonpixel::tiles::slice_mode::automatic
+                    : creation_request.slicing_mode == TileSetSlicingMode::cell_count
+                        ? dragonpixel::tiles::slice_mode::cell_count
+                        : dragonpixel::tiles::slice_mode::cell_size;
+                request.slicing.cell_count = {plan.columns, plan.rows};
+                request.slicing.keep_empty_rects = creation_request.keep_empty_cells;
+                request.slicing.pivot = {creation_request.pivot_x, creation_request.pivot_y};
+                request.grid_collision_for_new_tiles = creation_request.rectangular_collision;
+                request.regions.reserve(static_cast<std::size_t>(plan.regions.size()));
+                for (const auto& region : plan.regions)
+                    request.regions.push_back({{region.source.x(), region.source.y(),
+                        region.source.width(), region.source.height()}, region.column, region.row});
+                if (!service_->reslice_tileset(request))
+                {
+                    validation->setText(service_->error());
+                    return;
+                }
+                dialog.accept();
+                rebuild();
+            });
+        update_preview();
+        static_cast<void>(dialog.exec());
+    });
 
     auto* map_editor = new QGroupBox{QStringLiteral("Grid and Layer Renderer"), this};
     map_editor->setObjectName(QStringLiteral("TilemapGridLayerEditor"));

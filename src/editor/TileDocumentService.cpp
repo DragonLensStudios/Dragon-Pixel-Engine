@@ -5,8 +5,10 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QCryptographicHash>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <deque>
 #include <filesystem>
@@ -37,6 +39,33 @@ std::vector<std::pair<int, int>> occupied_positions(const dragonpixel::tiles::ti
             result.push_back({chunk.x * 32 + static_cast<int>(cell.index % 32U),
                 chunk.y * 32 + static_cast<int>(cell.index / 32U)});
     return result;
+}
+
+dragonpixel::core::uuid stable_tile_id(
+    const dragonpixel::core::uuid& tile_set_id,
+    const dragonpixel::tiles::source_rectangle& source)
+{
+    QByteArray seed{reinterpret_cast<const char*>(tile_set_id.bytes().data()), 16};
+    seed.append(':').append(QByteArray::number(source.x))
+        .append(':').append(QByteArray::number(source.y))
+        .append(':').append(QByteArray::number(source.width))
+        .append(':').append(QByteArray::number(source.height));
+    const auto digest = QCryptographicHash::hash(seed, QCryptographicHash::Sha256);
+    std::array<std::uint8_t, 16> bytes{};
+    std::copy_n(reinterpret_cast<const std::uint8_t*>(digest.constData()),
+        bytes.size(), bytes.begin());
+    bytes[6] = static_cast<std::uint8_t>((bytes[6] & 0x0fU) | 0x50U);
+    bytes[8] = static_cast<std::uint8_t>((bytes[8] & 0x3fU) | 0x80U);
+    return dragonpixel::core::uuid{bytes};
+}
+
+bool reference_matches(
+    const dragonpixel::tiles::tile_reference& reference,
+    const dragonpixel::core::uuid& tile_set_id,
+    const dragonpixel::core::uuid& tile_id)
+{
+    return reference.tile_id == tile_id
+        && (reference.tile_set_id.is_nil() || reference.tile_set_id == tile_set_id);
 }
 }
 
@@ -593,6 +622,144 @@ bool TileDocumentService::update_tile_definition(
     auto before = snapshot();
     const auto dirty = is_dirty();
     *set = std::move(candidate);
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::reslice_tileset(const ResliceRequest& request)
+{
+    if (!tilemap_ || stroke_before_ || request.cell_size.x <= 0 || request.cell_size.y <= 0
+        || request.regions.empty() || request.regions.size() > 65'536)
+    {
+        error_ = QStringLiteral("TileSet re-slicing requires a loaded workspace and 1 to 65,536 positive-size regions.");
+        emit diagnostic(error_);
+        return false;
+    }
+    const auto set = std::find_if(tilesets_.begin(), tilesets_.end(),
+        [&](const auto& candidate) { return candidate.asset_id == request.tile_set_id; });
+    if (set == tilesets_.end())
+    {
+        error_ = QStringLiteral("The TileSet selected for re-slicing is not loaded.");
+        emit diagnostic(error_);
+        return false;
+    }
+
+    std::vector<dragonpixel::core::uuid> next_ids;
+    next_ids.reserve(request.regions.size());
+    for (const auto& region : request.regions)
+    {
+        if (region.source.x < 0 || region.source.y < 0
+            || region.source.width <= 0 || region.source.height <= 0)
+        {
+            error_ = QStringLiteral("TileSet re-slicing rejected an invalid sprite rectangle.");
+            emit diagnostic(error_);
+            return false;
+        }
+        const auto id = stable_tile_id(request.tile_set_id, region.source);
+        if (std::find(next_ids.begin(), next_ids.end(), id) != next_ids.end())
+        {
+            error_ = QStringLiteral("TileSet re-slicing produced duplicate sprite rectangles.");
+            emit diagnostic(error_);
+            return false;
+        }
+        next_ids.push_back(id);
+    }
+    std::vector<dragonpixel::core::uuid> removed_ids;
+    for (const auto& tile : set->tiles)
+        if (std::find(next_ids.begin(), next_ids.end(), tile.tile_id) == next_ids.end())
+            removed_ids.push_back(tile.tile_id);
+
+    const auto is_removed = [&removed_ids](const dragonpixel::core::uuid& id) {
+        return std::find(removed_ids.begin(), removed_ids.end(), id) != removed_ids.end();
+    };
+    const auto is_referenced = [&](const dragonpixel::core::uuid& removed_id) {
+        for (const auto& layer : tilemap_->layers)
+            for (const auto& chunk : layer.chunks)
+                for (const auto& cell : chunk.cells)
+                    if (cell.tile_id == removed_id
+                        && (cell.tile_set_id.is_nil() || cell.tile_set_id == request.tile_set_id))
+                        return true;
+        if (palette_)
+            for (const auto& cell : palette_->cells)
+                if (reference_matches(cell.tile, request.tile_set_id, removed_id)) return true;
+        for (const auto& owner : tilesets_)
+            for (const auto& tile : owner.tiles)
+            {
+                if (owner.asset_id == request.tile_set_id && is_removed(tile.tile_id)) continue;
+                if (tile.override_source
+                    && reference_matches(*tile.override_source, request.tile_set_id, removed_id))
+                    return true;
+                for (const auto& override_entry : tile.overrides)
+                    if (reference_matches(override_entry.replacement,
+                            request.tile_set_id, removed_id)) return true;
+                for (const auto& rule : tile.rules)
+                {
+                    for (const auto& neighbor : rule.neighbors)
+                        if (neighbor.tile && reference_matches(*neighbor.tile,
+                                request.tile_set_id, removed_id)) return true;
+                    for (const auto& output : rule.outputs)
+                        if (reference_matches(output.tile,
+                                request.tile_set_id, removed_id)) return true;
+                }
+            }
+        return false;
+    };
+    const auto referenced = std::find_if(removed_ids.begin(), removed_ids.end(), is_referenced);
+    if (referenced != removed_ids.end())
+    {
+        error_ = QStringLiteral(
+            "TileSet re-slicing would remove referenced tile %1. Erase or replace its map, palette, rule, and override uses first.")
+            .arg(QString::fromStdString(referenced->to_string()));
+        emit diagnostic(error_);
+        return false;
+    }
+
+    auto candidate = *set;
+    candidate.cell_size = request.cell_size;
+    candidate.margin = request.margin;
+    candidate.spacing = request.spacing;
+    candidate.slicing = request.slicing;
+    std::vector<dragonpixel::tiles::tile_definition> next_tiles;
+    next_tiles.reserve(request.regions.size());
+    for (std::size_t index = 0; index < request.regions.size(); ++index)
+    {
+        const auto& region = request.regions[index];
+        const auto id = next_ids[index];
+        const auto existing = std::find_if(set->tiles.begin(), set->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == id; });
+        dragonpixel::tiles::tile_definition tile;
+        if (existing != set->tiles.end()) tile = *existing;
+        else
+        {
+            tile.tile_id = id;
+            tile.name = QStringLiteral("%1 %2,%3")
+                .arg(QString::fromStdString(set->name))
+                .arg(region.column).arg(region.row).toStdString();
+            tile.texture_asset_id = set->texture_asset_id;
+            if (request.grid_collision_for_new_tiles)
+            {
+                tile.collider_mode = dragonpixel::tiles::tile_collider_mode::grid;
+                tile.collision = dragonpixel::tiles::collision_rectangle{0.0, 0.0, 1.0, 1.0};
+            }
+        }
+        tile.source = region.source;
+        tile.pivot = request.slicing.pivot;
+        next_tiles.push_back(std::move(tile));
+    }
+    candidate.tiles = std::move(next_tiles);
+    const auto parsed = dragonpixel::tiles::read_tile_set(
+        dragonpixel::tiles::write_tile_set(candidate));
+    if (!parsed.succeeded())
+    {
+        error_ = QStringLiteral("TileSet re-slicing was rejected: %1")
+            .arg(QString::fromStdString(parsed.error));
+        emit diagnostic(error_);
+        return false;
+    }
+    if (candidate == *set) return false;
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    *set = std::move(candidate);
+    error_.clear();
     return commit_document_edit(std::move(before), dirty);
 }
 
