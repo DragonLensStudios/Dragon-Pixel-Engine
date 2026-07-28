@@ -73,6 +73,7 @@ public:
     using PrefabPathPrompt = std::function<QString(const QString& suggested_path)>;
     using PrefabLevelPrompt = std::function<int(const QStringList& levels)>;
     using ComponentNamePrompt = std::function<std::optional<QString>(ProjectComponentLanguage language)>;
+    using TilemapNamePrompt = std::function<std::optional<QString>(const QString& suggested_name)>;
 
     explicit EditorWindow(QString initial_document, QWidget* parent = nullptr);
 
@@ -88,6 +89,7 @@ public:
     void set_prefab_path_prompt(PrefabPathPrompt prompt) { prefab_path_prompt_ = std::move(prompt); }
     void set_prefab_level_prompt(PrefabLevelPrompt prompt) { prefab_level_prompt_ = std::move(prompt); }
     void set_component_name_prompt(ComponentNamePrompt prompt) { component_name_prompt_ = std::move(prompt); }
+    void set_tilemap_name_prompt(TilemapNamePrompt prompt) { tilemap_name_prompt_ = std::move(prompt); }
 
 signals:
     void gizmo_preview_scene_changed(
@@ -152,7 +154,7 @@ private:
         const std::optional<dragonpixel::core::uuid>& parent,
         std::optional<std::size_t> sibling_index);
     void edit_inspector_item(QStandardItem* item);
-    void create_preset(
+    std::optional<dragonpixel::core::uuid> create_preset(
         dragonpixel::scene::entity_preset preset,
         const QString& asset_override = {},
         bool force_scene_root = false,
@@ -189,6 +191,11 @@ private:
     [[nodiscard]] bool create_tilemap_from_tileset(
         const QString& tileset_asset_id,
         const QString& name);
+    [[nodiscard]] bool prompt_create_tilemap_from_tileset(
+        const QString& tileset_asset_id,
+        const QString& suggested_name);
+    [[nodiscard]] std::optional<dragonpixel::core::uuid> attach_tilemap_to_scene(
+        const QString& tilemap_asset_id);
     void import_tiled_tilemap();
     [[nodiscard]] bool perform_tiled_tilemap_import(
         const QString& source,
@@ -392,6 +399,7 @@ private:
     PrefabPathPrompt prefab_path_prompt_;
     PrefabLevelPrompt prefab_level_prompt_;
     ComponentNamePrompt component_name_prompt_;
+    TilemapNamePrompt tilemap_name_prompt_;
     SelectionService selection_service_;
     ProjectLifecycleService project_lifecycle_service_;
     AssetService asset_service_;

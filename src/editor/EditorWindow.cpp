@@ -1821,6 +1821,16 @@ void EditorWindow::create_tile_set_from_image()
         QStringLiteral("Info"), QStringLiteral("Tile Authoring"), created.tile_set_path,
         {}, {}, {}, {}, created.tile_set_asset_id, created.tile_set_path);
     rebuild_assets();
+    if (wizard.complete_tilemap_workflow())
+    {
+        const auto map_name = QStringLiteral("%1 Map").arg(wizard.tile_set_name());
+        if (!create_tilemap_from_tileset(created.tile_set_asset_id, map_name))
+        {
+            statusBar()->showMessage(QStringLiteral(
+                "TileSet created, but its Tilemap workflow could not be completed. The TileSet remains available in Project Explorer."),
+                8000);
+        }
+    }
 }
 
 void EditorWindow::create_tilemap_from_selected_tileset()
@@ -1838,17 +1848,92 @@ void EditorWindow::create_tilemap_from_selected_tileset()
             QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
         return;
     }
-    bool accepted = false;
     const auto suggested = QStringLiteral("%1 Map")
         .arg(current.siblingAtColumn(0).data().toString());
-    const auto name = QInputDialog::getText(this, QStringLiteral("Create Tilemap"),
-        QStringLiteral("Tilemap name"), QLineEdit::Normal, suggested, &accepted).trimmed();
-    if (!accepted || name.isEmpty())
+    static_cast<void>(prompt_create_tilemap_from_tileset(
+        ProjectModel::asset_id(current), suggested));
+}
+
+bool EditorWindow::prompt_create_tilemap_from_tileset(
+    const QString& tileset_asset_id,
+    const QString& suggested_name)
+{
+    std::optional<QString> requested;
+    if (tilemap_name_prompt_)
     {
-        return;
+        requested = tilemap_name_prompt_(suggested_name);
     }
-    static_cast<void>(create_tilemap_from_tileset(
-        ProjectModel::asset_id(current), name));
+    else
+    {
+        bool accepted = false;
+        const auto name = QInputDialog::getText(this, QStringLiteral("Create Tilemap"),
+            QStringLiteral("Tilemap name"), QLineEdit::Normal,
+            suggested_name, &accepted).trimmed();
+        if (accepted) requested = name;
+    }
+    if (!requested || requested->trimmed().isEmpty()) return false;
+    return create_tilemap_from_tileset(tileset_asset_id, requested->trimmed());
+}
+
+std::optional<dragonpixel::core::uuid> EditorWindow::attach_tilemap_to_scene(
+    const QString& tilemap_asset_id)
+{
+    if (!scene_)
+    {
+        append_console(QStringLiteral(
+            "The Tilemap is ready in Project Explorer and the Tile Palette, but no scene is open for a Tilemap2D GameObject."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"),
+            {}, {}, {}, {}, {}, tilemap_asset_id);
+        return std::nullopt;
+    }
+
+    const auto selected = selected_entity_ids();
+    if (selected.size() == 1)
+    {
+        const auto* entity = scene_->find_entity(selected.front());
+        if (entity != nullptr)
+        {
+            const auto component = std::find_if(
+                entity->components.cbegin(), entity->components.cend(), [](const auto& candidate) {
+                    return candidate.enabled && !candidate.opaque
+                        && candidate.type_id
+                            == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+                });
+            if (component != entity->components.cend()
+                && component->properties.value(
+                    "dpe.tilemap.asset", std::string{}).empty())
+            {
+                if (!apply_authoring_transaction({dragonpixel::scene::command{
+                    dragonpixel::scene::set_component_property_command{
+                        selected.front(), component->type_id,
+                        "dpe.tilemap.asset", tilemap_asset_id.toStdString()}}},
+                    "Assign created Tilemap"))
+                {
+                    append_console(QStringLiteral(
+                        "The Tilemap was created and opened, but assigning it to the selected Tilemap2D GameObject was rejected. The map remains available in Project Explorer."),
+                        QStringLiteral("Warning"), QStringLiteral("Tile Authoring"),
+                        {}, {}, {}, {},
+                        QString::fromStdString(selected.front().to_string()), tilemap_asset_id);
+                    return std::nullopt;
+                }
+                after_scene_mutation(QStringLiteral(
+                    "Assigned the created Tilemap to the selected Tilemap2D GameObject through one validated transaction"),
+                    selected);
+                return selected.front();
+            }
+        }
+    }
+
+    const auto created = create_preset(
+        dragonpixel::scene::entity_preset::tilemap, tilemap_asset_id, true);
+    if (!created)
+    {
+        append_console(QStringLiteral(
+            "The Tilemap was created and opened, but its Tilemap2D GameObject could not be created. The map remains available in Project Explorer."),
+            QStringLiteral("Warning"), QStringLiteral("Tile Authoring"),
+            {}, {}, {}, {}, {}, tilemap_asset_id);
+    }
+    return created;
 }
 
 bool EditorWindow::create_tilemap_from_tileset(
@@ -1914,6 +1999,16 @@ bool EditorWindow::create_tilemap_from_tileset(
         .arg(name), QStringLiteral("Info"), QStringLiteral("Tile Authoring"),
         map_entry->resolved_source_path, {}, {}, result.operation_id, {}, map_id,
         map_entry->resolved_source_path);
+    const auto scene_target = attach_tilemap_to_scene(map_id);
+    if (scene_target)
+    {
+        apply_workspace(QStringLiteral("2D"));
+        tile_palette_dock_->show();
+        tile_palette_dock_->raise();
+        update_tile_scene_edit_state();
+        statusBar()->showMessage(QStringLiteral(
+            "Tilemap ready: choose a tile in the Tile Palette and paint in Scene View."), 8000);
+    }
     return true;
 }
 
@@ -3506,16 +3601,9 @@ void EditorWindow::show_project_browser_context_menu(const QPoint& point)
     }
     else if (chosen == create_tilemap)
     {
-        bool accepted = false;
         const auto suggested = QStringLiteral("%1 Map")
             .arg(current.siblingAtColumn(0).data().toString());
-        const auto name = QInputDialog::getText(this, QStringLiteral("Create Tilemap"),
-            QStringLiteral("Tilemap name"), QLineEdit::Normal,
-            suggested, &accepted).trimmed();
-        if (accepted && !name.isEmpty())
-        {
-            static_cast<void>(create_tilemap_from_tileset(asset_id, name));
-        }
+        static_cast<void>(prompt_create_tilemap_from_tileset(asset_id, suggested));
     }
     else if (chosen == open_edit)
     {
@@ -4702,7 +4790,7 @@ void EditorWindow::edit_inspector_item(QStandardItem* item)
     }
 }
 
-void EditorWindow::create_preset(
+std::optional<dragonpixel::core::uuid> EditorWindow::create_preset(
     dragonpixel::scene::entity_preset preset,
     const QString& asset_override,
     bool force_scene_root,
@@ -4710,7 +4798,7 @@ void EditorWindow::create_preset(
 {
     if (!scene_)
     {
-        return;
+        return std::nullopt;
     }
     const auto base_name = [preset, &asset_override] {
         switch (preset)
@@ -4762,6 +4850,13 @@ void EditorWindow::create_preset(
             primary_asset = asset_id.toStdString();
         }
     }
+    if (!primary_asset
+        && preset == dragonpixel::scene::entity_preset::tilemap
+        && tile_document_service_ != nullptr
+        && tile_document_service_->tilemap() != nullptr)
+    {
+        primary_asset = tile_document_service_->tilemap()->asset_id.to_string();
+    }
     if (!apply_authoring_transaction({dragonpixel::scene::command{
         dragonpixel::scene::create_preset_command{
             id,
@@ -4773,9 +4868,10 @@ void EditorWindow::create_preset(
             std::nullopt}}}, "Create GameObject preset"))
     {
         append_console(QStringLiteral("GameObject preset creation was rejected"), QStringLiteral("Warning"));
-        return;
+        return std::nullopt;
     }
     after_scene_mutation(QStringLiteral("Created %1 preset through one validated transaction").arg(name), {id});
+    return id;
 }
 
 void EditorWindow::duplicate_selected()
@@ -6064,6 +6160,14 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
                             map_entry = &candidate;
                             break;
                         }
+                    }
+                    if (map_entry == nullptr && set_entry != nullptr)
+                    {
+                        const auto suggested = QStringLiteral("%1 Map")
+                            .arg(QFileInfo{set_entry->resolved_source_path}.completeBaseName());
+                        static_cast<void>(prompt_create_tilemap_from_tileset(
+                            asset_id, suggested));
+                        break;
                     }
                 }
                 bool may_open = true;

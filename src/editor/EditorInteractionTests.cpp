@@ -542,6 +542,163 @@ private slots:
         QVERIFY(reopened.tile_at(0, 0, 0).has_value());
     }
 
+    void activating_an_unmapped_tileset_completes_the_selected_blank_gameobject()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("UnmappedTileSetProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+        const auto source_path = temporary.filePath(QStringLiteral("UnmappedAtlas.png"));
+        QImage source{32, 16, QImage::Format_ARGB32};
+        source.fill(QColor{72, 118, 62});
+        QVERIFY(source.save(source_path, "PNG"));
+
+        TileSetCreationRequest request;
+        request.project_root = project_root;
+        request.source_image = source_path;
+        request.name = QStringLiteral("Unmapped Ground");
+        request.cell_width = 16;
+        request.cell_height = 16;
+        request.pixels_per_unit = 16.0;
+        const auto tileset = TileSetCreationService::create(request);
+        QVERIFY2(tileset.succeeded, qPrintable(tileset.error));
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        window.create_preset(
+            dragonpixel::scene::entity_preset::tilemap, {}, true);
+        const auto blank_id = window.selected_entity_id();
+        QVERIFY(blank_id.has_value());
+        const auto entity_count = window.scene_->entities().size();
+
+        int prompt_count = 0;
+        QString suggested_name;
+        window.set_tilemap_name_prompt(
+            [&](const QString& suggested) -> std::optional<QString> {
+                ++prompt_count;
+                suggested_name = suggested;
+                return QStringLiteral("Recovered Ground Map");
+            });
+        const auto source_index = find_role(
+            window.project_model_, EditorRoles::asset_id, tileset.tile_set_asset_id);
+        QVERIFY(source_index.isValid());
+        const auto proxy_index = window.project_filter_->mapFromSource(
+            source_index.siblingAtColumn(0));
+        QVERIFY(proxy_index.isValid());
+        window.activate_project_item(proxy_index);
+
+        QCOMPARE(prompt_count, 1);
+        QCOMPARE(suggested_name, QStringLiteral("Unmapped_Ground Map"));
+        QCOMPARE(window.scene_->entities().size(), entity_count);
+        QCOMPARE(window.selected_entity_id(), blank_id);
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        QCOMPARE(QString::fromStdString(window.tile_document_service_->tilemap()->name),
+            QStringLiteral("Recovered Ground Map"));
+        const auto* entity = window.scene_->find_entity(*blank_id);
+        QVERIFY(entity != nullptr);
+        const auto component = std::find_if(
+            entity->components.cbegin(), entity->components.cend(), [](const auto& candidate) {
+                return candidate.type_id
+                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+            });
+        QVERIFY(component != entity->components.cend());
+        QCOMPARE(QString::fromStdString(component->properties
+            .at("dpe.tilemap.asset").get<std::string>()),
+            QString::fromStdString(window.tile_document_service_->tilemap()
+                ->asset_id.to_string()));
+        QVERIFY(window.tile_palette_->active_brush().has_value());
+        QVERIFY(window.viewport_->tile_edit_enabled());
+    }
+
+    void image_tileset_wizard_completes_a_new_paint_ready_gameobject_by_default()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{
+            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("GuidedTilemapProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+        const auto source_path = temporary.filePath(QStringLiteral("GuidedAtlas.png"));
+        QImage source{32, 16, QImage::Format_ARGB32};
+        source.fill(QColor{84, 126, 70});
+        QVERIFY(source.save(source_path, "PNG"));
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        window.hierarchy_->selectionModel()->clearSelection();
+        QCoreApplication::processEvents();
+        const auto entity_count = window.scene_->entities().size();
+        bool wizard_completed = false;
+        QTimer::singleShot(0, [&] {
+            auto* wizard = qobject_cast<TileSetWizard*>(QApplication::activeModalWidget());
+            if (wizard == nullptr) return;
+            auto* source_field = wizard->findChild<QLineEdit*>(
+                QStringLiteral("TileSetSourceImage"));
+            auto* name_field = wizard->findChild<QLineEdit*>(QStringLiteral("TileSetName"));
+            auto* cell_width = wizard->findChild<QSpinBox*>(QStringLiteral("TileCellWidth"));
+            auto* cell_height = wizard->findChild<QSpinBox*>(QStringLiteral("TileCellHeight"));
+            auto* complete = wizard->findChild<QCheckBox*>(
+                QStringLiteral("CompleteTilemapWorkflow"));
+            auto* create = wizard->findChild<QPushButton*>(
+                QStringLiteral("CreateTileSetAction"));
+            if (source_field == nullptr || name_field == nullptr
+                || cell_width == nullptr || cell_height == nullptr
+                || complete == nullptr || create == nullptr)
+            {
+                wizard->reject();
+                return;
+            }
+            source_field->setText(source_path);
+            name_field->setText(QStringLiteral("Guided Ground"));
+            cell_width->setValue(16);
+            cell_height->setValue(16);
+            if (!complete->isChecked())
+            {
+                wizard->reject();
+                return;
+            }
+            wizard_completed = true;
+            create->click();
+        });
+        window.create_tile_set_from_image();
+
+        QVERIFY(wizard_completed);
+        QCOMPARE(window.scene_->entities().size(), entity_count + 1);
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        QCOMPARE(QString::fromStdString(window.tile_document_service_->tilemap()->name),
+            QStringLiteral("Guided Ground Map"));
+        QCOMPARE(window.tile_palette_->active_layer(), 0);
+        QVERIFY(window.tile_palette_->active_brush().has_value());
+        QCOMPARE(window.viewport_->view_mode(), AuthoringViewport::ViewMode::two_d);
+        QVERIFY(window.viewport_->tile_edit_enabled());
+        const auto selected = window.selected_entity_id();
+        QVERIFY(selected.has_value());
+        const auto* entity = window.scene_->find_entity(*selected);
+        QVERIFY(entity != nullptr);
+        const auto component = std::find_if(
+            entity->components.cbegin(), entity->components.cend(), [](const auto& candidate) {
+                return candidate.type_id
+                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+            });
+        QVERIFY(component != entity->components.cend());
+        QCOMPARE(QString::fromStdString(component->properties
+            .at("dpe.tilemap.asset").get<std::string>()),
+            QString::fromStdString(window.tile_document_service_->tilemap()
+                ->asset_id.to_string()));
+    }
+
     void scene_view_tile_editing_maps_cells_guards_modes_and_refreshes_preview()
     {
         QTemporaryDir temporary;
@@ -1945,10 +2102,17 @@ private slots:
         auto* cell_height = wizard.findChild<QSpinBox*>(QStringLiteral("TileCellHeight"));
         auto* validation = wizard.findChild<QLabel*>(QStringLiteral("TileSetValidation"));
         auto* create = wizard.findChild<QPushButton*>(QStringLiteral("CreateTileSetAction"));
+        auto* complete_workflow = wizard.findChild<QCheckBox*>(
+            QStringLiteral("CompleteTilemapWorkflow"));
         QVERIFY(source_path != nullptr && name != nullptr && cell_width != nullptr && cell_height != nullptr);
-        QVERIFY(validation != nullptr && create != nullptr);
+        QVERIFY(validation != nullptr && create != nullptr && complete_workflow != nullptr);
         QCOMPARE(wizard.windowTitle(), QStringLiteral("Create TileSet from Image"));
         QCOMPARE(wizard.accessibleName(), QStringLiteral("Create TileSet from image sprite sheet"));
+        QVERIFY(complete_workflow->isChecked());
+        QVERIFY(wizard.complete_tilemap_workflow());
+        complete_workflow->setChecked(false);
+        QVERIFY(!wizard.complete_tilemap_workflow());
+        complete_workflow->setChecked(true);
         source_path->setText(extensionless_png);
         name->setText(QStringLiteral("Wizard Ground"));
         cell_width->setValue(16);

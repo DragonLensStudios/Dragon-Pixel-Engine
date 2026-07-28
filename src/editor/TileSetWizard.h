@@ -53,6 +53,8 @@ public:
     explicit TileSetWizard(QString project_root, QWidget* parent = nullptr);
 
     [[nodiscard]] const TileSetCreationResult& result() const noexcept { return result_; }
+    [[nodiscard]] bool complete_tilemap_workflow() const noexcept;
+    [[nodiscard]] QString tile_set_name() const;
 
 private:
     void browse_source();
@@ -70,6 +72,7 @@ private:
     QSpinBox* spacing_y_{};
     QDoubleSpinBox* pixels_per_unit_{};
     QCheckBox* collision_{};
+    QCheckBox* create_tilemap_{};
     QLabel* preview_{};
     QLabel* validation_{};
     TileSetCreationResult result_;

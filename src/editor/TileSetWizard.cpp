@@ -352,6 +352,15 @@ TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
     collision_->setObjectName(QStringLiteral("TileCollisionDefault"));
     collision_->setChecked(true);
     form->addRow(QString{}, collision_);
+    create_tilemap_ = new QCheckBox(
+        QStringLiteral("Create a Tilemap and GameObject ready for painting"), this);
+    create_tilemap_->setObjectName(QStringLiteral("CompleteTilemapWorkflow"));
+    create_tilemap_->setAccessibleName(
+        QStringLiteral("Create a Tilemap and assigned GameObject after the TileSet"));
+    create_tilemap_->setToolTip(QStringLiteral(
+        "Creates an empty Tilemap using this TileSet, assigns it to a Tilemap2D GameObject, and opens the 2D painting workspace."));
+    create_tilemap_->setChecked(true);
+    form->addRow(QString{}, create_tilemap_);
     layout->addLayout(form);
     preview_ = new QLabel(this);
     preview_->setObjectName(QStringLiteral("TileSetSlicePreview"));
@@ -377,6 +386,16 @@ TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
     connect(name_, &QLineEdit::textChanged, this, &TileSetWizard::refresh_preview);
     for (auto* spin : {cell_width_, cell_height_, margin_x_, margin_y_, spacing_x_, spacing_y_})
         connect(spin, &QSpinBox::valueChanged, this, &TileSetWizard::refresh_preview);
+}
+
+bool TileSetWizard::complete_tilemap_workflow() const noexcept
+{
+    return create_tilemap_ != nullptr && create_tilemap_->isChecked();
+}
+
+QString TileSetWizard::tile_set_name() const
+{
+    return name_ == nullptr ? QString{} : name_->text().trimmed();
 }
 
 void TileSetWizard::browse_source()
