@@ -504,6 +504,138 @@ private slots:
         QCoreApplication::setApplicationName(previous_application);
     }
 
+    void tileset_reslicing_preserves_ids_rejects_referenced_removal_and_is_undoable()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto project_root = temporary.filePath(QStringLiteral("ResliceProject"));
+        QVERIFY(QDir{}.mkpath(QDir{project_root}.filePath(QStringLiteral("Assets"))));
+        const auto image_path = temporary.filePath(QStringLiteral("ResliceAtlas.png"));
+        QImage image{32, 16, QImage::Format_ARGB32};
+        image.fill(QColor{72, 118, 62});
+        QVERIFY(image.save(image_path, "PNG"));
+
+        TileSetCreationRequest creation;
+        creation.project_root = project_root;
+        creation.source_image = image_path;
+        creation.name = QStringLiteral("Reslice Ground");
+        creation.cell_width = 16;
+        creation.cell_height = 16;
+        creation.pixels_per_unit = 16.0;
+        const auto created = TileSetCreationService::create(creation);
+        QVERIFY2(created.succeeded, qPrintable(created.error));
+        const auto tile_set_id = dragonpixel::core::uuid::parse(
+            created.tile_set_asset_id.toStdString());
+        QVERIFY(tile_set_id.has_value());
+
+        dragonpixel::tiles::tilemap_document map;
+        map.asset_id = dragonpixel::core::uuid::random_v4();
+        map.name = "Reslice Map";
+        map.tile_set_dependencies = {*tile_set_id};
+        dragonpixel::tiles::tile_layer layer;
+        layer.layer_id = dragonpixel::core::uuid::random_v4();
+        layer.name = "Ground";
+        map.layers.push_back(layer);
+        const auto map_path = QDir{project_root}.filePath(QStringLiteral("Assets/Reslice.dpetilemap"));
+        QFile map_file{map_path};
+        const auto map_bytes = QByteArray::fromStdString(dragonpixel::tiles::write_tilemap(map));
+        QVERIFY(map_file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        QCOMPARE(map_file.write(map_bytes), map_bytes.size());
+        map_file.close();
+
+        TileDocumentService service;
+        QVERIFY(service.load(map_path, created.tile_set_path));
+        QCOMPARE(service.tileset()->tiles.size(), std::size_t{2});
+        const std::array original_ids{service.tileset()->tiles[0].tile_id,
+            service.tileset()->tiles[1].tile_id};
+        TileDocumentService::ResliceRequest same_regions;
+        same_regions.tile_set_id = *tile_set_id;
+        same_regions.cell_size = {16, 16};
+        same_regions.slicing.mode = dragonpixel::tiles::slice_mode::cell_size;
+        same_regions.slicing.cell_count = {2, 1};
+        same_regions.slicing.pivot = {0.25, 0.75};
+        same_regions.regions = {
+            {{0, 0, 16, 16}, 0, 0},
+            {{16, 0, 16, 16}, 1, 0},
+        };
+        same_regions.grid_collision_for_new_tiles = true;
+        QVERIFY(service.reslice_tileset(same_regions));
+        QVERIFY(std::any_of(service.tileset()->tiles.begin(), service.tileset()->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == original_ids[0]; }));
+        QVERIFY(std::any_of(service.tileset()->tiles.begin(), service.tileset()->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == original_ids[1]; }));
+        QVERIFY((service.tileset()->tiles[0].pivot
+            == dragonpixel::tiles::double_point{0.25, 0.75}));
+        QVERIFY(service.undo());
+        QVERIFY((service.tileset()->tiles[0].pivot
+            == dragonpixel::tiles::double_point{0.5, 0.5}));
+        QVERIFY(service.redo());
+
+        service.begin_stroke();
+        TileDocumentService::Brush brush;
+        brush.tile_set_id = *tile_set_id;
+        brush.tile_id = original_ids[0];
+        QVERIFY(service.paint_cell(0, 0, 0, brush));
+        service.commit_stroke();
+        TileDocumentService::ResliceRequest remove_referenced = same_regions;
+        remove_referenced.cell_size = {32, 16};
+        remove_referenced.slicing.cell_count = {1, 1};
+        remove_referenced.regions = {{{0, 0, 32, 16}, 0, 0}};
+        QVERIFY(!service.reslice_tileset(remove_referenced));
+        QVERIFY(service.error().contains(QStringLiteral("referenced"), Qt::CaseInsensitive));
+        QCOMPARE(service.tileset()->tiles.size(), std::size_t{2});
+        service.begin_stroke();
+        QVERIFY(service.erase_cell(0, 0, 0));
+        service.commit_stroke();
+        QVERIFY(service.reslice_tileset(remove_referenced));
+        QCOMPARE(service.tileset()->tiles.size(), std::size_t{1});
+        QVERIFY(service.undo());
+        QCOMPARE(service.tileset()->tiles.size(), std::size_t{2});
+
+        TileDocumentService ui_service;
+        TilePaletteWidget palette{&ui_service};
+        QVERIFY(palette.load_documents(
+            map_path, created.tile_set_path, created.texture_path));
+        palette.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&palette));
+        auto* tile_editor = palette.findChild<QGroupBox*>(
+            QStringLiteral("TileDefinitionEditor"));
+        auto* reslice = palette.findChild<QPushButton*>(QStringLiteral("ResliceTileSet"));
+        QVERIFY(tile_editor != nullptr && reslice != nullptr);
+        tile_editor->setChecked(true);
+        bool dialog_verified = false;
+        QTimer::singleShot(0, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (dialog == nullptr) return;
+            QCOMPARE(dialog->objectName(), QStringLiteral("TileSetResliceDialog"));
+            auto* pivot_x = dialog->findChild<QDoubleSpinBox*>(
+                QStringLiteral("ResliceTilePivotX"));
+            auto* validation = dialog->findChild<QLabel*>(
+                QStringLiteral("TileSetResliceValidation"));
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            if (pivot_x == nullptr || validation == nullptr || buttons == nullptr)
+            {
+                dialog->reject();
+                return;
+            }
+            QVERIFY(!pivot_x->accessibleName().isEmpty());
+            pivot_x->setValue(0.25);
+            QCoreApplication::processEvents();
+            QVERIFY(validation->text().contains(QStringLiteral("2 tiles")));
+            QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+            dialog_verified = true;
+            buttons->button(QDialogButtonBox::Ok)->click();
+        });
+        reslice->click();
+        QVERIFY(dialog_verified);
+        QVERIFY(std::any_of(ui_service.tileset()->tiles.begin(), ui_service.tileset()->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == original_ids[0]; }));
+        QVERIFY(std::any_of(ui_service.tileset()->tiles.begin(), ui_service.tileset()->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == original_ids[1]; }));
+        QCOMPARE(ui_service.tileset()->tiles[0].pivot.x, 0.25);
+        QVERIFY(ui_service.is_dirty());
+    }
+
     void tiled_import_action_publishes_and_opens_the_palette_without_scene_mutation()
     {
         QTemporaryDir temporary;

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QRect>
 #include <QString>
+#include <QVector>
 
 class QCheckBox;
 class QLabel;
@@ -9,6 +11,7 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QComboBox;
 class QWidget;
+class QImage;
 
 #include <QDialog>
 
@@ -54,10 +57,30 @@ struct TileSetCreationResult final
     int tile_count{};
 };
 
+struct TileSetSliceRegion final
+{
+    QRect source;
+    int column{};
+    int row{};
+};
+
+struct TileSetSlicePlan final
+{
+    QVector<TileSetSliceRegion> regions;
+    int columns{};
+    int rows{};
+    int cell_width{};
+    int cell_height{};
+    QString error;
+};
+
 class TileSetCreationService final
 {
 public:
     [[nodiscard]] static TileSetCreationResult create(const TileSetCreationRequest& request);
+    [[nodiscard]] static TileSetSlicePlan plan_slices(
+        const QImage& image,
+        const TileSetCreationRequest& request);
 };
 
 class TileSetWizard final : public QDialog

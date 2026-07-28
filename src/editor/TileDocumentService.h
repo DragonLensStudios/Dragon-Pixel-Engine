@@ -16,6 +16,24 @@ class TileDocumentService final : public QObject
     Q_OBJECT
 
 public:
+    struct ResliceRegion final
+    {
+        dragonpixel::tiles::source_rectangle source;
+        int column{};
+        int row{};
+    };
+
+    struct ResliceRequest final
+    {
+        dragonpixel::core::uuid tile_set_id;
+        dragonpixel::tiles::integer_point cell_size{32, 32};
+        dragonpixel::tiles::integer_point margin;
+        dragonpixel::tiles::integer_point spacing;
+        dragonpixel::tiles::slicing_settings slicing;
+        std::vector<ResliceRegion> regions;
+        bool grid_collision_for_new_tiles{};
+    };
+
     struct PreparedTileSetSave final
     {
         std::size_t index{};
@@ -97,6 +115,7 @@ public:
     [[nodiscard]] bool update_tile_definition(
         const dragonpixel::core::uuid& tile_set_id,
         const dragonpixel::tiles::tile_definition& tile);
+    [[nodiscard]] bool reslice_tileset(const ResliceRequest& request);
     [[nodiscard]] bool update_grid(const dragonpixel::tiles::tile_grid_settings& grid);
     [[nodiscard]] bool update_layer_settings(
         int layer_index,
