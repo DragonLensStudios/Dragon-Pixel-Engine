@@ -3261,6 +3261,7 @@ private slots:
         window.tile_document_service_->commit_stroke();
         QVERIFY(window.tile_document_service_->is_dirty());
 
+#if defined(_WIN32)
         window.save_fault_for_test_ = dragonpixel::serialization::transaction_save_fault::
             committed_journal_persistent_sharing_violation;
         QString sharing_failure_message;
@@ -3283,6 +3284,7 @@ private slots:
         QCOMPARE(read_bytes(tilemap_path), tilemap_before);
         QVERIFY(window.scene_->is_dirty());
         QVERIFY(window.tile_document_service_->is_dirty());
+#endif
 
         window.save_fault_for_test_ =
             dragonpixel::serialization::transaction_save_fault::after_first_replace;
