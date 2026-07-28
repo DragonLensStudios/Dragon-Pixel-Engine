@@ -4,9 +4,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -307,6 +309,60 @@ int main()
         const auto group = tiles::group_pick(line_brush, {-2, -2}, {3, 1}, 1, 3);
         require(group.size() == 3 && group.front().u == 0 && group.front().v == 6,
             "Group Pick did not preserve logical gaps and limit.");
+
+        tiles::tilemap_document sparse;
+        sparse.asset_id = id("42d273e2-c54c-4260-8be5-7db3d5a1124a");
+        sparse.name = "Sparse 1024 Square";
+        sparse.tile_set_dependencies = {set_id, second_set_id};
+        for (auto layer_index = 0; layer_index < 2; ++layer_index)
+        {
+            tiles::tile_layer sparse_layer;
+            sparse_layer.layer_id = layer_index == 0
+                ? id("0bac790c-5d34-4d4e-a8c0-529303335b71")
+                : id("473b1a62-d5d7-488a-99bb-15709748f583");
+            sparse_layer.name = layer_index == 0 ? "Ground" : "Details";
+            sparse_layer.order = static_cast<unsigned>(layer_index);
+            std::map<std::pair<int, int>, tiles::tile_chunk> chunks;
+            for (auto y = 0; y < 1024; ++y)
+            {
+                for (const auto x : {y, 1023 - y})
+                {
+                    auto& chunk = chunks[{x / 32, y / 32}];
+                    chunk.x = x / 32;
+                    chunk.y = y / 32;
+                    tiles::tile_cell sparse_cell;
+                    sparse_cell.index = static_cast<std::uint16_t>(
+                        (y % 32) * 32 + (x % 32));
+                    sparse_cell.tile_set_id = (x + y + layer_index) % 2 == 0
+                        ? set_id : second_set_id;
+                    sparse_cell.tile_id = sparse_cell.tile_set_id == set_id
+                        ? basic_id : animated_id;
+                    sparse_cell.elevation = layer_index;
+                    chunk.cells.push_back(sparse_cell);
+                }
+            }
+            for (auto& [position, chunk] : chunks)
+            {
+                (void)position;
+                std::sort(chunk.cells.begin(), chunk.cells.end(), [](const auto& left, const auto& right) {
+                    return left.index < right.index;
+                });
+                sparse_layer.chunks.push_back(std::move(chunk));
+            }
+            sparse.layers.push_back(std::move(sparse_layer));
+        }
+        const auto sparse_bytes = tiles::write_tilemap(sparse);
+        const auto sparse_read = tiles::read_tilemap(sparse_bytes);
+        require(sparse_read.succeeded() && sparse_read.document->layers.size() == 2
+                && sparse_read.document->tile_set_dependencies.size() == 2,
+            "The multi-layer/multi-TileSet sparse 1024x1024 fixture did not round-trip.");
+        std::size_t sparse_cells{};
+        for (const auto& sparse_layer : sparse_read.document->layers)
+            for (const auto& chunk : sparse_layer.chunks) sparse_cells += chunk.cells.size();
+        require(sparse_cells == 4096,
+            "The sparse 1024x1024 fixture lost occupied cells.");
+        require(tiles::write_tilemap(*sparse_read.document) == sparse_bytes,
+            "The sparse 1024x1024 fixture was not deterministic.");
 
         std::cout << "Tile document and grid tests passed.\n";
         return EXIT_SUCCESS;
