@@ -738,6 +738,17 @@ private slots:
             tile_list->item(0)->data(Qt::UserRole).toString(),
             tile_list->item(1)->data(Qt::UserRole).toString()};
         QVERIFY(selected_random_ids.contains(QString::fromStdString(random_a->tile_id.to_string())));
+        auto* group_gap = window.findChild<QSpinBox*>(QStringLiteral("TileGroupBrushGap"));
+        auto* group_limit = window.findChild<QSpinBox*>(QStringLiteral("TileGroupBrushLimit"));
+        QVERIFY(group_gap != nullptr && group_limit != nullptr);
+        brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("group")));
+        group_gap->setValue(1);
+        const auto grouped = window.tile_palette_->active_brush_pattern_at(4, 5);
+        QCOMPARE(grouped.size(), std::size_t{2});
+        QVERIFY(grouped[0].first != grouped[1].first);
+        group_limit->setValue(1);
+        QCOMPARE(window.tile_palette_->active_brush_pattern_at(4, 5).size(), std::size_t{1});
+        group_limit->setValue(256);
         brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
         line_tool->trigger();
         QCOMPARE(window.tile_palette_->active_tool(), TileCanvas::Tool::line);
