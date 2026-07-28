@@ -750,6 +750,26 @@ private slots:
         QCOMPARE(window.tile_palette_->active_brush_pattern_at(4, 5).size(), std::size_t{1});
         group_limit->setValue(256);
         brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
+
+        const auto prefab_source = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
+                return entry.kind == ProjectIndexEntryKind::prefab;
+            });
+        QVERIFY(prefab_source != window.project_index_.candidate->entries.cend());
+        const auto prefab_index = find_role(
+            window.project_model_, EditorRoles::project_logical_path,
+            prefab_source->logical_path);
+        QVERIFY(prefab_index.isValid());
+        std::unique_ptr<QMimeData> prefab_mime{
+            window.project_model_->mimeData({prefab_index.siblingAtColumn(0)})};
+        QDropEvent prefab_drop{
+            QPointF{8.0, 8.0}, Qt::CopyAction, prefab_mime.get(),
+            Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(tile_list->viewport(), &prefab_drop);
+        QCOMPARE(brush_behavior->currentData().toString(), QStringLiteral("object"));
+        brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
+
         line_tool->trigger();
         QCOMPARE(window.tile_palette_->active_tool(), TileCanvas::Tool::line);
         const TileDocumentService::Brush transformed{tile_id, true, false, 1U};
