@@ -552,18 +552,17 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
     const auto palette_bytes = QByteArray::fromStdString(
         dragonpixel::tiles::write_tile_palette(palette));
 
-    TileAssetPublicationRequest publication{
-        request.project_manifest_path,
-        request.base_name,
-        result.tilemap_asset_id,
-        result.tileset_asset_id,
-        result.texture_asset_id,
-        tilemap_bytes,
-        tileset_documents.front(),
-        texture_documents.front(),
-        sha256(source_bytes),
-        request.pixels_per_unit,
-    };
+    TileAssetPublicationRequest publication;
+    publication.project_manifest_path = request.project_manifest_path;
+    publication.base_name = request.base_name;
+    publication.tilemap_asset_id = result.tilemap_asset_id;
+    publication.tileset_asset_id = result.tileset_asset_id;
+    publication.texture_asset_id = result.texture_asset_id;
+    publication.tilemap_bytes = tilemap_bytes;
+    publication.tileset_bytes = tileset_documents.front();
+    publication.texture_bytes = texture_documents.front();
+    publication.source_map_hash = sha256(source_bytes);
+    publication.pixels_per_unit = request.pixels_per_unit;
     if (tileset_documents.size() > 1)
     {
         for (int index = 0; index < tileset_documents.size(); ++index)

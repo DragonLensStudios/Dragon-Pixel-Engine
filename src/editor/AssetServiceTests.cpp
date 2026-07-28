@@ -77,28 +77,56 @@ TileAssetPublicationRequest tile_publication(const QString& manifest)
     constexpr auto tileset_id = "10000000-0000-4000-8000-000000000002";
     constexpr auto texture_id = "10000000-0000-4000-8000-000000000003";
     constexpr auto palette_id = "10000000-0000-4000-8000-000000000004";
-    dragonpixel::tiles::tile_set_document set{
-        uuid(tileset_id), "Test Tiles", uuid(texture_id), {2, 2}, {}, {}, 2.0,
-        {{uuid("10000000-0000-4000-8000-000000000010"), "Tile 0", {0, 0, 2, 2}, std::nullopt}}};
-    dragonpixel::tiles::tilemap_document map{
-        uuid(tilemap_id), "Test Map", {uuid(tileset_id)},
-        {{uuid("10000000-0000-4000-8000-000000000020"), "Ground", true, 0,
-            {{0, 0, {{0, set.tiles.front().tile_id, false, false, 0}}}}}}};
-    dragonpixel::tiles::tile_palette_document palette{
-        uuid(palette_id), "Imported Map Palette", {uuid(tileset_id)},
-        {{0, 0, {uuid(tileset_id), set.tiles.front().tile_id}}}};
-    TileAssetPublicationRequest request{
-        manifest,
-        QStringLiteral("Imported Map"),
-        QString::fromLatin1(tilemap_id),
-        QString::fromLatin1(tileset_id),
-        QString::fromLatin1(texture_id),
-        QByteArray::fromStdString(dragonpixel::tiles::write_tilemap(map)),
-        QByteArray::fromStdString(dragonpixel::tiles::write_tile_set(set)),
-        png_bytes(),
-        QString(64, QLatin1Char{'a'}),
-        2.0,
-    };
+    dragonpixel::tiles::tile_definition tile;
+    tile.tile_id = uuid("10000000-0000-4000-8000-000000000010");
+    tile.name = "Tile 0";
+    tile.source = {0, 0, 2, 2};
+
+    dragonpixel::tiles::tile_set_document set;
+    set.asset_id = uuid(tileset_id);
+    set.name = "Test Tiles";
+    set.texture_asset_id = uuid(texture_id);
+    set.cell_size = {2, 2};
+    set.pixels_per_unit = 2.0;
+    set.tiles = {tile};
+
+    dragonpixel::tiles::tile_cell cell;
+    cell.tile_id = set.tiles.front().tile_id;
+
+    dragonpixel::tiles::tile_chunk chunk;
+    chunk.cells = {cell};
+
+    dragonpixel::tiles::tile_layer layer;
+    layer.layer_id = uuid("10000000-0000-4000-8000-000000000020");
+    layer.name = "Ground";
+    layer.chunks = {chunk};
+
+    dragonpixel::tiles::tilemap_document map;
+    map.asset_id = uuid(tilemap_id);
+    map.name = "Test Map";
+    map.tile_set_dependencies = {uuid(tileset_id)};
+    map.layers = {layer};
+
+    dragonpixel::tiles::tile_palette_cell palette_cell;
+    palette_cell.tile = {uuid(tileset_id), set.tiles.front().tile_id};
+
+    dragonpixel::tiles::tile_palette_document palette;
+    palette.asset_id = uuid(palette_id);
+    palette.name = "Imported Map Palette";
+    palette.tile_set_dependencies = {uuid(tileset_id)};
+    palette.cells = {palette_cell};
+
+    TileAssetPublicationRequest request;
+    request.project_manifest_path = manifest;
+    request.base_name = QStringLiteral("Imported Map");
+    request.tilemap_asset_id = QString::fromLatin1(tilemap_id);
+    request.tileset_asset_id = QString::fromLatin1(tileset_id);
+    request.texture_asset_id = QString::fromLatin1(texture_id);
+    request.tilemap_bytes = QByteArray::fromStdString(dragonpixel::tiles::write_tilemap(map));
+    request.tileset_bytes = QByteArray::fromStdString(dragonpixel::tiles::write_tile_set(set));
+    request.texture_bytes = png_bytes();
+    request.source_map_hash = QString(64, QLatin1Char{'a'});
+    request.pixels_per_unit = 2.0;
     request.palette_asset_id = QString::fromLatin1(palette_id);
     request.palette_bytes = QByteArray::fromStdString(
         dragonpixel::tiles::write_tile_palette(palette));

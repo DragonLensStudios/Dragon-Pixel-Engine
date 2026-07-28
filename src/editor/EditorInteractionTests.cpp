@@ -2296,18 +2296,49 @@ private slots:
         const auto tile_a_id = id("91000000-0000-4000-8000-000000000007");
         const auto tile_b_id = id("91000000-0000-4000-8000-000000000008");
         const auto palette_id = id("91000000-0000-4000-8000-000000000009");
-        dragonpixel::tiles::tile_set_document set_a{
-            set_a_id, "A", texture_a_id, {16, 16}, {}, {}, 16.0,
-            {{tile_a_id, "A0", {0, 0, 16, 16}}}};
-        dragonpixel::tiles::tile_set_document set_b{
-            set_b_id, "B", texture_b_id, {16, 16}, {}, {}, 16.0,
-            {{tile_b_id, "B0", {0, 0, 16, 16}}}};
-        dragonpixel::tiles::tilemap_document map{
-            map_id, "Workspace", {set_a_id, set_b_id},
-            {{layer_id, "Ground", true, 0, {}}}};
-        dragonpixel::tiles::tile_palette_document palette{
-            palette_id, "Universal", {set_a_id, set_b_id},
-            {{0, 0, {set_a_id, tile_a_id}}, {1, 0, {set_b_id, tile_b_id}}}};
+        dragonpixel::tiles::tile_definition tile_a;
+        tile_a.tile_id = tile_a_id;
+        tile_a.name = "A0";
+        tile_a.source = {0, 0, 16, 16};
+        dragonpixel::tiles::tile_set_document set_a;
+        set_a.asset_id = set_a_id;
+        set_a.name = "A";
+        set_a.texture_asset_id = texture_a_id;
+        set_a.cell_size = {16, 16};
+        set_a.pixels_per_unit = 16.0;
+        set_a.tiles = {tile_a};
+
+        dragonpixel::tiles::tile_definition tile_b;
+        tile_b.tile_id = tile_b_id;
+        tile_b.name = "B0";
+        tile_b.source = {0, 0, 16, 16};
+        dragonpixel::tiles::tile_set_document set_b;
+        set_b.asset_id = set_b_id;
+        set_b.name = "B";
+        set_b.texture_asset_id = texture_b_id;
+        set_b.cell_size = {16, 16};
+        set_b.pixels_per_unit = 16.0;
+        set_b.tiles = {tile_b};
+
+        dragonpixel::tiles::tile_layer layer;
+        layer.layer_id = layer_id;
+        layer.name = "Ground";
+        dragonpixel::tiles::tilemap_document map;
+        map.asset_id = map_id;
+        map.name = "Workspace";
+        map.tile_set_dependencies = {set_a_id, set_b_id};
+        map.layers = {layer};
+
+        dragonpixel::tiles::tile_palette_cell palette_cell_a;
+        palette_cell_a.tile = {set_a_id, tile_a_id};
+        dragonpixel::tiles::tile_palette_cell palette_cell_b;
+        palette_cell_b.u = 1;
+        palette_cell_b.tile = {set_b_id, tile_b_id};
+        dragonpixel::tiles::tile_palette_document palette;
+        palette.asset_id = palette_id;
+        palette.name = "Universal";
+        palette.tile_set_dependencies = {set_a_id, set_b_id};
+        palette.cells = {palette_cell_a, palette_cell_b};
         const auto map_path = QDir{temporary.path()}.filePath(QStringLiteral("map.dpetilemap"));
         const auto set_a_path = QDir{temporary.path()}.filePath(QStringLiteral("a.dpetileset"));
         const auto set_b_path = QDir{temporary.path()}.filePath(QStringLiteral("b.dpetileset"));

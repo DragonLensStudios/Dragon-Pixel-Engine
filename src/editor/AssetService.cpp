@@ -1054,12 +1054,15 @@ AssetOperationResult AssetService::create_tilemap(
             QStringLiteral("The Tilemap operation did not produce distinct canonical identities."));
         return result;
     }
-    dragonpixel::tiles::tilemap_document map{
-        *dragonpixel::core::uuid::parse(tilemap_id.toStdString()),
-        request.name.toStdString(),
-        {parsed_set.document->asset_id},
-        {{*dragonpixel::core::uuid::parse(layer_id.toStdString()), "Layer 1", true, 0, {}}},
-    };
+    dragonpixel::tiles::tile_layer initial_layer;
+    initial_layer.layer_id = *dragonpixel::core::uuid::parse(layer_id.toStdString());
+    initial_layer.name = "Layer 1";
+
+    dragonpixel::tiles::tilemap_document map;
+    map.asset_id = *dragonpixel::core::uuid::parse(tilemap_id.toStdString());
+    map.name = request.name.toStdString();
+    map.tile_set_dependencies = {parsed_set.document->asset_id};
+    map.layers = {std::move(initial_layer)};
     if (request.grid_layout == QStringLiteral("hex-point-top"))
         map.grid.layout = dragonpixel::tiles::grid_layout::hex_point_top;
     else if (request.grid_layout == QStringLiteral("hex-flat-top"))
