@@ -813,6 +813,8 @@ private slots:
             [&](const auto& tile) { return tile.tile_id == *edited_tile_id; });
         QCOMPARE(framed_tile->animation_frames.size(), std::size_t{2});
         QCOMPARE(framed_tile->animation_frames.front().duration_seconds, 0.125);
+        tile_list->item(0)->setSelected(true);
+        tile_list->item(1)->setSelected(true);
         rule_topology->setCurrentIndex(rule_topology->findData(
             static_cast<int>(dragonpixel::tiles::grid_layout::hex_point_top)));
         rule_match->setCurrentIndex(rule_match->findData(

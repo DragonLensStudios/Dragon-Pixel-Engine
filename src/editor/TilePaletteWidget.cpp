@@ -688,6 +688,96 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tile_update_physics_ = new QCheckBox{QStringLiteral("Refresh physics on frame change"), tile_editor};
     tile_update_physics_->setObjectName(QStringLiteral("TileDefinitionUpdatePhysics"));
     tile_form->addRow(QString{}, tile_update_physics_);
+    tile_frame_duration_ = tile_speed(QStringLiteral("Frame duration"),
+        QStringLiteral("TileAnimationFrameDuration"), 0.0001, 60.0, 1.0 / 12.0);
+    auto* set_animation_frames = new QPushButton{
+        QStringLiteral("Use Selected Tiles as Frames"), tile_editor};
+    set_animation_frames->setObjectName(QStringLiteral("SetTileAnimationFramesFromSelection"));
+    set_animation_frames->setAccessibleName(QStringLiteral(
+        "Replace animation frames with the selected palette tiles in display order"));
+    tile_form->addRow(QStringLiteral("Animation"), set_animation_frames);
+
+    tile_rule_topology_ = new QComboBox{tile_editor};
+    tile_rule_topology_->setObjectName(QStringLiteral("TileRuleTopology"));
+    tile_rule_topology_->addItem(QStringLiteral("Rectangular"),
+        static_cast<int>(dragonpixel::tiles::grid_layout::rectangular));
+    tile_rule_topology_->addItem(QStringLiteral("Hex Point Top"),
+        static_cast<int>(dragonpixel::tiles::grid_layout::hex_point_top));
+    tile_rule_topology_->addItem(QStringLiteral("Hex Flat Top"),
+        static_cast<int>(dragonpixel::tiles::grid_layout::hex_flat_top));
+    tile_rule_topology_->addItem(QStringLiteral("Isometric"),
+        static_cast<int>(dragonpixel::tiles::grid_layout::isometric));
+    tile_rule_topology_->addItem(QStringLiteral("Isometric Z-as-Y"),
+        static_cast<int>(dragonpixel::tiles::grid_layout::isometric_z_as_y));
+    tile_form->addRow(QStringLiteral("Rule topology"), tile_rule_topology_);
+    tile_rule_match_ = new QComboBox{tile_editor};
+    tile_rule_match_->setObjectName(QStringLiteral("TileRuleMatchTransform"));
+    tile_rule_match_->addItem(QStringLiteral("Fixed"),
+        static_cast<int>(dragonpixel::tiles::rule_match_transform::fixed));
+    tile_rule_match_->addItem(QStringLiteral("Rotate"),
+        static_cast<int>(dragonpixel::tiles::rule_match_transform::rotated));
+    tile_rule_match_->addItem(QStringLiteral("Mirror X"),
+        static_cast<int>(dragonpixel::tiles::rule_match_transform::mirror_x));
+    tile_rule_match_->addItem(QStringLiteral("Mirror Y"),
+        static_cast<int>(dragonpixel::tiles::rule_match_transform::mirror_y));
+    tile_rule_match_->addItem(QStringLiteral("Mirror X and Y"),
+        static_cast<int>(dragonpixel::tiles::rule_match_transform::mirror_xy));
+    tile_form->addRow(QStringLiteral("Rule matching"), tile_rule_match_);
+    tile_rule_output_ = new QComboBox{tile_editor};
+    tile_rule_output_->setObjectName(QStringLiteral("TileRuleOutputKind"));
+    tile_rule_output_->addItem(QStringLiteral("Fixed"),
+        static_cast<int>(dragonpixel::tiles::rule_output_kind::fixed));
+    tile_rule_output_->addItem(QStringLiteral("Random"),
+        static_cast<int>(dragonpixel::tiles::rule_output_kind::random));
+    tile_rule_output_->addItem(QStringLiteral("Animated"),
+        static_cast<int>(dragonpixel::tiles::rule_output_kind::animated));
+    tile_form->addRow(QStringLiteral("Rule output"), tile_rule_output_);
+    tile_rule_neighbor_ = new QComboBox{tile_editor};
+    tile_rule_neighbor_->setObjectName(QStringLiteral("TileRuleNeighborCondition"));
+    tile_rule_neighbor_->addItem(QStringLiteral("Any"),
+        static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::any));
+    tile_rule_neighbor_->addItem(QStringLiteral("Same Tile"),
+        static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::same_tile));
+    tile_rule_neighbor_->addItem(QStringLiteral("Not Same Tile"),
+        static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::not_same_tile));
+    tile_rule_neighbor_->addItem(QStringLiteral("Empty"),
+        static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::empty));
+    tile_rule_neighbor_->addItem(QStringLiteral("Not Empty"),
+        static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::not_empty));
+    tile_form->addRow(QStringLiteral("Neighbor"), tile_rule_neighbor_);
+    auto* rule_offset = new QWidget{tile_editor};
+    auto* rule_offset_layout = new QHBoxLayout{rule_offset};
+    rule_offset_layout->setContentsMargins(0, 0, 0, 0);
+    tile_rule_offset_x_ = new QSpinBox{rule_offset};
+    tile_rule_offset_x_->setObjectName(QStringLiteral("TileRuleNeighborOffsetX"));
+    tile_rule_offset_x_->setRange(-1024, 1024);
+    tile_rule_offset_x_->setValue(-1);
+    tile_rule_offset_y_ = new QSpinBox{rule_offset};
+    tile_rule_offset_y_->setObjectName(QStringLiteral("TileRuleNeighborOffsetY"));
+    tile_rule_offset_y_->setRange(-1024, 1024);
+    rule_offset_layout->addWidget(new QLabel{QStringLiteral("X"), rule_offset});
+    rule_offset_layout->addWidget(tile_rule_offset_x_);
+    rule_offset_layout->addWidget(new QLabel{QStringLiteral("Y"), rule_offset});
+    rule_offset_layout->addWidget(tile_rule_offset_y_);
+    tile_form->addRow(QStringLiteral("Neighbor offset"), rule_offset);
+    auto* rule_actions = new QWidget{tile_editor};
+    auto* rule_actions_layout = new QHBoxLayout{rule_actions};
+    rule_actions_layout->setContentsMargins(0, 0, 0, 0);
+    auto* add_rule = new QPushButton{QStringLiteral("Add Rule"), rule_actions};
+    add_rule->setObjectName(QStringLiteral("AddTileRuleFromSelection"));
+    add_rule->setAccessibleName(QStringLiteral(
+        "Add a rule using the selected tiles as fixed random or animated outputs"));
+    auto* clear_rules = new QPushButton{QStringLiteral("Clear Rules"), rule_actions};
+    clear_rules->setObjectName(QStringLiteral("ClearTileRules"));
+    auto* create_override = new QPushButton{
+        QStringLiteral("Override Selected Rule"), rule_actions};
+    create_override->setObjectName(QStringLiteral("CreateTileRuleOverrideFromSelection"));
+    create_override->setAccessibleName(QStringLiteral(
+        "Use the other selected Rule Tile as a source and replace its outputs with this tile"));
+    rule_actions_layout->addWidget(add_rule);
+    rule_actions_layout->addWidget(clear_rules);
+    rule_actions_layout->addWidget(create_override);
+    tile_form->addRow(QStringLiteral("Rules"), rule_actions);
     tile_custom_type_ = new QLineEdit{tile_editor};
     tile_custom_type_->setObjectName(QStringLiteral("TileDefinitionCustomType"));
     tile_form->addRow(QStringLiteral("Custom type ID"), tile_custom_type_);
@@ -882,6 +972,207 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     connect(group_limit_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_color_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_transform_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
+    connect(set_animation_frames, &QPushButton::clicked, this, [this] {
+        const auto* current = tiles_->currentItem();
+        const auto target_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+        const auto target_set_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (!target_id || !target_set_id) return;
+        const auto target_owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& owner) { return owner.asset_id == *target_set_id; });
+        if (target_owner == service_->tilesets().end()) return;
+        const auto target = std::find_if(target_owner->tiles.begin(), target_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *target_id; });
+        if (target == target_owner->tiles.end()) return;
+        auto selected = tiles_->selectedItems();
+        std::sort(selected.begin(), selected.end(), [this](const auto* left, const auto* right) {
+            return tiles_->row(left) < tiles_->row(right);
+        });
+        if (selected.empty())
+        {
+            status_->setText(QStringLiteral("Select at least one tile for the animation."));
+            return;
+        }
+        auto edited = *target;
+        edited.kind = dragonpixel::tiles::tile_kind::animated;
+        edited.animation_frames.clear();
+        for (const auto* item : selected)
+        {
+            const auto frame_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole).toString().toStdString());
+            const auto frame_set_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole + 1).toString().toStdString());
+            if (!frame_id || !frame_set_id) continue;
+            const auto frame_owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+                [&](const auto& owner) { return owner.asset_id == *frame_set_id; });
+            if (frame_owner == service_->tilesets().end()) continue;
+            const auto frame = std::find_if(frame_owner->tiles.begin(), frame_owner->tiles.end(),
+                [&](const auto& tile) { return tile.tile_id == *frame_id; });
+            if (frame == frame_owner->tiles.end()) continue;
+            edited.animation_frames.push_back({
+                {frame->texture_asset_id.is_nil() ? frame_owner->texture_asset_id
+                                                  : frame->texture_asset_id,
+                    frame->source, frame->pivot},
+                tile_frame_duration_->value()});
+        }
+        if (edited.animation_frames.empty())
+        {
+            status_->setText(QStringLiteral("The selected animation frames are unresolved."));
+            return;
+        }
+        if (!service_->update_tile_definition(*target_set_id, edited))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Animation frames did not change.") : service_->error());
+    });
+    connect(add_rule, &QPushButton::clicked, this, [this] {
+        const auto* current = tiles_->currentItem();
+        const auto target_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+        const auto target_set_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (!target_id || !target_set_id) return;
+        const auto target_owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& owner) { return owner.asset_id == *target_set_id; });
+        if (target_owner == service_->tilesets().end()) return;
+        const auto target = std::find_if(target_owner->tiles.begin(), target_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *target_id; });
+        if (target == target_owner->tiles.end()) return;
+        auto selected = tiles_->selectedItems();
+        std::sort(selected.begin(), selected.end(), [this](const auto* left, const auto* right) {
+            return tiles_->row(left) < tiles_->row(right);
+        });
+        if (selected.empty())
+        {
+            status_->setText(QStringLiteral("Select at least one Rule Tile output."));
+            return;
+        }
+        dragonpixel::tiles::tile_rule rule;
+        rule.topology = static_cast<dragonpixel::tiles::grid_layout>(
+            tile_rule_topology_->currentData().toInt());
+        rule.match_transform = static_cast<dragonpixel::tiles::rule_match_transform>(
+            tile_rule_match_->currentData().toInt());
+        rule.output_kind = static_cast<dragonpixel::tiles::rule_output_kind>(
+            tile_rule_output_->currentData().toInt());
+        const auto condition = static_cast<dragonpixel::tiles::rule_neighbor_condition>(
+            tile_rule_neighbor_->currentData().toInt());
+        if (condition != dragonpixel::tiles::rule_neighbor_condition::any)
+            rule.neighbors.push_back({{tile_rule_offset_x_->value(), tile_rule_offset_y_->value()},
+                condition, std::nullopt});
+        for (const auto* item : selected)
+        {
+            const auto output_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole).toString().toStdString());
+            const auto output_set_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole + 1).toString().toStdString());
+            if (!output_id || !output_set_id) continue;
+            const auto output_owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+                [&](const auto& owner) { return owner.asset_id == *output_set_id; });
+            if (output_owner == service_->tilesets().end()) continue;
+            const auto output = std::find_if(output_owner->tiles.begin(), output_owner->tiles.end(),
+                [&](const auto& tile) { return tile.tile_id == *output_id; });
+            if (output == output_owner->tiles.end()) continue;
+            if (rule.output_kind == dragonpixel::tiles::rule_output_kind::animated)
+            {
+                rule.animation.push_back({
+                    {output->texture_asset_id.is_nil() ? output_owner->texture_asset_id
+                                                       : output->texture_asset_id,
+                        output->source, output->pivot},
+                    tile_frame_duration_->value()});
+            }
+            else
+            {
+                rule.outputs.push_back({{*output_set_id, *output_id}, 1.0});
+            }
+        }
+        if ((rule.output_kind == dragonpixel::tiles::rule_output_kind::animated
+                && rule.animation.empty())
+            || (rule.output_kind != dragonpixel::tiles::rule_output_kind::animated
+                && rule.outputs.empty()))
+        {
+            status_->setText(QStringLiteral("The selected Rule Tile outputs are unresolved."));
+            return;
+        }
+        auto edited = *target;
+        edited.kind = dragonpixel::tiles::tile_kind::rule;
+        edited.rules.push_back(std::move(rule));
+        if (!service_->update_tile_definition(*target_set_id, edited))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Rule Tile did not change.") : service_->error());
+    });
+    connect(clear_rules, &QPushButton::clicked, this, [this] {
+        const auto* current = tiles_->currentItem();
+        const auto target_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+        const auto target_set_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (!target_id || !target_set_id) return;
+        const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& candidate) { return candidate.asset_id == *target_set_id; });
+        if (owner == service_->tilesets().end()) return;
+        const auto target = std::find_if(owner->tiles.begin(), owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *target_id; });
+        if (target == owner->tiles.end() || target->rules.empty()) return;
+        auto edited = *target;
+        edited.rules.clear();
+        static_cast<void>(service_->update_tile_definition(*target_set_id, edited));
+    });
+    connect(create_override, &QPushButton::clicked, this, [this] {
+        const auto* current = tiles_->currentItem();
+        const auto target_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+        const auto target_set_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (!target_id || !target_set_id) return;
+        const dragonpixel::tiles::tile_definition* source{};
+        dragonpixel::core::uuid source_set_id;
+        for (const auto* item : tiles_->selectedItems())
+        {
+            if (item == current) continue;
+            const auto candidate_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole).toString().toStdString());
+            const auto candidate_set_id = dragonpixel::core::uuid::parse(
+                item->data(Qt::UserRole + 1).toString().toStdString());
+            if (!candidate_id || !candidate_set_id) continue;
+            const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+                [&](const auto& candidate) { return candidate.asset_id == *candidate_set_id; });
+            if (owner == service_->tilesets().end()) continue;
+            const auto candidate = std::find_if(owner->tiles.begin(), owner->tiles.end(),
+                [&](const auto& tile) { return tile.tile_id == *candidate_id; });
+            if (candidate != owner->tiles.end()
+                && candidate->kind == dragonpixel::tiles::tile_kind::rule)
+            {
+                source = &*candidate;
+                source_set_id = *candidate_set_id;
+                break;
+            }
+        }
+        if (source == nullptr)
+        {
+            status_->setText(QStringLiteral("Select one other Rule Tile as the override source."));
+            return;
+        }
+        const auto target_owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& owner) { return owner.asset_id == *target_set_id; });
+        if (target_owner == service_->tilesets().end()) return;
+        const auto target = std::find_if(target_owner->tiles.begin(), target_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *target_id; });
+        if (target == target_owner->tiles.end()) return;
+        auto edited = *target;
+        edited.kind = dragonpixel::tiles::tile_kind::rule_override;
+        edited.override_source = dragonpixel::tiles::tile_reference{source_set_id, source->tile_id};
+        edited.overrides.clear();
+        for (const auto& rule : source->rules)
+            for (const auto& output : rule.outputs)
+                if (std::none_of(edited.overrides.cbegin(), edited.overrides.cend(),
+                        [&](const auto& entry) { return entry.source_tile_id == output.tile.tile_id; }))
+                    edited.overrides.push_back({output.tile.tile_id, {*target_set_id, *target_id}});
+        if (edited.overrides.empty())
+            edited.overrides.push_back({source->tile_id, {*target_set_id, *target_id}});
+        if (!service_->update_tile_definition(*target_set_id, edited))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Rule Override did not change.") : service_->error());
+    });
     connect(apply_tile_definition, &QPushButton::clicked, this, [this] {
         const auto* item = tiles_->currentItem();
         const auto tile_id = item ? dragonpixel::core::uuid::parse(
@@ -1413,9 +1704,11 @@ void TilePaletteWidget::update_tile_editor()
             if (tile != owner->tiles.end()) selected = &*tile;
         }
     }
-    for (auto* widget : std::array<QWidget*, 11>{tile_name_, tile_kind_, tile_collider_,
+    for (auto* widget : std::array<QWidget*, 18>{tile_name_, tile_kind_, tile_collider_,
              tile_minimum_speed_, tile_maximum_speed_, tile_start_time_, tile_start_frame_,
-             tile_loop_once_, tile_paused_, tile_update_physics_, tile_custom_type_})
+             tile_loop_once_, tile_paused_, tile_update_physics_, tile_frame_duration_,
+             tile_rule_topology_, tile_rule_match_, tile_rule_output_, tile_rule_neighbor_,
+             tile_rule_offset_x_, tile_rule_offset_y_, tile_custom_type_})
         widget->setEnabled(selected != nullptr);
     tile_custom_payload_->setEnabled(selected != nullptr);
     if (selected == nullptr) return;
@@ -1431,6 +1724,25 @@ void TilePaletteWidget::update_tile_editor()
     tile_loop_once_->setChecked(selected->loop_once);
     tile_paused_->setChecked(selected->pause_animation);
     tile_update_physics_->setChecked(selected->update_physics);
+    if (!selected->animation_frames.empty())
+        tile_frame_duration_->setValue(selected->animation_frames.front().duration_seconds);
+    if (!selected->rules.empty())
+    {
+        const auto& rule = selected->rules.front();
+        tile_rule_topology_->setCurrentIndex(
+            tile_rule_topology_->findData(static_cast<int>(rule.topology)));
+        tile_rule_match_->setCurrentIndex(
+            tile_rule_match_->findData(static_cast<int>(rule.match_transform)));
+        tile_rule_output_->setCurrentIndex(
+            tile_rule_output_->findData(static_cast<int>(rule.output_kind)));
+        if (!rule.neighbors.empty())
+        {
+            tile_rule_neighbor_->setCurrentIndex(tile_rule_neighbor_->findData(
+                static_cast<int>(rule.neighbors.front().condition)));
+            tile_rule_offset_x_->setValue(rule.neighbors.front().offset.x);
+            tile_rule_offset_y_->setValue(rule.neighbors.front().offset.y);
+        }
+    }
     tile_custom_type_->setText(QString::fromStdString(selected->custom_type_id));
     tile_custom_payload_->setText(QString::fromStdString(selected->opaque_payload_json));
 }

@@ -185,6 +185,13 @@ private:
     QCheckBox* tile_loop_once_{};
     QCheckBox* tile_paused_{};
     QCheckBox* tile_update_physics_{};
+    QDoubleSpinBox* tile_frame_duration_{};
+    QComboBox* tile_rule_topology_{};
+    QComboBox* tile_rule_match_{};
+    QComboBox* tile_rule_output_{};
+    QComboBox* tile_rule_neighbor_{};
+    QSpinBox* tile_rule_offset_x_{};
+    QSpinBox* tile_rule_offset_y_{};
     QLineEdit* tile_custom_type_{};
     QLineEdit* tile_custom_payload_{};
     QComboBox* grid_layout_{};
