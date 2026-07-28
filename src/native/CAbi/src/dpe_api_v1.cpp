@@ -703,6 +703,102 @@ dpe_status DPE_CALL rebuild_physics_world_impl(
     });
 }
 
+dpe_status DPE_CALL rebuild_physics_world_v2_impl(
+    dpe_physics_world_handle world,
+    const dpe_physics_body_v1* bodies,
+    size_t body_count,
+    const dpe_physics_collider_v2* colliders,
+    size_t collider_count) {
+    return guarded([&]() {
+        if ((body_count > 0 && bodies == nullptr) || (collider_count > 0 && colliders == nullptr)) {
+            return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics v2 snapshot arrays are null", kSubsystemPhysics);
+        }
+
+        std::vector<dragonpixel::physics::body_descriptor> native_bodies;
+        native_bodies.reserve(body_count);
+        for (size_t body_index = 0; body_index < body_count; ++body_index) {
+            const auto& input = bodies[body_index];
+            if (input.struct_size < sizeof(input)
+                || input.dimension > DPE_PHYSICS_DIMENSION_3D
+                || input.mode > DPE_PHYSICS_BODY_DYNAMIC
+                || (input.flags & ~static_cast<uint32_t>(DPE_PHYSICS_BODY_CONTINUOUS_COLLISION)) != 0) {
+                return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics body record is incompatible", kSubsystemPhysics);
+            }
+            const size_t collider_start = input.collider_start;
+            const size_t body_collider_count = input.collider_count;
+            if (collider_start > collider_count || body_collider_count > collider_count - collider_start) {
+                return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics collider range is outside the supplied array", kSubsystemPhysics);
+            }
+
+            dragonpixel::physics::body_descriptor body;
+            body.entity_id = physics_uuid(input.entity_uuid);
+            body.dimension = input.dimension == DPE_PHYSICS_DIMENSION_2D
+                ? dragonpixel::physics::body_dimension::two_d
+                : dragonpixel::physics::body_dimension::three_d;
+            body.mode = static_cast<dragonpixel::physics::body_mode>(input.mode);
+            body.position = physics_vector3(input.position);
+            body.rotation = physics_quaternion(input.rotation);
+            body.linear_velocity = physics_vector3(input.linear_velocity);
+            body.angular_velocity = physics_vector3(input.angular_velocity);
+            body.linear_damping = input.linear_damping;
+            body.angular_damping = input.angular_damping;
+            body.gravity_scale = input.gravity_scale;
+            body.continuous_collision = (input.flags & DPE_PHYSICS_BODY_CONTINUOUS_COLLISION) != 0;
+            body.colliders.reserve(body_collider_count);
+            for (size_t collider_index = collider_start;
+                 collider_index < collider_start + body_collider_count;
+                 ++collider_index) {
+                const auto& collider_input = colliders[collider_index];
+                if (collider_input.struct_size < sizeof(collider_input)
+                    || collider_input.shape > DPE_PHYSICS_SHAPE_POLYGON_2D
+                    || collider_input.vertex_count > 8) {
+                    return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics v2 collider record is incompatible", kSubsystemPhysics);
+                }
+                dragonpixel::physics::collider_descriptor collider;
+                if (collider_input.shape == DPE_PHYSICS_SHAPE_BOX) {
+                    collider.shape = dragonpixel::physics::collider_shape::box;
+                } else if (collider_input.shape == DPE_PHYSICS_SHAPE_CIRCLE_OR_SPHERE) {
+                    collider.shape = dragonpixel::physics::collider_shape::circle_or_sphere;
+                } else {
+                    collider.shape = dragonpixel::physics::collider_shape::polygon_2d;
+                }
+                collider.size = physics_vector3(collider_input.size);
+                collider.offset = physics_vector3(collider_input.offset);
+                collider.sensor = collider_input.sensor != 0;
+                collider.density = collider_input.density;
+                collider.friction = collider_input.friction;
+                collider.restitution = collider_input.restitution;
+                collider.layer = collider_input.layer;
+                collider.mask = collider_input.mask;
+                collider.vertices.reserve(collider_input.vertex_count);
+                for (uint32_t vertex = 0; vertex < collider_input.vertex_count; ++vertex) {
+                    collider.vertices.push_back({
+                        collider_input.vertices[vertex * 2],
+                        collider_input.vertices[(vertex * 2) + 1],
+                    });
+                }
+                body.colliders.push_back(std::move(collider));
+            }
+            native_bodies.push_back(std::move(body));
+        }
+
+        std::scoped_lock lock(g_mutex);
+        const auto world_it = g_physics_worlds.find(world);
+        if (world_it == g_physics_worlds.end()) {
+            return set_error(DPE_STATUS_INVALID_HANDLE, "physics world handle is invalid or stale", kSubsystemPhysics);
+        }
+        const auto diagnostics = world_it->second.world->rebuild(native_bodies);
+        const auto status = physics_diagnostics_status(diagnostics);
+        if (status != DPE_STATUS_OK) {
+            return status;
+        }
+        auto state = world_it->second.world->advance(0.0);
+        world_it->second.transforms = std::move(state.transforms);
+        world_it->second.contacts.clear();
+        return DPE_STATUS_OK;
+    });
+}
+
 dpe_status DPE_CALL apply_physics_commands_impl(
     dpe_physics_world_handle world,
     const dpe_physics_command_v1* commands,
@@ -893,6 +989,7 @@ const dpe_physics_api_v1 kPhysicsApi = {
     &copy_physics_transforms_impl,
     &drain_physics_contacts_impl,
     &raycast_physics_world_impl,
+    &rebuild_physics_world_v2_impl,
 };
 
 dpe_status DPE_CALL acquire_physics_api_impl(
@@ -902,17 +999,22 @@ dpe_status DPE_CALL acquire_physics_api_impl(
     dpe_physics_api_v1* out_api,
     size_t out_api_size) {
     return guarded([&]() {
-        if (out_api == nullptr || out_api_size < sizeof(dpe_physics_api_v1)) {
-            return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics API output is null or undersized", kSubsystemPhysics);
-        }
         if (requested_major != DPE_PHYSICS_ABI_MAJOR || requested_minor > DPE_PHYSICS_ABI_MINOR) {
             return set_error(DPE_STATUS_ABI_VERSION_UNSUPPORTED, "requested physics ABI is unsupported", kSubsystemPhysics);
+        }
+        const size_t required_size = requested_minor == 0
+            ? DPE_PHYSICS_API_V1_MINOR_0_SIZE : sizeof(dpe_physics_api_v1);
+        if (out_api == nullptr || out_api_size < required_size) {
+            return set_error(DPE_STATUS_INVALID_ARGUMENT, "physics API output is null or smaller than the requested minor version", kSubsystemPhysics);
         }
         std::scoped_lock lock(g_mutex);
         if (!g_runtimes.contains(runtime)) {
             return set_error(DPE_STATUS_INVALID_HANDLE, "runtime handle is invalid or stale", kSubsystemPhysics);
         }
-        *out_api = kPhysicsApi;
+        auto negotiated = kPhysicsApi;
+        negotiated.struct_size = static_cast<uint32_t>(required_size);
+        negotiated.abi_minor = requested_minor;
+        std::memcpy(out_api, &negotiated, required_size);
         return DPE_STATUS_OK;
     });
 }

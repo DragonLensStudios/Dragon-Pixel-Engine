@@ -24,7 +24,7 @@ enum {
     DPE_ABI_MAJOR = 1,
     DPE_ABI_MINOR = 1,
     DPE_PHYSICS_ABI_MAJOR = 1,
-    DPE_PHYSICS_ABI_MINOR = 0
+    DPE_PHYSICS_ABI_MINOR = 1
 };
 
 typedef uint64_t dpe_runtime_handle;
@@ -67,7 +67,8 @@ typedef enum dpe_physics_body_mode_v1 {
 
 typedef enum dpe_physics_shape_v1 {
     DPE_PHYSICS_SHAPE_BOX = 0,
-    DPE_PHYSICS_SHAPE_CIRCLE_OR_SPHERE = 1
+    DPE_PHYSICS_SHAPE_CIRCLE_OR_SPHERE = 1,
+    DPE_PHYSICS_SHAPE_POLYGON_2D = 2
 } dpe_physics_shape_v1;
 
 typedef enum dpe_physics_body_flags_v1 {
@@ -117,6 +118,24 @@ typedef struct dpe_physics_collider_v1 {
     uint16_t mask;
     uint32_t reserved2;
 } dpe_physics_collider_v1;
+
+typedef struct dpe_physics_collider_v2 {
+    uint32_t struct_size;
+    uint32_t shape;
+    uint32_t sensor;
+    uint32_t reserved;
+    double size[3];
+    double offset[3];
+    double density;
+    double friction;
+    double restitution;
+    uint16_t layer;
+    uint16_t mask;
+    uint32_t reserved2;
+    uint32_t vertex_count;
+    uint32_t reserved3;
+    double vertices[16];
+} dpe_physics_collider_v2;
 
 typedef struct dpe_physics_body_v1 {
     uint32_t struct_size;
@@ -205,7 +224,10 @@ typedef struct dpe_physics_api_v1 {
     dpe_status(DPE_CALL* copy_transforms)(dpe_physics_world_handle world, dpe_physics_transform_v1* buffer, size_t capacity, size_t* out_required);
     dpe_status(DPE_CALL* drain_contacts)(dpe_physics_world_handle world, dpe_physics_contact_v1* buffer, size_t capacity, size_t* out_required);
     dpe_status(DPE_CALL* raycast)(dpe_physics_world_handle world, const dpe_physics_raycast_v1* ray, dpe_physics_raycast_hit_v1* out_hit);
+    dpe_status(DPE_CALL* rebuild_v2)(dpe_physics_world_handle world, const dpe_physics_body_v1* bodies, size_t body_count, const dpe_physics_collider_v2* colliders, size_t collider_count);
 } dpe_physics_api_v1;
+
+#define DPE_PHYSICS_API_V1_MINOR_0_SIZE offsetof(dpe_physics_api_v1, rebuild_v2)
 
 typedef struct dpe_utf8_view {
     const uint8_t* data;

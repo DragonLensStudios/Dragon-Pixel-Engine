@@ -64,6 +64,7 @@ internal enum DpePhysicsShape : uint
 {
     Box = 0,
     CircleOrSphere = 1,
+    Polygon2D = 2,
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -93,6 +94,26 @@ internal unsafe struct DpePhysicsColliderV1
     internal ushort Layer;
     internal ushort Mask;
     internal uint Reserved2;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct DpePhysicsColliderV2
+{
+    internal uint StructSize;
+    internal uint Shape;
+    internal uint Sensor;
+    internal uint Reserved;
+    internal fixed double Size[3];
+    internal fixed double Offset[3];
+    internal double Density;
+    internal double Friction;
+    internal double Restitution;
+    internal ushort Layer;
+    internal ushort Mask;
+    internal uint Reserved2;
+    internal uint VertexCount;
+    internal uint Reserved3;
+    internal fixed double Vertices[16];
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -197,4 +218,5 @@ internal struct DpePhysicsApiV1
     internal nint CopyTransforms;
     internal nint DrainContacts;
     internal nint Raycast;
+    internal nint RebuildV2;
 }

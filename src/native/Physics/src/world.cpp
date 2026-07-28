@@ -19,6 +19,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -85,6 +86,29 @@ bool layers_collide(const collider_descriptor& first, const collider_descriptor&
     const auto second_category = static_cast<std::uint16_t>(std::uint16_t{1}
         << std::min<std::uint16_t>(second.layer, 15));
     return (first.mask & second_category) != 0 && (second.mask & first_category) != 0;
+}
+
+bool valid_convex_polygon(std::span<const vector2> vertices)
+{
+    constexpr std::size_t maximum_polygon_vertices = 8;
+    if (vertices.size() < 3 || vertices.size() > maximum_polygon_vertices)
+    {
+        return false;
+    }
+    double winding{};
+    for (std::size_t index = 0; index < vertices.size(); ++index)
+    {
+        const auto& first = vertices[index];
+        const auto& second = vertices[(index + 1) % vertices.size()];
+        const auto& third = vertices[(index + 2) % vertices.size()];
+        if (!finite(first.x) || !finite(first.y)) return false;
+        const auto cross = (second.x - first.x) * (third.y - second.y)
+            - (second.y - first.y) * (third.x - second.x);
+        if (std::abs(cross) <= minimum_extent) return false;
+        if (winding == 0.0) winding = cross;
+        else if ((cross > 0.0) != (winding > 0.0)) return false;
+    }
+    return true;
 }
 
 bool bodies_collide(const body_descriptor& first, const body_descriptor& second)
@@ -365,8 +389,11 @@ public:
                     body.entity_id.to_string()));
                 continue;
             }
-            const auto colliders_valid = std::all_of(body.colliders.begin(), body.colliders.end(), [](const auto& collider) {
-                return finite(collider.size) && finite(collider.offset) && finite(collider.density)
+            const auto colliders_valid = std::all_of(body.colliders.begin(), body.colliders.end(), [&](const auto& collider) {
+                const auto shape_valid = collider.shape != collider_shape::polygon_2d
+                    || (body.dimension == body_dimension::two_d
+                        && valid_convex_polygon(collider.vertices));
+                return shape_valid && finite(collider.size) && finite(collider.offset) && finite(collider.density)
                     && finite(collider.friction) && finite(collider.restitution)
                     && collider.size.x > minimum_extent && collider.size.y > minimum_extent
                     && collider.size.z > minimum_extent && collider.density > 0.0
@@ -862,13 +889,33 @@ private:
                         b2Rot_identity);
                     shape_id = b2CreatePolygonShape(body_id, &shape_definition, &polygon);
                 }
-                else
+                else if (collider.shape == collider_shape::circle_or_sphere)
                 {
                     const b2Circle circle{
                         {static_cast<float>(collider.offset.x), static_cast<float>(collider.offset.y)},
                         static_cast<float>(collider.size.x),
                     };
                     shape_id = b2CreateCircleShape(body_id, &shape_definition, &circle);
+                }
+                else
+                {
+                    std::array<b2Vec2, 8> points{};
+                    for (std::size_t index = 0; index < collider.vertices.size(); ++index)
+                    {
+                        points[index] = {
+                            static_cast<float>(collider.vertices[index].x + collider.offset.x),
+                            static_cast<float>(collider.vertices[index].y + collider.offset.y),
+                        };
+                    }
+                    const auto hull = b2ComputeHull(points.data(),
+                        static_cast<int>(collider.vertices.size()));
+                    if (hull.count != static_cast<int>(collider.vertices.size())
+                        || !b2ValidateHull(&hull))
+                    {
+                        throw std::invalid_argument{"Box2D rejected a validated polygon collider"};
+                    }
+                    const auto polygon = b2MakePolygon(&hull, 0.0F);
+                    shape_id = b2CreatePolygonShape(body_id, &shape_definition, &polygon);
                 }
                 if (B2_IS_NULL(shape_id))
                 {
@@ -909,9 +956,13 @@ private:
                     static_cast<float>(collider.size.z * 0.5),
                 });
             }
-            else
+            else if (collider.shape == collider_shape::circle_or_sphere)
             {
                 child = new JPH::SphereShape(static_cast<float>(collider.size.x));
+            }
+            else
+            {
+                throw std::invalid_argument{"2D polygon collider reached the 3D physics backend"};
             }
             compound.AddShape(
                 JPH::Vec3{
