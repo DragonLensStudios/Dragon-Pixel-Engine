@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -24,6 +25,7 @@
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QItemSelectionModel>
@@ -34,6 +36,7 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QSet>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -400,6 +403,105 @@ private slots:
         QVERIFY(window.tabifiedDockWidgets(scene).contains(game));
         QVERIFY(window.tabifiedDockWidgets(scene).contains(onboarding));
         QVERIFY(window.tabifiedDockWidgets(console).contains(tile_palette));
+    }
+
+    void tile_tool_shortcuts_support_validated_custom_remapping_and_reset()
+    {
+        const auto previous_organization = QCoreApplication::organizationName();
+        const auto previous_application = QCoreApplication::applicationName();
+        QCoreApplication::setOrganizationName(QStringLiteral("Dragon Pixel Engine Tests"));
+        QCoreApplication::setApplicationName(QStringLiteral("Tile Shortcut Interaction"));
+        QSettings settings;
+        settings.remove(QStringLiteral("tiles/shortcutProfile"));
+        settings.remove(QStringLiteral("tiles/customShortcuts"));
+        settings.sync();
+
+        TileDocumentService service;
+        {
+            TilePaletteWidget palette{&service};
+            palette.show();
+            QVERIFY(QTest::qWaitForWindowExposed(&palette));
+            auto* profile = palette.findChild<QComboBox*>(QStringLiteral("TileShortcutProfile"));
+            auto* edit = palette.findChild<QToolButton*>(QStringLiteral("EditTileShortcuts"));
+            auto* reset = palette.findChild<QToolButton*>(QStringLiteral("ResetTileShortcuts"));
+            auto* paint = palette.findChild<QAction*>(QStringLiteral("TilePaintTool"));
+            auto* erase = palette.findChild<QAction*>(QStringLiteral("TileEraseTool"));
+            QVERIFY(profile != nullptr && edit != nullptr && reset != nullptr);
+            QVERIFY(paint != nullptr && erase != nullptr);
+            QCOMPARE(profile->currentData().toString(), QStringLiteral("letters"));
+            QCOMPARE(paint->shortcut(), QKeySequence{QStringLiteral("P")});
+
+            bool dialog_verified = false;
+            QTimer::singleShot(0, [&] {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                if (dialog == nullptr) return;
+                QCOMPARE(dialog->objectName(), QStringLiteral("TileShortcutEditor"));
+                auto* paint_edit = dialog->findChild<QKeySequenceEdit*>(
+                    QStringLiteral("TileShortcutEditPaint"));
+                auto* erase_edit = dialog->findChild<QKeySequenceEdit*>(
+                    QStringLiteral("TileShortcutEditErase"));
+                auto* validation = dialog->findChild<QLabel*>(
+                    QStringLiteral("TileShortcutValidation"));
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                if (paint_edit == nullptr || erase_edit == nullptr
+                    || validation == nullptr || buttons == nullptr)
+                {
+                    dialog->reject();
+                    return;
+                }
+                QVERIFY(!paint_edit->accessibleName().isEmpty());
+                paint_edit->setKeySequence(QKeySequence{QStringLiteral("Ctrl+Alt+1")});
+                erase_edit->setKeySequence(QKeySequence{QStringLiteral("Ctrl+Alt+1")});
+                QCoreApplication::processEvents();
+                QVERIFY(!buttons->button(QDialogButtonBox::Ok)->isEnabled());
+                QVERIFY(validation->text().contains(QStringLiteral("conflict"),
+                    Qt::CaseInsensitive));
+
+                const QStringList ids{QStringLiteral("Paint"), QStringLiteral("Erase"),
+                    QStringLiteral("Box"), QStringLiteral("Line"),
+                    QStringLiteral("Flood"), QStringLiteral("Pick"),
+                    QStringLiteral("Select"), QStringLiteral("Move")};
+                for (qsizetype index = 0; index < ids.size(); ++index)
+                {
+                    auto* sequence = dialog->findChild<QKeySequenceEdit*>(
+                        QStringLiteral("TileShortcutEdit%1").arg(ids.at(index)));
+                    QVERIFY(sequence != nullptr);
+                    sequence->setKeySequence(QKeySequence{
+                        QStringLiteral("Ctrl+Alt+%1").arg(index + 1)});
+                }
+                QCoreApplication::processEvents();
+                QVERIFY(buttons->button(QDialogButtonBox::Ok)->isEnabled());
+                QVERIFY(validation->text().isEmpty());
+                dialog_verified = true;
+                buttons->button(QDialogButtonBox::Ok)->click();
+            });
+            edit->click();
+            QVERIFY(dialog_verified);
+            QCOMPARE(profile->currentData().toString(), QStringLiteral("custom"));
+            QCOMPARE(QSettings{}.value(QStringLiteral("tiles/customShortcuts/Paint")).toString(),
+                QStringLiteral("Ctrl+Alt+1"));
+            QCOMPARE(paint->shortcut(), QKeySequence{QStringLiteral("Ctrl+Alt+1")});
+            QCOMPARE(erase->shortcut(), QKeySequence{QStringLiteral("Ctrl+Alt+2")});
+        }
+
+        {
+            TilePaletteWidget reopened{&service};
+            auto* profile = reopened.findChild<QComboBox*>(QStringLiteral("TileShortcutProfile"));
+            auto* paint = reopened.findChild<QAction*>(QStringLiteral("TilePaintTool"));
+            auto* reset = reopened.findChild<QToolButton*>(QStringLiteral("ResetTileShortcuts"));
+            QVERIFY(profile != nullptr && paint != nullptr && reset != nullptr);
+            QCOMPARE(profile->currentData().toString(), QStringLiteral("custom"));
+            QCOMPARE(paint->shortcut(), QKeySequence{QStringLiteral("Ctrl+Alt+1")});
+            reset->click();
+            QCOMPARE(profile->currentData().toString(), QStringLiteral("letters"));
+            QCOMPARE(paint->shortcut(), QKeySequence{QStringLiteral("P")});
+        }
+
+        settings.remove(QStringLiteral("tiles/shortcutProfile"));
+        settings.remove(QStringLiteral("tiles/customShortcuts"));
+        settings.sync();
+        QCoreApplication::setOrganizationName(previous_organization);
+        QCoreApplication::setApplicationName(previous_application);
     }
 
     void tiled_import_action_publishes_and_opens_the_palette_without_scene_mutation()
