@@ -9,12 +9,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -1615,6 +1617,60 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         }
         return count;
     };
+    const auto transient_target_handle = CreateFileW(
+        scene_target.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    require(transient_target_handle != INVALID_HANDLE_VALUE,
+        "Could not arrange the transient Windows target-sharing fixture.");
+    std::jthread release_transient_target{[transient_target_handle, artifacts] {
+        const auto observation_deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds{2};
+        for (;;)
+        {
+            std::error_code observation_error;
+            auto entry = std::filesystem::recursive_directory_iterator{artifacts, observation_error};
+            const auto end = std::filesystem::recursive_directory_iterator{};
+            auto prepared_journal_exists = false;
+            while (!observation_error && entry != end)
+            {
+                if (entry->path().filename() == "journal.json")
+                {
+                    prepared_journal_exists = true;
+                    break;
+                }
+                entry.increment(observation_error);
+            }
+            if (prepared_journal_exists || std::chrono::steady_clock::now() >= observation_deadline)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{150});
+        static_cast<void>(CloseHandle(transient_target_handle));
+    }};
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_target_retry{
+        {scene_target, "scene-after-transient-target-retry\n"},
+        {tile_target, "tile-after-transient-target-retry\n"},
+    };
+    const auto transient_target_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_target_retry, transaction_root);
+    release_transient_target.join();
+    require(transient_target_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && read_file(scene_backup) == "scene-after\n"
+            && read_file(tile_backup) == "tile-after\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "A transient target sharing violation outlived the publication retry budget: "
+            + transient_target_result.error);
+
     const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_journal_retry{
         {scene_target, "scene-after-transient-journal-retry\n"},
         {tile_target, "tile-after-transient-journal-retry\n"},
@@ -1626,8 +1682,8 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
     require(transient_journal_result.succeeded
             && read_file(scene_target) == "scene-after-transient-journal-retry\n"
             && read_file(tile_target) == "tile-after-transient-journal-retry\n"
-            && read_file(scene_backup) == "scene-after\n"
-            && read_file(tile_backup) == "tile-after\n"
+            && read_file(scene_backup) == "scene-after-transient-target-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-target-retry\n"
             && artifact_count() == 0
             && temporary_artifact_count() == 0,
         "A transient committed-journal sharing violation did not retry to a clean commit: "
