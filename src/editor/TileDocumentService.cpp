@@ -593,6 +593,51 @@ bool TileDocumentService::update_tile_definition(
     return commit_document_edit(std::move(before), dirty);
 }
 
+bool TileDocumentService::update_grid(const dragonpixel::tiles::tile_grid_settings& grid)
+{
+    if (!tilemap_ || stroke_before_ || tilemap_->grid == grid) return false;
+    auto candidate = *tilemap_;
+    candidate.grid = grid;
+    const auto parsed = dragonpixel::tiles::read_tilemap(
+        dragonpixel::tiles::write_tilemap(candidate));
+    if (!parsed.succeeded())
+    {
+        error_ = QStringLiteral("Grid settings were rejected: %1")
+            .arg(QString::fromStdString(parsed.error));
+        emit diagnostic(error_);
+        return false;
+    }
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    tilemap_->grid = grid;
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::update_layer_settings(
+    int layer_index,
+    const dragonpixel::tiles::tile_layer& layer)
+{
+    if (!tilemap_ || stroke_before_ || layer_index < 0
+        || layer_index >= static_cast<int>(tilemap_->layers.size())
+        || layer.layer_id != tilemap_->layers[static_cast<std::size_t>(layer_index)].layer_id
+        || layer == tilemap_->layers[static_cast<std::size_t>(layer_index)]) return false;
+    auto candidate = *tilemap_;
+    candidate.layers[static_cast<std::size_t>(layer_index)] = layer;
+    const auto parsed = dragonpixel::tiles::read_tilemap(
+        dragonpixel::tiles::write_tilemap(candidate));
+    if (!parsed.succeeded())
+    {
+        error_ = QStringLiteral("Layer renderer settings were rejected: %1")
+            .arg(QString::fromStdString(parsed.error));
+        emit diagnostic(error_);
+        return false;
+    }
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    tilemap_->layers[static_cast<std::size_t>(layer_index)] = layer;
+    return commit_document_edit(std::move(before), dirty);
+}
+
 bool TileDocumentService::add_palette_cell(int u, int v, const Brush& brush)
 {
     if (!palette_ || stroke_before_ || brush.rotation_quarter_turns > 3) return false;

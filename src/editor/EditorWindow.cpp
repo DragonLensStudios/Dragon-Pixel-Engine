@@ -7018,23 +7018,21 @@ void EditorWindow::update_tile_scene_stroke(const QVector3D& world_position)
     if (tile_scene_stroke_tool_ == TileCanvas::Tool::paint
         || tile_scene_stroke_tool_ == TileCanvas::Tool::erase)
     {
-        auto x = previous.x();
-        auto y = previous.y();
-        const auto distance_x = std::abs(cell.x() - x);
-        const auto step_x = x < cell.x() ? 1 : -1;
-        const auto distance_y = -std::abs(cell.y() - y);
-        const auto step_y = y < cell.y() ? 1 : -1;
-        auto error = distance_x + distance_y;
-        const auto maximum_steps = static_cast<std::size_t>(
-            std::max(distance_x, -distance_y)) + 1U;
-        if (maximum_steps > 4096U)
+        const auto layout = tile_document_service_->tilemap()
+            ? tile_document_service_->tilemap()->grid.layout
+            : dragonpixel::tiles::grid_layout::rectangular;
+        const auto cells = dragonpixel::tiles::grid_line(layout,
+            {previous.x(), previous.y()}, {cell.x(), cell.y()});
+        if (cells.size() > 4096U)
         {
             append_console(QStringLiteral("Tile stroke segment exceeded the 4096-cell safety limit."),
                 QStringLiteral("Warning"), QStringLiteral("Tile Authoring"));
             return;
         }
-        while (true)
+        for (const auto& stroke_cell : cells)
         {
+            const auto x = stroke_cell.x;
+            const auto y = stroke_cell.y;
             if (tile_scene_stroke_tool_ == TileCanvas::Tool::paint
                 && tile_scene_stroke_brush_)
             {
@@ -7046,18 +7044,6 @@ void EditorWindow::update_tile_scene_stroke(const QVector3D& world_position)
             else if (tile_scene_stroke_tool_ == TileCanvas::Tool::erase)
                 static_cast<void>(tile_document_service_->erase_cell(
                     tile_scene_stroke_layer_, x, y));
-            if (x == cell.x() && y == cell.y()) break;
-            const auto doubled_error = 2 * error;
-            if (doubled_error >= distance_y)
-            {
-                error += distance_y;
-                x += step_x;
-            }
-            if (doubled_error <= distance_x)
-            {
-                error += distance_x;
-                y += step_y;
-            }
         }
     }
     else if (tile_scene_stroke_tool_ == TileCanvas::Tool::rectangle

@@ -144,6 +144,7 @@ protected:
 private:
     void rebuild();
     void update_layer_controls();
+    void update_map_editor();
     void update_brush();
     void update_tile_editor();
 
@@ -186,6 +187,19 @@ private:
     QCheckBox* tile_update_physics_{};
     QLineEdit* tile_custom_type_{};
     QLineEdit* tile_custom_payload_{};
+    QComboBox* grid_layout_{};
+    QDoubleSpinBox* grid_cell_width_{};
+    QDoubleSpinBox* grid_cell_height_{};
+    QDoubleSpinBox* grid_gap_x_{};
+    QDoubleSpinBox* grid_gap_y_{};
+    QDoubleSpinBox* grid_anchor_x_{};
+    QDoubleSpinBox* grid_anchor_y_{};
+    QLineEdit* layer_tint_{};
+    QSpinBox* layer_sort_order_{};
+    QComboBox* layer_renderer_mode_{};
+    QDoubleSpinBox* layer_animation_rate_{};
+    QDoubleSpinBox* layer_culling_x_{};
+    QDoubleSpinBox* layer_culling_y_{};
     QImage atlas_;
     QHash<QString, QImage> atlases_;
     QString texture_path_;

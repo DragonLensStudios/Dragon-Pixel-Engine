@@ -2253,6 +2253,22 @@ private slots:
         QVERIFY(service.palette() != nullptr);
         QCOMPARE(service.palette()->cells.size(), std::size_t{2});
 
+        auto grid = service.tilemap()->grid;
+        grid.layout = dragonpixel::tiles::grid_layout::hex_point_top;
+        grid.cell_gap = {0.125, 0.25};
+        grid.tile_anchor = {0.5, 0.75};
+        QVERIFY(service.update_grid(grid));
+        QCOMPARE(service.tilemap()->grid, grid);
+        auto renderer = service.tilemap()->layers.front();
+        renderer.tint = {0.8, 0.7, 0.6, 0.9};
+        renderer.sort_order = 12;
+        renderer.renderer_mode = dragonpixel::tiles::tile_renderer_mode::individual;
+        renderer.animation_rate = 1.5;
+        renderer.culling_padding = {2.0, 3.0};
+        QVERIFY(service.update_layer_settings(0, renderer));
+        QCOMPARE(service.tilemap()->layers.front().renderer_mode,
+            dragonpixel::tiles::tile_renderer_mode::individual);
+
         const TileDocumentService::Brush rich{
             tile_b_id, true, false, 1U, set_b_id,
             {0.8, 0.7, 0.6, 1.0}, {0.25, -0.5}, 33.0, {1.5, 0.75}, 4, true, true};
@@ -2309,6 +2325,14 @@ private slots:
         QVERIFY2(service.save(), qPrintable(service.error()));
         QVERIFY(!service.is_dirty());
         QVERIFY(dragonpixel::tiles::read_tilemap(read_bytes(map_path).toStdString()).succeeded());
+        const auto saved_map = dragonpixel::tiles::read_tilemap(
+            read_bytes(map_path).toStdString());
+        QVERIFY(saved_map.succeeded());
+        QCOMPARE(saved_map.document->grid.layout,
+            dragonpixel::tiles::grid_layout::hex_point_top);
+        QCOMPARE(saved_map.document->layers.front().sort_order, 12);
+        QCOMPARE(saved_map.document->layers.front().renderer_mode,
+            dragonpixel::tiles::tile_renderer_mode::individual);
         QVERIFY(dragonpixel::tiles::read_tile_palette(
             read_bytes(palette_path).toStdString()).succeeded());
         const auto saved_set = dragonpixel::tiles::read_tile_set(

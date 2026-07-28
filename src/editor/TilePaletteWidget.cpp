@@ -612,6 +612,27 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     apply_selection->setObjectName(QStringLiteral("ApplyBrushInspectorToSelection"));
     apply_selection->setAccessibleName(QStringLiteral("Apply Brush Inspector values to selected Tilemap cells"));
     brush_form->addRow(QString{}, apply_selection);
+    auto* selection_actions = new QWidget{brush_inspector};
+    auto* selection_actions_layout = new QHBoxLayout{selection_actions};
+    selection_actions_layout->setContentsMargins(0, 0, 0, 0);
+    const auto selection_button = [selection_actions, selection_actions_layout](
+                                      const QString& label, const QString& name) {
+        auto* button = new QPushButton{label, selection_actions};
+        button->setObjectName(name);
+        selection_actions_layout->addWidget(button);
+        return button;
+    };
+    auto* delete_grid_selection = selection_button(
+        QStringLiteral("Delete"), QStringLiteral("DeleteGridSelection"));
+    auto* insert_selection_rows = selection_button(
+        QStringLiteral("Insert Rows"), QStringLiteral("InsertGridSelectionRows"));
+    auto* delete_selection_rows = selection_button(
+        QStringLiteral("Delete Rows"), QStringLiteral("DeleteGridSelectionRows"));
+    auto* insert_selection_columns = selection_button(
+        QStringLiteral("Insert Columns"), QStringLiteral("InsertGridSelectionColumns"));
+    auto* delete_selection_columns = selection_button(
+        QStringLiteral("Delete Columns"), QStringLiteral("DeleteGridSelectionColumns"));
+    brush_form->addRow(QStringLiteral("Selection"), selection_actions);
     layout->addWidget(brush_inspector);
 
     auto* tile_editor = new QGroupBox{QStringLiteral("Tile Definition Editor"), this};
@@ -681,6 +702,60 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tile_form->addRow(QString{}, apply_tile_definition);
     layout->addWidget(tile_editor);
 
+    auto* map_editor = new QGroupBox{QStringLiteral("Grid and Layer Renderer"), this};
+    map_editor->setObjectName(QStringLiteral("TilemapGridLayerEditor"));
+    map_editor->setAccessibleName(QStringLiteral("Tilemap grid and active layer renderer settings"));
+    map_editor->setCheckable(true);
+    map_editor->setChecked(false);
+    auto* map_form = new QFormLayout{map_editor};
+    grid_layout_ = new QComboBox{map_editor};
+    grid_layout_->setObjectName(QStringLiteral("TilemapGridLayout"));
+    grid_layout_->addItem(QStringLiteral("Rectangular"), static_cast<int>(dragonpixel::tiles::grid_layout::rectangular));
+    grid_layout_->addItem(QStringLiteral("Hex Point Top"), static_cast<int>(dragonpixel::tiles::grid_layout::hex_point_top));
+    grid_layout_->addItem(QStringLiteral("Hex Flat Top"), static_cast<int>(dragonpixel::tiles::grid_layout::hex_flat_top));
+    grid_layout_->addItem(QStringLiteral("Isometric"), static_cast<int>(dragonpixel::tiles::grid_layout::isometric));
+    grid_layout_->addItem(QStringLiteral("Isometric Z-as-Y"), static_cast<int>(dragonpixel::tiles::grid_layout::isometric_z_as_y));
+    map_form->addRow(QStringLiteral("Layout"), grid_layout_);
+    const auto map_number = [map_editor, map_form](const QString& label, const QString& name,
+                                double minimum, double maximum, double value) {
+        auto* field = new QDoubleSpinBox{map_editor};
+        field->setObjectName(name);
+        field->setRange(minimum, maximum);
+        field->setDecimals(4);
+        field->setValue(value);
+        map_form->addRow(label, field);
+        return field;
+    };
+    grid_cell_width_ = map_number(QStringLiteral("Cell width"), QStringLiteral("TilemapGridCellWidth"), 0.0001, 1'000'000.0, 1.0);
+    grid_cell_height_ = map_number(QStringLiteral("Cell height"), QStringLiteral("TilemapGridCellHeight"), 0.0001, 1'000'000.0, 1.0);
+    grid_gap_x_ = map_number(QStringLiteral("Gap X"), QStringLiteral("TilemapGridGapX"), -999'999.0, 1'000'000.0, 0.0);
+    grid_gap_y_ = map_number(QStringLiteral("Gap Y"), QStringLiteral("TilemapGridGapY"), -999'999.0, 1'000'000.0, 0.0);
+    grid_anchor_x_ = map_number(QStringLiteral("Anchor X"), QStringLiteral("TilemapGridAnchorX"), -1'000'000.0, 1'000'000.0, 0.5);
+    grid_anchor_y_ = map_number(QStringLiteral("Anchor Y"), QStringLiteral("TilemapGridAnchorY"), -1'000'000.0, 1'000'000.0, 0.5);
+    auto* apply_grid = new QPushButton{QStringLiteral("Apply Grid"), map_editor};
+    apply_grid->setObjectName(QStringLiteral("ApplyTilemapGrid"));
+    map_form->addRow(QString{}, apply_grid);
+    layer_tint_ = new QLineEdit{QStringLiteral("#FFFFFFFF"), map_editor};
+    layer_tint_->setObjectName(QStringLiteral("TileLayerTint"));
+    map_form->addRow(QStringLiteral("Layer tint"), layer_tint_);
+    layer_sort_order_ = new QSpinBox{map_editor};
+    layer_sort_order_->setObjectName(QStringLiteral("TileLayerSortOrder"));
+    layer_sort_order_->setRange(-1'000'000, 1'000'000);
+    map_form->addRow(QStringLiteral("Sort order"), layer_sort_order_);
+    layer_renderer_mode_ = new QComboBox{map_editor};
+    layer_renderer_mode_->setObjectName(QStringLiteral("TileLayerRendererMode"));
+    layer_renderer_mode_->addItem(QStringLiteral("Chunk"), static_cast<int>(dragonpixel::tiles::tile_renderer_mode::chunk));
+    layer_renderer_mode_->addItem(QStringLiteral("Individual"), static_cast<int>(dragonpixel::tiles::tile_renderer_mode::individual));
+    map_form->addRow(QStringLiteral("Renderer mode"), layer_renderer_mode_);
+    layer_animation_rate_ = map_number(QStringLiteral("Animation rate"), QStringLiteral("TileLayerAnimationRate"), 0.0001, 1000.0, 1.0);
+    layer_culling_x_ = map_number(QStringLiteral("Culling padding X"), QStringLiteral("TileLayerCullingX"), 0.0, 1'000'000.0, 0.0);
+    layer_culling_y_ = map_number(QStringLiteral("Culling padding Y"), QStringLiteral("TileLayerCullingY"), 0.0, 1'000'000.0, 0.0);
+    auto* apply_layer_renderer = new QPushButton{
+        QStringLiteral("Apply Layer Renderer"), map_editor};
+    apply_layer_renderer->setObjectName(QStringLiteral("ApplyTileLayerRenderer"));
+    map_form->addRow(QString{}, apply_layer_renderer);
+    layout->addWidget(map_editor);
+
     auto* splitter = new QSplitter{Qt::Horizontal, this};
     tiles_ = new QListWidget{splitter};
     tiles_->setObjectName(QStringLiteral("TileList"));
@@ -708,6 +783,7 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     connect(layers_, &QComboBox::currentIndexChanged, this, [this](int index) {
         canvas_->set_layer(index);
         update_layer_controls();
+        update_map_editor();
         emit authoringStateChanged();
     });
     connect(target_pin_, &QToolButton::toggled, this, [this](bool pinned) {
@@ -771,6 +847,31 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         if (selected && brush)
             static_cast<void>(service_->edit_selection(active_layer(), selected->left(), selected->top(),
                 selected->right(), selected->bottom(), *brush));
+    });
+    connect(delete_grid_selection, &QPushButton::clicked, this, [this] {
+        if (const auto selected = canvas_->selection())
+            static_cast<void>(service_->delete_selection(active_layer(), selected->left(),
+                selected->top(), selected->right(), selected->bottom()));
+    });
+    connect(insert_selection_rows, &QPushButton::clicked, this, [this] {
+        if (const auto selected = canvas_->selection())
+            static_cast<void>(service_->insert_rows(
+                active_layer(), selected->top(), selected->height()));
+    });
+    connect(delete_selection_rows, &QPushButton::clicked, this, [this] {
+        if (const auto selected = canvas_->selection())
+            static_cast<void>(service_->delete_rows(
+                active_layer(), selected->top(), selected->height()));
+    });
+    connect(insert_selection_columns, &QPushButton::clicked, this, [this] {
+        if (const auto selected = canvas_->selection())
+            static_cast<void>(service_->insert_columns(
+                active_layer(), selected->left(), selected->width()));
+    });
+    connect(delete_selection_columns, &QPushButton::clicked, this, [this] {
+        if (const auto selected = canvas_->selection())
+            static_cast<void>(service_->delete_columns(
+                active_layer(), selected->left(), selected->width()));
     });
     connect(brush_tint_, &QLineEdit::editingFinished, this, &TilePaletteWidget::update_brush);
     for (auto* field : {brush_offset_x_, brush_offset_y_, brush_rotation_degrees_,
@@ -840,6 +941,39 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         if (!service_->update_tile_definition(*set_id, edited))
             status_->setText(service_->error().isEmpty()
                 ? QStringLiteral("Tile definition did not change.") : service_->error());
+    });
+    connect(apply_grid, &QPushButton::clicked, this, [this] {
+        dragonpixel::tiles::tile_grid_settings grid;
+        grid.layout = static_cast<dragonpixel::tiles::grid_layout>(
+            grid_layout_->currentData().toInt());
+        grid.cell_size = {grid_cell_width_->value(), grid_cell_height_->value()};
+        grid.cell_gap = {grid_gap_x_->value(), grid_gap_y_->value()};
+        grid.tile_anchor = {grid_anchor_x_->value(), grid_anchor_y_->value()};
+        if (!service_->update_grid(grid))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Grid settings did not change.") : service_->error());
+    });
+    connect(apply_layer_renderer, &QPushButton::clicked, this, [this] {
+        const auto* map = service_->tilemap();
+        const auto layer_index = active_layer();
+        if (map == nullptr || layer_index < 0
+            || layer_index >= static_cast<int>(map->layers.size())) return;
+        auto layer = map->layers[static_cast<std::size_t>(layer_index)];
+        auto tint = QColor{layer_tint_->text().trimmed()};
+        if (!tint.isValid())
+        {
+            status_->setText(QStringLiteral("Layer tint must be hexadecimal RGBA."));
+            return;
+        }
+        layer.tint = {tint.redF(), tint.greenF(), tint.blueF(), tint.alphaF()};
+        layer.sort_order = layer_sort_order_->value();
+        layer.renderer_mode = static_cast<dragonpixel::tiles::tile_renderer_mode>(
+            layer_renderer_mode_->currentData().toInt());
+        layer.animation_rate = layer_animation_rate_->value();
+        layer.culling_padding = {layer_culling_x_->value(), layer_culling_y_->value()};
+        if (!service_->update_layer_settings(layer_index, layer))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Layer renderer settings did not change.") : service_->error());
     });
 
     connect(add_loaded_tiles, &QToolButton::clicked, this, [this] {
@@ -1322,6 +1456,36 @@ void TilePaletteWidget::update_layer_controls()
     layer_remove_->setEnabled(valid && layers_->count() > 1);
 }
 
+void TilePaletteWidget::update_map_editor()
+{
+    const auto* map = service_->tilemap();
+    if (map == nullptr) return;
+    grid_layout_->setCurrentIndex(
+        grid_layout_->findData(static_cast<int>(map->grid.layout)));
+    grid_cell_width_->setValue(map->grid.cell_size.x);
+    grid_cell_height_->setValue(map->grid.cell_size.y);
+    grid_gap_x_->setValue(map->grid.cell_gap.x);
+    grid_gap_y_->setValue(map->grid.cell_gap.y);
+    grid_anchor_x_->setValue(map->grid.tile_anchor.x);
+    grid_anchor_y_->setValue(map->grid.tile_anchor.y);
+    const auto layer_index = active_layer();
+    const auto valid = layer_index >= 0 && layer_index < static_cast<int>(map->layers.size());
+    for (auto* widget : std::array<QWidget*, 7>{layer_tint_, layer_sort_order_,
+             layer_renderer_mode_, layer_animation_rate_, layer_culling_x_, layer_culling_y_,
+             layer_visible_})
+        widget->setEnabled(valid);
+    if (!valid) return;
+    const auto& layer = map->layers[static_cast<std::size_t>(layer_index)];
+    layer_tint_->setText(QColor::fromRgbF(layer.tint.red, layer.tint.green,
+        layer.tint.blue, layer.tint.alpha).name(QColor::HexArgb));
+    layer_sort_order_->setValue(layer.sort_order);
+    layer_renderer_mode_->setCurrentIndex(
+        layer_renderer_mode_->findData(static_cast<int>(layer.renderer_mode)));
+    layer_animation_rate_->setValue(layer.animation_rate);
+    layer_culling_x_->setValue(layer.culling_padding.x);
+    layer_culling_y_->setValue(layer.culling_padding.y);
+}
+
 void TilePaletteWidget::rebuild()
 {
     const auto* map = service_->tilemap();
@@ -1420,6 +1584,7 @@ void TilePaletteWidget::rebuild()
     update_tile_editor();
     update_brush();
     update_layer_controls();
+    update_map_editor();
     status_->setText(QStringLiteral("%1 | %2 targets | %3 palette cells | %4 TileSet(s) | Atlas %5%6")
         .arg(QString::fromStdString(map->name)).arg(map->layers.size()).arg(tiles_->count())
         .arg(service_->tilesets().size())

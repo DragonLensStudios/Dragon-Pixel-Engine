@@ -97,6 +97,10 @@ public:
     [[nodiscard]] bool update_tile_definition(
         const dragonpixel::core::uuid& tile_set_id,
         const dragonpixel::tiles::tile_definition& tile);
+    [[nodiscard]] bool update_grid(const dragonpixel::tiles::tile_grid_settings& grid);
+    [[nodiscard]] bool update_layer_settings(
+        int layer_index,
+        const dragonpixel::tiles::tile_layer& layer);
 
     [[nodiscard]] bool add_palette_cell(int u, int v, const Brush& brush);
     [[nodiscard]] bool remove_palette_cell(int u, int v);
