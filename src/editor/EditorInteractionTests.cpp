@@ -722,6 +722,25 @@ private slots:
             && cell_3_0.x() >= 0);
 
         const auto tile_id = window.tile_document_service_->tileset()->tiles.front().tile_id;
+        auto* line_tool = window.findChild<QAction*>(QStringLiteral("TileLineTool"));
+        auto* brush_behavior = window.findChild<QComboBox*>(QStringLiteral("TileBrushBehavior"));
+        auto* tile_list = window.findChild<QListWidget*>(QStringLiteral("TileList"));
+        QVERIFY(line_tool != nullptr && brush_behavior != nullptr && tile_list != nullptr);
+        QVERIFY(tile_list->count() >= 2);
+        tile_list->clearSelection();
+        tile_list->item(0)->setSelected(true);
+        tile_list->item(1)->setSelected(true);
+        brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("random")));
+        const auto random_a = window.tile_palette_->active_brush_at(9, -3);
+        const auto random_b = window.tile_palette_->active_brush_at(9, -3);
+        QVERIFY(random_a.has_value() && random_a == random_b);
+        const QSet<QString> selected_random_ids{
+            tile_list->item(0)->data(Qt::UserRole).toString(),
+            tile_list->item(1)->data(Qt::UserRole).toString()};
+        QVERIFY(selected_random_ids.contains(QString::fromStdString(random_a->tile_id.to_string())));
+        brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
+        line_tool->trigger();
+        QCOMPARE(window.tile_palette_->active_tool(), TileCanvas::Tool::line);
         const TileDocumentService::Brush transformed{tile_id, true, false, 1U};
         window.tile_palette_->select_brush(transformed);
         QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
