@@ -1,6 +1,7 @@
 add_library(DragonPixelTiles STATIC
     src/tile_documents.cpp
     src/tile_grid.cpp
+    src/tile_evaluator.cpp
 )
 target_include_directories(DragonPixelTiles PUBLIC include)
 target_link_libraries(DragonPixelTiles PUBLIC DragonPixel::Core PRIVATE nlohmann_json::nlohmann_json)

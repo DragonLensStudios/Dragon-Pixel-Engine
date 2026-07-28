@@ -1,5 +1,6 @@
 #include <dragonpixel/tiles/tile_documents.h>
 #include <dragonpixel/tiles/tile_grid.h>
+#include <dragonpixel/tiles/tile_evaluator.h>
 
 #include <nlohmann/json.hpp>
 
@@ -235,6 +236,77 @@ int main()
         const auto high = tiles::project_cell(iso, {1, 1}, 3);
         require_close(high.y - low.y, 1.5, "Z-as-Y elevation was not projected consistently.");
         require(high.sort_key > low.sort_key, "Z-as-Y elevation did not affect sorting.");
+
+        const tiles::tile_reference animated_reference{set_id, animated_id};
+        const auto animated_evaluation = tiles::evaluate_tile(animated, animated_reference,
+            tiles::grid_layout::rectangular, {4, 2}, 0.25, 77,
+            [](tiles::integer_point) { return std::optional<tiles::tile_reference>{}; });
+        require(animated_evaluation.sprite.has_value()
+                && animated_evaluation.animation_frame < animated.animation_frames.size()
+                && animated_evaluation.refresh_physics,
+            "Animated Tile evaluation did not return a timed frame and physics intent.");
+
+        const tiles::tile_reference rule_reference{set_id, rule_id};
+        const auto map_id = id("f7d862d6-922a-49c2-8e64-f73f0a24aa00");
+        const auto layer_id = id("f7d862d6-922a-49c2-8e64-f73f0a24aa01");
+        const auto seed = tiles::stable_tile_seed(map_id, layer_id, {7, -3}, "rule");
+        require(seed == tiles::stable_tile_seed(map_id, layer_id, {7, -3}, "rule")
+                && seed != tiles::stable_tile_seed(map_id, layer_id, {8, -3}, "rule"),
+            "Stable tile seeds were not deterministic and cell-specific.");
+        const auto rule_evaluation = tiles::evaluate_tile(rule, rule_reference,
+            tiles::grid_layout::hex_point_top, {0, 0}, 0.0, seed,
+            [rule_reference](tiles::integer_point point) {
+                return point == tiles::integer_point{0, -1}
+                    ? std::optional{rule_reference} : std::nullopt;
+            });
+        require(rule_evaluation.matched_rule && rule_evaluation.topology_rotation_steps == 1
+                && !rule_evaluation.output.tile_id.is_nil(),
+            "Hex Rule Tile rotation or deterministic output evaluation failed.");
+        require(rule_evaluation == tiles::evaluate_tile(rule, rule_reference,
+                tiles::grid_layout::hex_point_top, {0, 0}, 0.0, seed,
+                [rule_reference](tiles::integer_point point) {
+                    return point == tiles::integer_point{0, -1}
+                        ? std::optional{rule_reference} : std::nullopt;
+                }),
+            "Rule Tile output changed for the same stable seed.");
+
+        auto fixed_rule = rule;
+        fixed_rule.rules.front().match_transform = tiles::rule_match_transform::fixed;
+        fixed_rule.rules.front().topology = tiles::grid_layout::rectangular;
+        fixed_rule.rules.front().neighbors.clear();
+        fixed_rule.rules.front().output_kind = tiles::rule_output_kind::fixed;
+        fixed_rule.rules.front().outputs = {{{set_id, basic_id}, 1.0}};
+        tiles::tile_definition override;
+        override.tile_id = id("f7d862d6-922a-49c2-8e64-f73f0a24aa02");
+        override.kind = tiles::tile_kind::rule_override;
+        override.override_source = tiles::tile_reference{set_id, fixed_rule.tile_id};
+        override.overrides = {{basic_id, {set_id, animated_id}}};
+        const auto override_evaluation = tiles::evaluate_tile(override,
+            {set_id, override.tile_id}, tiles::grid_layout::rectangular, {0, 0}, 0.0, seed,
+            [](tiles::integer_point) { return std::optional<tiles::tile_reference>{}; },
+            [&fixed_rule](tiles::tile_reference) { return &fixed_rule; });
+        require(override_evaluation.output == animated_reference,
+            "Rule Override did not replace its source Rule Tile output.");
+        const auto placeholder = tiles::evaluate_tile(custom, {set_id, custom_id},
+            tiles::grid_layout::rectangular, {}, 0.0, seed,
+            [](tiles::integer_point) { return std::optional<tiles::tile_reference>{}; });
+        require(placeholder.placeholder && placeholder.output.tile_id == custom_id,
+            "Missing custom Tile behavior did not degrade to a lossless placeholder.");
+
+        const auto random_one = tiles::random_brush_tile(rule.rules.front().outputs,
+            map_id, layer_id, {9, 9});
+        const auto random_two = tiles::random_brush_tile(rule.rules.front().outputs,
+            map_id, layer_id, {9, 9});
+        require(random_one == random_two, "Random Brush output was not stable.");
+        const auto line_brush = tiles::line_brush(tiles::grid_layout::hex_point_top,
+            {-2, 1}, {3, -2}, {{set_id, basic_id}, {set_id, animated_id}});
+        require(!line_brush.empty() && line_brush.front().cell == tiles::integer_point{-2, 1}
+                && line_brush.back().cell == tiles::integer_point{3, -2}
+                && line_brush.at(2).tile == line_brush.front().tile,
+            "Line Brush did not follow topology or repeat its pattern.");
+        const auto group = tiles::group_pick(line_brush, {-2, -2}, {3, 1}, 1, 3);
+        require(group.size() == 3 && group.front().u == 0 && group.front().v == 6,
+            "Group Pick did not preserve logical gaps and limit.");
 
         std::cout << "Tile document and grid tests passed.\n";
         return EXIT_SUCCESS;
