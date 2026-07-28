@@ -34,6 +34,7 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -1810,6 +1811,83 @@ private slots:
         QVERIFY(!duplicate.succeeded);
         QVERIFY(duplicate.error.contains(QStringLiteral("already exists")));
         QVERIFY(QFile::remove(outside_png));
+    }
+
+    void png_tileset_creation_accepts_extensionless_png_content_and_rejects_mislabeled_files()
+    {
+        QTemporaryDir project;
+        QTemporaryDir sources;
+        QVERIFY(project.isValid());
+        QVERIFY(sources.isValid());
+        QVERIFY(QDir{project.path()}.mkpath(QStringLiteral("Assets")));
+
+        const auto extensionless_png = QDir{sources.path()}.filePath(QStringLiteral("GroundTiles"));
+        QImage source{32, 16, QImage::Format_ARGB32};
+        source.fill(QColor{38, 74, 42});
+        QVERIFY(source.save(extensionless_png, "PNG"));
+
+        TileSetCreationRequest request;
+        request.project_root = project.path();
+        request.source_png = extensionless_png;
+        request.name = QStringLiteral("Extensionless Ground");
+        request.cell_width = 16;
+        request.cell_height = 16;
+        request.pixels_per_unit = 16.0;
+        const auto created = TileSetCreationService::create(request);
+        QVERIFY2(created.succeeded, qPrintable(created.error));
+        QCOMPARE(created.tile_count, 2);
+        QCOMPARE(QFileInfo{created.texture_path}.suffix(), QStringLiteral("png"));
+
+        QFile source_file{extensionless_png};
+        QFile copied_file{created.texture_path};
+        QVERIFY(source_file.open(QIODevice::ReadOnly));
+        QVERIFY(copied_file.open(QIODevice::ReadOnly));
+        QCOMPARE(copied_file.readAll(), source_file.readAll());
+
+        TileSetWizard wizard{project.path()};
+        auto* source_path = wizard.findChild<QLineEdit*>(QStringLiteral("TileSetSourcePng"));
+        auto* name = wizard.findChild<QLineEdit*>(QStringLiteral("TileSetName"));
+        auto* cell_width = wizard.findChild<QSpinBox*>(QStringLiteral("TileCellWidth"));
+        auto* cell_height = wizard.findChild<QSpinBox*>(QStringLiteral("TileCellHeight"));
+        auto* validation = wizard.findChild<QLabel*>(QStringLiteral("TileSetValidation"));
+        auto* create = wizard.findChild<QPushButton*>(QStringLiteral("CreateTileSetAction"));
+        QVERIFY(source_path != nullptr && name != nullptr && cell_width != nullptr && cell_height != nullptr);
+        QVERIFY(validation != nullptr && create != nullptr);
+        source_path->setText(extensionless_png);
+        name->setText(QStringLiteral("Wizard Ground"));
+        cell_width->setValue(16);
+        cell_height->setValue(16);
+        QCOMPARE(source_path->toolTip(), extensionless_png);
+        QVERIFY(validation->text().contains(QStringLiteral("2 tiles")));
+        QSignalSpy accepted{&wizard, &QDialog::accepted};
+        create->click();
+        QCOMPARE(accepted.count(), 1);
+        QVERIFY2(wizard.result().succeeded, qPrintable(wizard.result().error));
+        QCOMPARE(wizard.result().tile_count, 2);
+
+        const auto mislabeled_png = QDir{sources.path()}.filePath(QStringLiteral("NotAnImage.png"));
+        QFile invalid_file{mislabeled_png};
+        QVERIFY(invalid_file.open(QIODevice::WriteOnly));
+        QCOMPARE(invalid_file.write("not png content"), qint64{15});
+        invalid_file.close();
+
+        request.source_png = mislabeled_png;
+        request.name = QStringLiteral("Mislabeled Input");
+        const auto rejected = TileSetCreationService::create(request);
+        QVERIFY(!rejected.succeeded);
+        QVERIFY(rejected.error.contains(QStringLiteral("readable PNG")));
+        QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
+            QStringLiteral("Assets/Textures/Mislabeled_Input.png"))));
+        QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
+            QStringLiteral("Assets/Tiles/Mislabeled_Input.dpetileset"))));
+
+        request.source_png = QDir{sources.path()}.filePath(QStringLiteral("MissingSource"));
+        request.name = QStringLiteral("Missing Input");
+        const auto missing = TileSetCreationService::create(request);
+        QVERIFY(!missing.succeeded);
+        QVERIFY(missing.error.contains(QStringLiteral("existing PNG")));
+        QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
+            QStringLiteral("Assets/Textures/Missing_Input.png"))));
     }
 
     void generated_csharp_script_attaches_to_the_selected_gameobject()
