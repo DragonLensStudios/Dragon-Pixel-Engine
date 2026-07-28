@@ -1971,6 +1971,12 @@ private slots:
         QVERIFY(!tiles.prepare_save().has_value());
         tiles.cancel_stroke();
         QVERIFY(!tiles.tile_at(0, 4, 4).has_value());
+        tiles.begin_stroke();
+        QVERIFY(tiles.preview_line(0, -2, 1, 2, 1,
+            TileDocumentService::Brush{tile_id}));
+        tiles.commit_stroke();
+        for (int x = -2; x <= 2; ++x)
+            QVERIFY(tiles.tile_at(0, x, 1).has_value());
         QVERIFY(tiles.save());
         QVERIFY(!tiles.is_dirty());
         QFile saved{map_copy};
