@@ -320,7 +320,7 @@ void request_protocol_writes_a_versioned_result()
         "Versioned request execution failed: " + error);
     const auto result = json::parse(read_bytes(staging / "result.json"));
     require(result.value("format", std::string{}) == "dpe.tile-import.result"
-        && result.value("formatVersion", 0) == 1
+        && result.value("formatVersion", 0) == 2
         && result.value("importer", std::string{}) == "dragonpixel.tiled-json"
         && result.value("succeeded", false)
         && result.at("outputs").size() == 3,
