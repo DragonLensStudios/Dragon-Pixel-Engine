@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -11,6 +12,14 @@ import xml.etree.ElementTree as ET
 
 PERMANENT_BRANCHES = frozenset({"main", "develop"})
 TEMPORARY_BRANCH_PREFIXES = ("feature/", "release/", "hotfix/")
+LINUX_ASAN_DIRECT_NATIVE_TESTS = (
+    "s2.project_component_runtime",
+    "poc_i.worker_only_component_runtime",
+)
+LINUX_ASAN_CHILD_NATIVE_TESTS = (
+    "s2.editor_interactions",
+    "poc_h.qt_interactions",
+)
 
 
 class ValidationError(ValueError):
@@ -110,6 +119,68 @@ def validate_junit(path: Path, minimum_tests: int = 1) -> int:
     return len(test_cases)
 
 
+def validate_linux_asan_hosts(path: Path) -> int:
+    """Require correct sanitizer injection for direct and child native hosts."""
+
+    if not path.is_file():
+        raise ValidationError(f"CTest JSON evidence file does not exist: {path}")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as error:
+        raise ValidationError(f"CTest JSON evidence is not readable: {path}: {error}") from error
+
+    tests = document.get("tests")
+    if not isinstance(tests, list):
+        raise ValidationError("CTest JSON evidence must contain a tests array.")
+    by_name = {
+        test.get("name"): test
+        for test in tests
+        if isinstance(test, dict) and isinstance(test.get("name"), str)
+    }
+
+    def environment_for(test_name: str) -> dict[str, str]:
+        test = by_name.get(test_name)
+        if test is None:
+            raise ValidationError(f"Required Linux ASan test is missing from CTest evidence: {test_name}")
+        properties = test.get("properties", [])
+        environment: dict[str, str] = {}
+        for prop in properties:
+            if not isinstance(prop, dict) or prop.get("name") != "ENVIRONMENT":
+                continue
+            values = prop.get("value", [])
+            if not isinstance(values, list):
+                raise ValidationError(f"CTest ENVIRONMENT for {test_name} must be an array.")
+            for value in values:
+                if isinstance(value, str) and "=" in value:
+                    key, setting = value.split("=", 1)
+                    environment[key] = setting
+        return environment
+
+    for test_name in LINUX_ASAN_DIRECT_NATIVE_TESTS:
+        environment = environment_for(test_name)
+        if not environment.get("LD_PRELOAD", "").startswith("/"):
+            raise ValidationError(
+                f"Direct native managed test {test_name} must preload an absolute Linux ASan runtime."
+            )
+        if "DPE_ASAN_RUNTIME" in environment:
+            raise ValidationError(
+                f"Direct native managed test {test_name} must not defer ASan injection to a child host."
+            )
+
+    for test_name in LINUX_ASAN_CHILD_NATIVE_TESTS:
+        environment = environment_for(test_name)
+        if not environment.get("DPE_ASAN_RUNTIME", "").startswith("/"):
+            raise ValidationError(
+                f"Editor test {test_name} must export an absolute ASan runtime for disposable workers."
+            )
+        if "LD_PRELOAD" in environment:
+            raise ValidationError(
+                f"Editor test {test_name} must reserve sanitizer preloading for its worker process."
+            )
+
+    return len(LINUX_ASAN_DIRECT_NATIVE_TESTS) + len(LINUX_ASAN_CHILD_NATIVE_TESTS)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -123,6 +194,11 @@ def _parser() -> argparse.ArgumentParser:
     junit = commands.add_parser("junit", help="validate CTest JUnit evidence")
     junit.add_argument("path", type=Path)
     junit.add_argument("--minimum-tests", type=int, default=1)
+
+    linux_asan_hosts = commands.add_parser(
+        "linux-asan-hosts", help="validate Linux ASan direct/child native host environments"
+    )
+    linux_asan_hosts.add_argument("path", type=Path)
     return parser
 
 
@@ -132,9 +208,12 @@ def main(arguments: list[str] | None = None) -> int:
         if args.command == "gitflow":
             validate_gitflow_event(args.event_name, args.ref_name, args.head_ref, args.base_ref)
             print("GitFlow event relationship is valid.")
-        else:
+        elif args.command == "junit":
             test_count = validate_junit(args.path, args.minimum_tests)
             print(f"JUnit evidence is valid: {test_count} test case(s), zero failures, zero errors.")
+        else:
+            test_count = validate_linux_asan_hosts(args.path)
+            print(f"Linux ASan host environments are valid for {test_count} test alias(es).")
     except ValidationError as error:
         print(f"CI validation failed: {error}", file=sys.stderr)
         return 1
