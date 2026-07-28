@@ -453,8 +453,12 @@ private slots:
         QVERIFY(tilemap != window.project_index_.candidate->entries.cend());
     }
 
-    void tilemap_creation_reuses_a_blank_gameobject_and_is_immediately_paint_ready()
+    void tilemap_creation_workflow_is_paint_ready_recoverable_and_guided()
     {
+        if (!qEnvironmentVariableIsSet("DPE_RUN_TILEMAP_CREATION_WORKFLOW"))
+        {
+            QSKIP("Covered by the focused s2.tilemap_creation_workflow CTest entry.");
+        }
         QTemporaryDir temporary;
         QVERIFY(temporary.isValid());
         const auto sample_root = QFileInfo{
@@ -462,6 +466,20 @@ private slots:
         const auto project_root = temporary.filePath(QStringLiteral("PaintReadyProject"));
         QVERIFY(copy_directory_tree(sample_root, project_root));
         const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+        const auto source_path = temporary.filePath(QStringLiteral("UnmappedAtlas.png"));
+        QImage source{32, 16, QImage::Format_ARGB32};
+        source.fill(QColor{72, 118, 62});
+        QVERIFY(source.save(source_path, "PNG"));
+
+        TileSetCreationRequest request;
+        request.project_root = project_root;
+        request.source_image = source_path;
+        request.name = QStringLiteral("Unmapped Ground");
+        request.cell_width = 16;
+        request.cell_height = 16;
+        request.pixels_per_unit = 16.0;
+        const auto tileset = TileSetCreationService::create(request);
+        QVERIFY2(tileset.succeeded, qPrintable(tileset.error));
 
         EditorWindow window{manifest};
         window.set_unsaved_prompt([](const QString&) {
@@ -469,15 +487,6 @@ private slots:
         });
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
-        const auto tileset = std::find_if(
-            window.project_index_.candidate->entries.cbegin(),
-            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
-                return entry.asset_type.contains(
-                    QStringLiteral("tileset"), Qt::CaseInsensitive);
-        });
-        QVERIFY(tileset != window.project_index_.candidate->entries.cend());
-        const auto tileset_id = tileset->id;
-
         window.create_preset(
             dragonpixel::scene::entity_preset::tilemap, {}, true);
         const auto blank_id = window.selected_entity_id();
@@ -500,8 +509,24 @@ private slots:
         QCOMPARE(QString::fromStdString(component_for(*blank_id)->properties
             .value("dpe.tilemap.asset", std::string{})), QString{});
 
-        QVERIFY(window.create_tilemap_from_tileset(
-            tileset_id, QStringLiteral("Paint Ready Map")));
+        int prompt_count = 0;
+        QString suggested_name;
+        window.set_tilemap_name_prompt(
+            [&](const QString& suggested) -> std::optional<QString> {
+                ++prompt_count;
+                suggested_name = suggested;
+                return QStringLiteral("Recovered Ground Map");
+            });
+        const auto source_index = find_role(
+            window.project_model_, EditorRoles::asset_id, tileset.tile_set_asset_id);
+        QVERIFY(source_index.isValid());
+        const auto proxy_index = window.project_filter_->mapFromSource(
+            source_index.siblingAtColumn(0));
+        QVERIFY(proxy_index.isValid());
+        window.activate_project_item(proxy_index);
+
+        QCOMPARE(prompt_count, 1);
+        QCOMPARE(suggested_name, QStringLiteral("Unmapped_Ground Map"));
         QCOMPARE(window.scene_->entities().size(), entity_count);
         QCOMPARE(window.selected_entity_id(), blank_id);
         QVERIFY(window.tile_document_service_->tilemap() != nullptr);
@@ -532,7 +557,8 @@ private slots:
         window.end_tile_scene_stroke(world);
         QVERIFY(window.tile_document_service_->tile_at(0, 0, 0).has_value());
         const auto tilemap_path = window.tile_document_service_->tilemap_path();
-        const auto* reopened_tileset = window.project_index_.candidate->find_by_id(tileset_id);
+        const auto* reopened_tileset = window.project_index_.candidate->find_by_id(
+            tileset.tile_set_asset_id);
         QVERIFY(reopened_tileset != nullptr);
         const auto tileset_path = reopened_tileset->resolved_source_path;
         QVERIFY(window.save_scene());
@@ -548,139 +574,10 @@ private slots:
         QVERIFY(component_for(*additional) != nullptr);
         QCOMPARE(QString::fromStdString(component_for(*additional)->properties
             .at("dpe.tilemap.asset").get<std::string>()), map_id);
-    }
-
-    void activating_an_unmapped_tileset_completes_the_selected_blank_gameobject()
-    {
-        QTemporaryDir temporary;
-        QVERIFY(temporary.isValid());
-        const auto sample_root = QFileInfo{
-            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
-        const auto project_root = temporary.filePath(QStringLiteral("UnmappedTileSetProject"));
-        QVERIFY(copy_directory_tree(sample_root, project_root));
-        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
-        const auto source_path = temporary.filePath(QStringLiteral("UnmappedAtlas.png"));
-        QImage source{32, 16, QImage::Format_ARGB32};
-        source.fill(QColor{72, 118, 62});
-        QVERIFY(source.save(source_path, "PNG"));
-
-        TileSetCreationRequest request;
-        request.project_root = project_root;
-        request.source_image = source_path;
-        request.name = QStringLiteral("Unmapped Ground");
-        request.cell_width = 16;
-        request.cell_height = 16;
-        request.pixels_per_unit = 16.0;
-        const auto tileset = TileSetCreationService::create(request);
-        QVERIFY2(tileset.succeeded, qPrintable(tileset.error));
-
-        EditorWindow window{manifest};
-        window.set_unsaved_prompt([](const QString&) {
-            return EditorWindow::UnsavedDecision::discard;
-        });
-        window.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&window));
-        window.create_preset(
-            dragonpixel::scene::entity_preset::tilemap, {}, true);
-        const auto blank_id = window.selected_entity_id();
-        QVERIFY(blank_id.has_value());
-        const auto entity_count = window.scene_->entities().size();
-
-        int prompt_count = 0;
-        QString suggested_name;
-        window.set_tilemap_name_prompt(
-            [&](const QString& suggested) -> std::optional<QString> {
-                ++prompt_count;
-                suggested_name = suggested;
-                return QStringLiteral("Recovered Ground Map");
-            });
-        const auto source_index = find_role(
-            window.project_model_, EditorRoles::asset_id, tileset.tile_set_asset_id);
-        QVERIFY(source_index.isValid());
-        const auto proxy_index = window.project_filter_->mapFromSource(
-            source_index.siblingAtColumn(0));
-        QVERIFY(proxy_index.isValid());
-        window.activate_project_item(proxy_index);
-
-        QCOMPARE(prompt_count, 1);
-        QCOMPARE(suggested_name, QStringLiteral("Unmapped_Ground Map"));
-        QCOMPARE(window.scene_->entities().size(), entity_count);
-        QCOMPARE(window.selected_entity_id(), blank_id);
-        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
-        QCOMPARE(QString::fromStdString(window.tile_document_service_->tilemap()->name),
-            QStringLiteral("Recovered Ground Map"));
-        const auto* entity = window.scene_->find_entity(*blank_id);
-        QVERIFY(entity != nullptr);
-        const auto component = std::find_if(
-            entity->components.cbegin(), entity->components.cend(), [](const auto& candidate) {
-                return candidate.type_id
-                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
-            });
-        QVERIFY(component != entity->components.cend());
-        QCOMPARE(QString::fromStdString(component->properties
-            .at("dpe.tilemap.asset").get<std::string>()),
-            QString::fromStdString(window.tile_document_service_->tilemap()
-                ->asset_id.to_string()));
-        QVERIFY(window.tile_palette_->active_brush().has_value());
-        QVERIFY(window.viewport_->tile_edit_enabled());
-    }
-
-    void tilemap_publication_is_retained_when_no_scene_can_be_attached()
-    {
-        QTemporaryDir temporary;
-        QVERIFY(temporary.isValid());
-        const auto sample_root = QFileInfo{
-            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
-        const auto project_root = temporary.filePath(QStringLiteral("MapOnlyProject"));
-        QVERIFY(copy_directory_tree(sample_root, project_root));
-        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
-
-        EditorWindow window{manifest};
-        const auto tileset = std::find_if(
-            window.project_index_.candidate->entries.cbegin(),
-            window.project_index_.candidate->entries.cend(), [](const auto& entry) {
-                return entry.asset_type.contains(
-                    QStringLiteral("tileset"), Qt::CaseInsensitive);
-            });
-        QVERIFY(tileset != window.project_index_.candidate->entries.cend());
-        const auto tileset_id = tileset->id;
-        window.scene_.reset();
-
-        QVERIFY(window.create_tilemap_from_tileset(
-            tileset_id, QStringLiteral("Retained Map")));
-        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
-        const auto map_id = QString::fromStdString(
-            window.tile_document_service_->tilemap()->asset_id.to_string());
-        const auto* map_entry = window.project_index_.candidate->find_by_id(map_id);
-        QVERIFY(map_entry != nullptr);
-        QVERIFY(QFileInfo::exists(map_entry->absolute_path));
-        QVERIFY(QFileInfo::exists(map_entry->resolved_source_path));
-        QCOMPARE(map_entry->dependencies, QStringList{tileset_id});
-    }
-
-    void image_tileset_wizard_completes_a_new_paint_ready_gameobject_by_default()
-    {
-        QTemporaryDir temporary;
-        QVERIFY(temporary.isValid());
-        const auto sample_root = QFileInfo{
-            QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
-        const auto project_root = temporary.filePath(QStringLiteral("GuidedTilemapProject"));
-        QVERIFY(copy_directory_tree(sample_root, project_root));
-        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
-        const auto source_path = temporary.filePath(QStringLiteral("GuidedAtlas.png"));
-        QImage source{32, 16, QImage::Format_ARGB32};
+        const auto guided_source_path = temporary.filePath(QStringLiteral("GuidedAtlas.png"));
         source.fill(QColor{84, 126, 70});
-        QVERIFY(source.save(source_path, "PNG"));
-
-        EditorWindow window{manifest};
-        window.set_unsaved_prompt([](const QString&) {
-            return EditorWindow::UnsavedDecision::discard;
-        });
-        window.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&window));
-        window.hierarchy_->selectionModel()->clearSelection();
-        QCoreApplication::processEvents();
-        const auto entity_count = window.scene_->entities().size();
+        QVERIFY(source.save(guided_source_path, "PNG"));
+        const auto guided_entity_count = window.scene_->entities().size();
         bool wizard_completed = false;
         QTimer::singleShot(0, [&] {
             auto* wizard = qobject_cast<TileSetWizard*>(QApplication::activeModalWidget());
@@ -701,7 +598,7 @@ private slots:
                 wizard->reject();
                 return;
             }
-            source_field->setText(source_path);
+            source_field->setText(guided_source_path);
             name_field->setText(QStringLiteral("Guided Ground"));
             cell_width->setValue(16);
             cell_height->setValue(16);
@@ -716,7 +613,7 @@ private slots:
         window.create_tile_set_from_image();
 
         QVERIFY(wizard_completed);
-        QCOMPARE(window.scene_->entities().size(), entity_count + 1);
+        QCOMPARE(window.scene_->entities().size(), guided_entity_count + 1);
         QVERIFY(window.tile_document_service_->tilemap() != nullptr);
         QCOMPARE(QString::fromStdString(window.tile_document_service_->tilemap()->name),
             QStringLiteral("Guided Ground Map"));
@@ -738,6 +635,19 @@ private slots:
             .at("dpe.tilemap.asset").get<std::string>()),
             QString::fromStdString(window.tile_document_service_->tilemap()
                 ->asset_id.to_string()));
+
+        window.scene_.reset();
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset.tile_set_asset_id, QStringLiteral("Retained Map")));
+        QVERIFY(window.tile_document_service_->tilemap() != nullptr);
+        const auto retained_map_id = QString::fromStdString(
+            window.tile_document_service_->tilemap()->asset_id.to_string());
+        const auto* retained_map = window.project_index_.candidate->find_by_id(
+            retained_map_id);
+        QVERIFY(retained_map != nullptr);
+        QVERIFY(QFileInfo::exists(retained_map->absolute_path));
+        QVERIFY(QFileInfo::exists(retained_map->resolved_source_path));
+        QCOMPARE(retained_map->dependencies, QStringList{tileset.tile_set_asset_id});
     }
 
     void scene_view_tile_editing_maps_cells_guards_modes_and_refreshes_preview()
