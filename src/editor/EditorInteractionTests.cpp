@@ -2701,6 +2701,29 @@ private slots:
         window.tile_document_service_->commit_stroke();
         QVERIFY(window.tile_document_service_->is_dirty());
 
+        window.save_fault_for_test_ = dragonpixel::serialization::transaction_save_fault::
+            committed_journal_persistent_sharing_violation;
+        QString sharing_failure_message;
+        QTimer::singleShot(0, [&sharing_failure_message] {
+            if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()))
+            {
+                sharing_failure_message = message->text();
+                message->accept();
+            }
+        });
+        QVERIFY(!window.save_scene());
+        QVERIFY(sharing_failure_message.contains(QStringLiteral("another process is using it")));
+        QVERIFY(sharing_failure_message.contains(
+            QStringLiteral("The previous scene and Tilemap files were restored.")));
+        QVERIFY(sharing_failure_message.contains(
+            QStringLiteral("Your unsaved edits remain open in the editor.")));
+        QVERIFY(sharing_failure_message.contains(QStringLiteral("choose Save again")));
+        QVERIFY(sharing_failure_message.contains(QStringLiteral("Technical details:")));
+        QCOMPARE(read_bytes(scene_path), scene_before);
+        QCOMPARE(read_bytes(tilemap_path), tilemap_before);
+        QVERIFY(window.scene_->is_dirty());
+        QVERIFY(window.tile_document_service_->is_dirty());
+
         window.save_fault_for_test_ =
             dragonpixel::serialization::transaction_save_fault::after_first_replace;
         QTimer::singleShot(0, [] {

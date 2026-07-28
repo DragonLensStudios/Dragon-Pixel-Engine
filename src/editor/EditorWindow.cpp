@@ -431,6 +431,26 @@ std::string stable_runtime_uuid(const QByteArray& seed)
              QString::fromLatin1(hex.mid(12, 4)), QString::fromLatin1(hex.mid(16, 4)),
              QString::fromLatin1(hex.mid(20, 12))).toStdString();
 }
+
+QString save_failure_dialog_text(const QString& detail)
+{
+    const auto edits_remain = QStringLiteral(
+        "Your unsaved edits remain open in the editor.");
+    if (detail.contains(QStringLiteral("error 32 (")))
+    {
+        const auto recovery = detail.contains(QStringLiteral("restored"), Qt::CaseInsensitive)
+            ? QStringLiteral("The previous scene and Tilemap files were restored. ")
+            : QStringLiteral("Dragon Pixel did not overwrite the existing project files. ");
+        return QStringLiteral(
+            "Dragon Pixel could not finish replacing the scene because another process is using it. "
+            "%1%2\n\nClose any application that has the project file open, then choose Save again."
+            "\n\nTechnical details:\n%3")
+            .arg(recovery, edits_remain, detail);
+    }
+    return QStringLiteral(
+        "Dragon Pixel could not complete the save transaction. %1\n\nTechnical details:\n%2")
+        .arg(edits_remain, detail);
+}
 }
 
 EditorWindow::EditorWindow(QString initial_document, QWidget* parent)
@@ -3138,7 +3158,8 @@ bool EditorWindow::save_scene()
     }
     append_console(QStringLiteral("Save transaction failed without advancing any document: %1")
         .arg(QString::fromStdString(result.error)), QStringLiteral("Error"), QStringLiteral("Documents"));
-    QMessageBox::critical(this, QStringLiteral("Save failed"), QString::fromStdString(result.error));
+    const auto detail = QString::fromStdString(result.error);
+    QMessageBox::critical(this, QStringLiteral("Save failed"), save_failure_dialog_text(detail));
     return false;
 }
 
