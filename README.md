@@ -74,7 +74,7 @@ A dedicated preview worker consumes the editor-owned mirror and reloads revision
 
 ## Tilemap authoring workspace
 
-Choose **Assets > Create TileSet from PNG...** to turn a sprite sheet into a contained Texture and indexed TileSet. Select a PNG, name the TileSet, set cell size, margins, spacing, pixels-per-unit, and optional rectangular collision, then confirm the slicing preview. PNGs are validated by their actual image content, so a valid temporary or downloaded PNG without a filename extension is accepted and copied into the project with a normalized `.png` name; a missing or mislabeled non-PNG file is rejected before any asset is written.
+Choose **Assets > Create TileSet from Image...** to turn a PNG, JPEG, BMP, or GIF sprite sheet into a contained Texture and indexed TileSet. Name the TileSet, set cell size, margins, spacing, pixels-per-unit, and optional rectangular collision, then confirm the slicing preview. Inputs are validated by decoded content rather than filename: valid extensionless PNGs remain accepted and preserve their bytes, while JPEG/BMP/GIF sources are normalized to a real project `.png`. Missing, malformed, or unsupported formats such as SVG are rejected before any asset is written.
 
 In the 2D workspace, select a TileSet in Project Explorer and choose **Create Tilemap from Selected TileSet...** from the Assets menu or its Project context menu. The editor atomically creates an empty reusable Tilemap with one layer and opens it in the Tile Palette. Drag the Tilemap from Project Explorer into Scene View or the Hierarchy to create a Transform + Tilemap2D GameObject, or drag another compatible Tilemap onto the Inspector's Tilemap field to reassign it.
 

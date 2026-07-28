@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Image-based TileSet intake correction active; draft PR #6 open
+> **Status:** Image-based TileSet intake implemented; aggregate verification active
 > **Disposition:** Implementation correction in progress; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
@@ -201,8 +201,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Draft PR opened into `develop` and left unmerged for human review.
 - [x] Reported extensionless-PNG creation failure is regression-covered and repaired without weakening non-PNG rejection.
 - [x] Correction verification, evidence, branch push, and draft PR #6 update are complete.
-- [ ] Public workflow consistently says **Create TileSet from Image...** and accepts the documented raster formats.
-- [ ] Non-PNG inputs are normalized to real PNG bytes with focused/full verification and no regression to extensionless PNG handling.
+- [x] Public workflow consistently says **Create TileSet from Image...** and accepts the documented raster formats.
+- [x] Non-PNG inputs are normalized to real PNG bytes with focused verification and no regression to extensionless PNG handling.
 - [ ] Image-intake evidence, branch push, and draft PR #6 update are complete.
 - [ ] Human review and merge occur after this implementation handoff.
 
@@ -225,6 +225,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | PNG correction aggregate verification passed | A complete strict Windows Release rebuild succeeded with zero warnings/errors and the unchanged preset passed **60/60 in 482.94 seconds**. The production-style bundle contains **189** manifest records with zero missing, size-mismatched, hash-mismatched, unlisted, or manifest-only files; the packaged MonoGame self-test passes with development-path overrides removed. Final hashes: editor `E1D6BFA7F77705BC4D9C2C5D1210A0A334488362BC7C67ECCF7BB5A698E29E34`, Tiled importer `4B83ADCA6BD9E8CD81D7E2C7FC66A3455C2759D075CE2A91A42ADDD1489C3B5F`, manifest `90FC556D52BC4B40C7B8D3F9AB0200DFF8ED8FE37F8EE922CDE2EA80A5361ABD`. The broader ASan preset was not repeated for this decoder-local correction; its prior 59/60 result and unchanged POC J performance blocker remain recorded, while the complete affected tile workflow passes under sanitizer as reported above. |
 | 2026-07-27 | PNG correction review handoff complete | Reviewed the four focused correction commits and five-file correction diff, then re-reviewed the aggregate branch stat and confirmed `git diff --check develop...HEAD` is clean with no unrelated source, format, contract, threshold, or support change. Pushed the correction to `feature/tilemap-authoring-workspace` and updated existing draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) with the root cause, behavior, focused/full verification, recovery coverage, final hashes, unchanged limitations, and prior POC J sanitizer blocker. GitHub reports the PR open, draft, targeting `develop`, and unmerged. |
 | 2026-07-27 | Image-based TileSet intake correction started | The user requested that **Create TileSet from PNG...** become **Create TileSet from Image...** and that TileSet creation be corrected consistently. Inspection found PNG-specific public text and internal names across EditorWindow, TileSetWizard, its request DTO, README, and tests. The smallest complete behavior matching the new name is content-validated PNG/JPEG/BMP/GIF input with a guaranteed contained PNG output, consistent preview/create decoding, unchanged slicing and recovery boundaries, and public naming coverage on the same active branch and draft PR. Required mirrors remain synchronized at `DPE-ARCH-0014`; no durable format, ABI, protocol, topology, or support revision is required. |
+| 2026-07-27 | Image-based TileSet intake implemented and focused verification passed | The public Assets action, handler, wizard title/form/accessibility text, source object ID, and request field now use image-based naming. Preview/Create share content detection limited to PNG/JPEG/BMP/GIF; PNG bytes are preserved, while JPEG/BMP/GIF decode and transcode into a real PNG before the existing contained four-file publication. A new JPEG regression first failed 2 passed / 1 failed in 11 ms at the prior forced-PNG decoder. The final focused set validates the public action, wizard text, standard and extensionless PNG, JPEG/BMP/GIF PNG signatures/dimensions/tile counts, malformed/missing/SVG rejection, non-overwrite, exact PNG retention, and zero targeted partial outputs: **6/6 in 0.937 seconds** under strict Release and **6/6 in 3.212 seconds** under MSVC AddressSanitizer with no sanitizer finding. Commit: `e3b7104`. |
 
 ## Handoff Notes
 
