@@ -226,7 +226,7 @@ const component_record* find_component(const dragonpixel::scene::entity& value, 
 void verify_scene_round_trip()
 {
     const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
-    require(registry.size() == 17, "Default metadata registration did not retain every built-in component.");
+    require(registry.size() == 18, "Default metadata registration did not retain every built-in component.");
     const auto* transform_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::transform);
     require(transform_descriptor != nullptr && transform_descriptor->schema_version == 2,
         "Transform schema version was wrong.");
@@ -258,6 +258,15 @@ void verify_scene_round_trip()
             && tilemap_collider_descriptor->schema_version == 1
             && tilemap_collider_descriptor->owner == dragonpixel::metadata::runtime_owner::native,
         "TilemapCollider2D metadata registration failed.");
+    require(registry.find(dragonpixel::metadata::builtin_component_ids::polygon_collider_2d)
+            != nullptr,
+        "PolygonCollider2D metadata registration failed.");
+    require(std::any_of(tilemap_collider_descriptor->properties.begin(),
+            tilemap_collider_descriptor->properties.end(), [](const auto& property) {
+                return property.property_id == "dpe.tilemap.collider.composite"
+                    && property.default_json == "false";
+            }),
+        "TilemapCollider2D did not expose explicit composite control.");
     const auto primary_property = std::find_if(
         camera_descriptor->properties.begin(),
         camera_descriptor->properties.end(),

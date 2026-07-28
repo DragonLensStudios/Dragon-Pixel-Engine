@@ -965,6 +965,7 @@ private slots:
         auto* tile_name = window.findChild<QLineEdit*>(QStringLiteral("TileDefinitionName"));
         auto* tile_kind = window.findChild<QComboBox*>(QStringLiteral("TileDefinitionKind"));
         auto* tile_collider = window.findChild<QComboBox*>(QStringLiteral("TileDefinitionCollider"));
+        auto* tile_outline = window.findChild<QLineEdit*>(QStringLiteral("TileDefinitionColliderOutline"));
         auto* tile_minimum_speed = window.findChild<QDoubleSpinBox*>(
             QStringLiteral("TileDefinitionMinimumSpeed"));
         auto* tile_maximum_speed = window.findChild<QDoubleSpinBox*>(
@@ -976,6 +977,7 @@ private slots:
         auto* tile_definition_editor = window.findChild<QGroupBox*>(
             QStringLiteral("TileDefinitionEditor"));
         QVERIFY(tile_name != nullptr && tile_kind != nullptr && tile_collider != nullptr
+            && tile_outline != nullptr
             && tile_minimum_speed != nullptr && tile_maximum_speed != nullptr
             && tile_update_physics != nullptr && apply_tile_definition != nullptr
             && tile_definition_editor != nullptr);
@@ -991,6 +993,7 @@ private slots:
             static_cast<int>(dragonpixel::tiles::tile_kind::animated)));
         tile_collider->setCurrentIndex(tile_collider->findData(
             static_cast<int>(dragonpixel::tiles::tile_collider_mode::sprite_outline)));
+        tile_outline->setText(QStringLiteral("0,0; 1,0; 1,1; 0.5,0.5; 0,1"));
         tile_minimum_speed->setValue(0.5);
         tile_maximum_speed->setValue(1.5);
         tile_update_physics->setChecked(true);
@@ -1009,6 +1012,7 @@ private slots:
         QCOMPARE(edited_tile->kind, dragonpixel::tiles::tile_kind::animated);
         QCOMPARE(edited_tile->collider_mode,
             dragonpixel::tiles::tile_collider_mode::sprite_outline);
+        QCOMPARE(edited_tile->collision_outline.size(), std::size_t{5});
         QVERIFY(!edited_tile->animation_frames.empty());
         QVERIFY(edited_tile->update_physics);
         auto* frame_duration = window.findChild<QDoubleSpinBox*>(
@@ -1267,7 +1271,19 @@ private slots:
 
         rectangle->trigger();
         TileDocumentService::Brush reflected;
-        reflected.tile_id = tile_id;
+        const auto grid_tile_id = *dragonpixel::core::uuid::parse(
+            tile_list->item(1)->data(Qt::UserRole).toString().toStdString());
+        auto grid_tile = *std::find_if(edited_owner->tiles.begin(), edited_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == grid_tile_id; });
+        if (grid_tile.collider_mode != dragonpixel::tiles::tile_collider_mode::grid
+            || !grid_tile.collision_outline.empty() || grid_tile.collision.has_value())
+        {
+            grid_tile.collider_mode = dragonpixel::tiles::tile_collider_mode::grid;
+            grid_tile.collision_outline.clear();
+            grid_tile.collision.reset();
+            QVERIFY(window.tile_document_service_->update_tile_definition(*edited_set_id, grid_tile));
+        }
+        reflected.tile_id = grid_tile_id;
         reflected.flip_y = true;
         reflected.rotation_quarter_turns = 2U;
         window.tile_palette_->select_brush(reflected);
@@ -1284,6 +1300,35 @@ private slots:
         QTest::keyClick(window.viewport_, Qt::Key_Escape);
         QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_2_0);
         QVERIFY(!window.tile_document_service_->tile_at(0, 2, 0).has_value());
+        TileDocumentService::Brush outlined;
+        outlined.tile_id = tile_id;
+        outlined.tile_set_id = *edited_set_id;
+        QVERIFY(window.tile_document_service_->paint_cell(0, 4, 0, outlined));
+        TileDocumentService::Brush composite_grid;
+        composite_grid.tile_id = grid_tile_id;
+        composite_grid.tile_set_id = *edited_set_id;
+        for (const auto point : {QPoint{10, 10}, QPoint{11, 10},
+                 QPoint{10, 11}, QPoint{11, 11}})
+            QVERIFY(window.tile_document_service_->paint_cell(
+                0, point.x(), point.y(), composite_grid));
+
+        dragonpixel::scene::component_record tilemap_collider_component;
+        tilemap_collider_component.type_id = std::string{
+            dragonpixel::metadata::builtin_component_ids::tilemap_collider_2d};
+        tilemap_collider_component.qualified_name =
+            "DragonPixel.Native.TilemapCollider2DComponent";
+        tilemap_collider_component.properties = {
+            {"dpe.tilemap.collider.sensor", false},
+            {"dpe.tilemap.collider.friction", 0.25},
+            {"dpe.tilemap.collider.restitution", 0.1},
+            {"dpe.tilemap.collider.layer", 2},
+            {"dpe.tilemap.collider.mask", 65531},
+            {"dpe.tilemap.collider.composite", true},
+        };
+        QVERIFY(window.apply_authoring_transaction({
+            dragonpixel::scene::upsert_component_command{
+                *target_entity_id, std::move(tilemap_collider_component)}},
+            "Enable composite Tilemap collision"));
 
         const auto world_3_0 = window.viewport_->map_to_world_2d(cell_3_0);
         QVERIFY(world_3_0.has_value());
@@ -1353,7 +1398,7 @@ private slots:
         const auto& runtime_cell = runtime_map->at("layers").at(0).at("cells").at(0);
         QCOMPARE(runtime_cell.at("tileSetId").get<std::string>(), tileset_id.toStdString());
         QCOMPARE(runtime_cell.at("resolvedTileSetId").get<std::string>(), tileset_id.toStdString());
-        QCOMPARE(runtime_cell.at("resolvedTileId").get<std::string>(), tile_id.to_string());
+        QCOMPARE(runtime_cell.at("resolvedTileId").get<std::string>(), grid_tile_id.to_string());
         QVERIFY(runtime_cell.contains("tint"));
         QVERIFY(runtime_cell.contains("offset"));
         QVERIFY(runtime_cell.contains("scale"));
@@ -1366,6 +1411,45 @@ private slots:
         QCOMPARE(runtime_set->at("formatVersion").get<int>(), 2);
         QVERIFY(runtime_set->contains("texturePngBase64ByAssetId"));
         QCOMPARE(runtime_set->at("pixelsPerUnit").get<double>(), 32.0);
+        const auto runtime_outline_tile = std::find_if(runtime_set->at("tiles").cbegin(),
+            runtime_set->at("tiles").cend(), [&](const auto& tile) {
+                return tile.value("tileId", std::string{}) == tile_id.to_string();
+            });
+        QVERIFY(runtime_outline_tile != runtime_set->at("tiles").cend());
+        QCOMPARE(runtime_outline_tile->at("collider").at("mode").get<std::string>(),
+            std::string{"sprite-outline"});
+        QCOMPARE(runtime_outline_tile->at("collider").at("outline").size(), std::size_t{5});
+        const auto generated = std::count_if(root.at("entities").cbegin(),
+            root.at("entities").cend(), [](const auto& entity) {
+                return entity.value("runtimeGenerated", false);
+            });
+        QVERIFY(generated >= 4);
+        std::size_t polygon_count{};
+        std::size_t composite_box_count{};
+        for (const auto& entity : root.at("entities"))
+        {
+            if (!entity.value("runtimeGenerated", false)) continue;
+            for (const auto& component : entity.at("components"))
+            {
+                if (component.value("typeId", std::string{})
+                    == dragonpixel::metadata::builtin_component_ids::polygon_collider_2d)
+                {
+                    ++polygon_count;
+                    QCOMPARE(component.at("properties").at("dpe.physics2d.points").size(),
+                        std::size_t{3});
+                }
+                if (component.value("typeId", std::string{})
+                    == dragonpixel::metadata::builtin_component_ids::box_collider_2d)
+                {
+                    const auto& size = component.at("properties").at("dpe.physics2d.size");
+                    if (std::abs(size.at("x").get<double>() - 2.0) < 0.0001
+                        && std::abs(size.at("y").get<double>() - 2.0) < 0.0001)
+                        ++composite_box_count;
+                }
+            }
+        }
+        QVERIFY(polygon_count >= std::size_t{3});
+        QCOMPARE(composite_box_count, std::size_t{1});
     }
 
     void worker_client_rejects_downgraded_regressing_and_future_correlated_frames()
