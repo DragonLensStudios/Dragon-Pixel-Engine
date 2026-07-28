@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** In progress
-> **Disposition:** Implementation active; human review required before merge
+> **Status:** Implementation complete; ready for human review
+> **Disposition:** Ready for review; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
@@ -173,12 +173,12 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Layer management and transformed brushes are complete and undoable.
 - [x] 2D Scene View painting, overlay, cancellation, and preview refresh are complete.
 - [x] Existing pixels-per-unit is consumed consistently by the adapter path.
-- [ ] Focused Windows strict Release verification passes.
-- [ ] Focused Windows MSVC AddressSanitizer verification passes.
-- [ ] Relevant MonoGame and KNI results are reported separately.
-- [ ] Production-style developer bundle verification passes.
-- [ ] Documentation/evidence is current and mirrored byte-identically.
-- [ ] Aggregate diff and commit sequence reviewed.
+- [x] Focused Windows strict Release verification passes.
+- [x] Focused Windows MSVC AddressSanitizer verification passes.
+- [x] Relevant MonoGame and KNI results are reported separately.
+- [x] Production-style developer bundle verification passes.
+- [x] Documentation/evidence is current and mirrored byte-identically.
+- [x] Aggregate diff and commit sequence reviewed.
 - [ ] Branch pushed.
 - [ ] Draft PR opened into `develop` and left unmerged for human review.
 - [ ] Human review and merge occur after this implementation handoff.
@@ -193,7 +193,10 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Increment 1 complete | Added AssetService empty-Tilemap publication from one indexed TileSet, including generated stable map/layer IDs, one initial layer, asset-v3 dependency revision, two-file staged publication, collision/type/name/native-document checks, and post-publication index validation/removal. Added the Transform + Tilemap2D preset, Assets and Project context creation actions, toolbar/Hierarchy add entries, Project-to-Scene and Project-to-Hierarchy drops, and retained filtered Inspector assignment. Focused Release `s1.native_core`, `s3.asset_service`, and `poc_o.asset_import_cache_integrity` passed 3/3 in 7.51 seconds. The affected public Qt workflow passed 3/3 assertions groups in 13.029 seconds, including two map creations, viewport/Hierarchy attachment, and Inspector reassignment. The first direct build attempt lacked the configured MSVC standard-library environment and failed before compilation; rerunning in the Visual Studio 2022 developer shell succeeded. A 124-second full interaction-alias attempt timed out and is inconclusive, not passing evidence. |
 | 2026-07-27 | Increment 2 complete | Added stable-ID layer add/rename/visibility/reorder/remove operations with full before-image Undo, final-layer and count/name guards, transformed brush paint/fill/rectangle/eyedropper state, atlas-cropped nearest-neighbor list/canvas rendering with a visible fallback, tile-focused Project filters/details, and accessible layer/brush controls. The three affected Qt workflows passed 5/5 test stages in 21.911 seconds under strict Windows Release and 5/5 in 35.569 seconds under MSVC AddressSanitizer (`detect_leaks=0`, fail-fast enabled). Both configurations built with `/W4 /WX`; the ASan build completed without sanitizer findings. |
 | 2026-07-27 | Increment 3 complete | Added an explicit 2D tile-edit pointer mode to AuthoringViewport with world mapping, transformed cell overlay, left-button stroke signals, camera gesture priority, and Escape/mode/Play cancellation. EditorWindow now resolves the one selected Tilemap2D through its complete parent Transform chain, maps cell dimensions through the TileSet's existing pixels-per-unit, captures brush/layer/tool state for one tile-local transaction, and coalesces immutable preview refreshes at 75 ms. The new Scene View workflow covers transformed paint/rectangle/eyedropper state, rollback, 3D/Play rejection, transformed coordinate inversion, and refreshed snapshot contents. The combined four-workflow Qt set passed 6/6 stages in 28.906 seconds under strict Release and 6/6 in 45.150 seconds under MSVC AddressSanitizer. Existing snapshot-v4 parsing already divides cell pixel dimensions by `pixelsPerUnit`; native tile documents passed 2/2, MonoGame scene/graphics paths passed 2/2, and experimental KNI scene/graphics paths passed 2/2 in a combined 22.74 seconds. These are focused Windows results and do not promote POC K or KNI support. |
+| 2026-07-27 | Final Windows verification recorded | The complete strict Release preset passed **60/60 in 446.31 seconds**. After the final gap-free stroke interpolation and active-stroke save guard, the feature-focused MSVC AddressSanitizer Qt set passed **6/6 stages in 42.269 seconds** with no sanitizer finding. The complete ASan preset passed **59/60 in 646.49 seconds**: both complete interaction aliases passed, but existing `poc_j.qt_input_latency` failed the unchanged 30 Qt-painted-FPS gate (MonoGame 28.337 FPS; KNI 21.535 FPS). An immediate unchanged rerun failed the same gate (MonoGame 25.306 FPS; KNI 20.862 FPS) despite 21/21 exact correlated tuples and p50 latency below 100 ms for both adapters. This is recorded as an open POC J aggregate blocker, not hidden or reclassified as feature success. |
+| 2026-07-27 | Production bundle verified | `Build-Production-Editor.ps1 -Fast` generated the production-style Windows bundle. All **189** manifest records exist and SHA-256-verify, and the packaged MonoGame self-test exits successfully with development-path overrides removed. Final hashes: editor `EBBDD9273DEF8A32B75309E9A04131366DBCA281ECA2A8E395C5342BF2A6D85F`, Tiled importer worker `4B83ADCA6BD9E8CD81D7E2C7FC66A3455C2759D075CE2A91A42ADDD1489C3B5F`, manifest `BF510DB25EF185250F8DA41387BD3605A1E253AC972936B35C3B9CB01902445E`. This remains a developer bundle, not a signed POC R release package. |
+| 2026-07-27 | Aggregate review complete | Reviewed the focused four-commit sequence and the complete branch diff from `develop`. The work remains within the accepted static orthogonal, one-TileSet authoring workflow; no durable tile/asset/scene/snapshot format, C ABI, managed public contract, worker protocol, support claim, threshold, or unrelated file changed. `git diff --check develop...HEAD` is clean before the final evidence commit. |
 
 ## Handoff Notes
 
-Implementation is active. The branch must stop at a pushed draft PR into `develop`. Remaining non-orthogonal formats, multi-TileSet maps, reimport, rule/animated/terrain tiles, complete POC K/O evidence, current Ubuntu/macOS matrices, accessibility review, and KNI production support remain explicit follow-up work.
+Implementation and the focused Windows Release/AddressSanitizer evidence are ready for review. The complete Release matrix is green; the broader ASan run retains the repeated POC J Qt-painted-FPS failure described above even though both aggregate editor interaction aliases and the feature-focused sanitizer set pass. The branch must stop at a pushed draft PR into `develop`. Remaining non-orthogonal formats, multi-TileSet maps, reimport, rule/animated/terrain tiles, complete POC K/O evidence, current Ubuntu/macOS matrices, accessibility review, the open POC J gate, and KNI production support remain explicit follow-up work.

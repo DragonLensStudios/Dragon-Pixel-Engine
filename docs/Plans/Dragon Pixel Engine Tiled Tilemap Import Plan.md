@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Tiled Tilemap Import Plan
 
-> **Status:** Implementation complete; draft PR #5 ready for human review
-> **Disposition:** Ready for review; not merged
+> **Status:** Completed; PR #5 merged into `develop`
+> **Disposition:** Human reviewed and merged
 > **Branch:** `feature/tiled-tilemap-import`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
@@ -186,7 +186,7 @@ Primary references:
 - [x] Aggregate diff and commit sequence reviewed.
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop`.
-- [ ] Human review occurs before merge.
+- [x] Human review and merge completed.
 
 ## Work Log
 
@@ -204,7 +204,8 @@ Primary references:
 | 2026-07-27 | Developer bundle verified | The final `Build-Production-Editor.ps1 -Fast` run generated the production-style Windows bundle with the importer adjacent to the editor. The manifest contains **189** file records, zero missing/hash-mismatched/unlisted files. Importer SHA-256 is `D8AC528B99A4D2A4CEF331FDF63691A9B4F61D99B91F2DAF23B901F8575F3A66`; editor SHA-256 is `605AEC7FC8D261919B54B1432AA5BEA3EDB48A524749AECED19A29DA00D23688`; manifest SHA-256 is `49152DACA9AD810818457EBF477ABA9800D3854498F32BDA1241AABE1BD488EC`. An earlier composite follow-up check used a relative path after the build script entered a Visual Studio shell and therefore reported a false missing-manifest error; the final absolute-path build/inventory command completed green. Commit: `3fb419f`. |
 | 2026-07-27 | Aggregate review complete | Reviewed the final 24-file, 2,711-insertion/5-deletion aggregate diff, including the focused implementation/test sequence from `54d9474` through `e0b70e3` and its evidence-only follow-ups. Changes remain limited to the Tiled importer, editor supervision/publication/UI, tile writer regression, focused tests, bundle deployment, README, mirrored plan/master tracker, and affected Proposed ADR evidence. `git diff --check develop` is clean; no generated build output, unrelated source, public format/ABI, support threshold, or platform claim changed. |
 | 2026-07-27 | Draft PR handoff | Pushed `feature/tiled-tilemap-import` and opened draft PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) into `develop`. The PR carries the full template summary, exact Windows Release/sanitizer evidence, bundle hashes, unsupported scope, and pending hosted-platform gates. It remains unmerged for human review. |
+| 2026-07-27 | Human review and merge complete | The user confirmed approval and merge. GitHub reports PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) merged into `develop` at `8aac0e7fbc1affcbaadb26421dce6585df017a4d`. That integration commit is the verified base of the follow-up tilemap-authoring workspace feature. |
 
 ## Handoff Notes
 
-The scoped Windows implementation and focused Release/AddressSanitizer verification are complete. The accepted Tiled subset works end to end through the public action and existing Tile Palette, while unsupported semantics fail before project publication. Draft PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) targets `develop` and is intentionally unmerged. Ubuntu/macOS/hosted PR results remain pending; TMX/TSX XML, multiple TileSets, encoded/compressed data, non-orthogonal maps, object layers/collision conversion, animation/rules/terrain, and reimport remain explicit follow-up features. Human review, any requested corrections, approval, merge, and post-merge validation are the remaining lifecycle steps.
+The scoped Tiled-import feature was human reviewed and merged through PR [#5](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/5) at `8aac0e7fbc1affcbaadb26421dce6585df017a4d`. The accepted subset works end to end through the public action and Tile Palette, while unsupported semantics fail before project publication. Ubuntu/macOS/hosted feature evidence remains incomplete; TMX/TSX XML, multiple TileSets, encoded/compressed data, non-orthogonal maps, object layers/collision conversion, animation/rules/terrain, and reimport remain explicit follow-up features.
