@@ -328,6 +328,8 @@ set_tests_properties(poc_j.qt_input_latency PROPERTIES
 dpe_configure_managed_asan_test(s1.editor_monogame NATIVE_HOST)
 dpe_configure_managed_asan_test(s1.editor_kni NATIVE_HOST)
 dpe_configure_managed_asan_test(s1.editor_crash_recovery NATIVE_HOST)
+dpe_configure_managed_asan_test(s2.editor_interactions NATIVE_HOST)
+dpe_configure_managed_asan_test(poc_h.qt_interactions NATIVE_HOST)
 dpe_configure_managed_asan_test(poc_j.qt_input_latency NATIVE_HOST)
 
 if(WIN32)
