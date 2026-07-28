@@ -137,8 +137,15 @@ int main()
         palette.asset_id = id("39fcb37c-b704-4981-afaa-6e90723518cf");
         palette.name = "Universal Palette";
         palette.tile_set_dependencies = {set_id, second_set_id};
-        palette.cells = {{1, -1, {second_set_id, animated_id}, true, false, 1},
-            {0, 0, {set_id, basic_id}}};
+        tiles::tile_palette_cell animated_palette_cell{};
+        animated_palette_cell.u = 1;
+        animated_palette_cell.v = -1;
+        animated_palette_cell.tile = {second_set_id, animated_id};
+        animated_palette_cell.flip_x = true;
+        animated_palette_cell.rotation_quarter_turns = 1;
+        tiles::tile_palette_cell basic_palette_cell{};
+        basic_palette_cell.tile = {set_id, basic_id};
+        palette.cells = {animated_palette_cell, basic_palette_cell};
         palette.opaque_fields_json = R"({"futurePalette":9})";
         const auto encoded_palette = tiles::write_tile_palette(palette);
         const auto decoded_palette = tiles::read_tile_palette(encoded_palette);

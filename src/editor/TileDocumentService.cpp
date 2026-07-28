@@ -488,8 +488,11 @@ bool TileDocumentService::add_layer(
     }
     auto before = snapshot();
     const auto dirty = is_dirty();
-    tilemap_->layers.push_back({id, normalized.toStdString(), true,
-        static_cast<unsigned>(tilemap_->layers.size()), {}});
+    dragonpixel::tiles::tile_layer layer{};
+    layer.layer_id = id;
+    layer.name = normalized.toStdString();
+    layer.order = static_cast<unsigned>(tilemap_->layers.size());
+    tilemap_->layers.push_back(std::move(layer));
     return commit_document_edit(std::move(before), dirty);
 }
 

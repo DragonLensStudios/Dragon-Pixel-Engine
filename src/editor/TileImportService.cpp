@@ -541,11 +541,11 @@ TileImportResult TileImportService::import_tiled_json(const TileImportRequest& r
     {
         for (const auto& tile : set.tiles)
         {
-            palette.cells.push_back({
-                static_cast<int>(palette_index) % palette_columns,
-                static_cast<int>(palette_index) / palette_columns,
-                {set.asset_id, tile.tile_id},
-            });
+            dragonpixel::tiles::tile_palette_cell palette_cell{};
+            palette_cell.u = static_cast<int>(palette_index) % palette_columns;
+            palette_cell.v = static_cast<int>(palette_index) / palette_columns;
+            palette_cell.tile = {set.asset_id, tile.tile_id};
+            palette.cells.push_back(std::move(palette_cell));
             ++palette_index;
         }
     }

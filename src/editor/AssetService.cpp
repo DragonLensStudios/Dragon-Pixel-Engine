@@ -1088,11 +1088,11 @@ AssetOperationResult AssetService::create_tilemap(
         for (std::size_t index = 0; index < parsed_set.document->tiles.size(); ++index)
         {
             const auto& tile = parsed_set.document->tiles[index];
-            palette.cells.push_back({
-                static_cast<int>(index) % columns,
-                static_cast<int>(index) / columns,
-                {parsed_set.document->asset_id, tile.tile_id},
-            });
+            dragonpixel::tiles::tile_palette_cell palette_cell{};
+            palette_cell.u = static_cast<int>(index) % columns;
+            palette_cell.v = static_cast<int>(index) / columns;
+            palette_cell.tile = {parsed_set.document->asset_id, tile.tile_id};
+            palette.cells.push_back(std::move(palette_cell));
         }
         palette_bytes = QByteArray::fromStdString(
             dragonpixel::tiles::write_tile_palette(palette));
