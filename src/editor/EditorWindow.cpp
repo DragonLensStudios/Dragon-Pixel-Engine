@@ -3142,6 +3142,7 @@ bool EditorWindow::save_scene()
     };
     std::optional<std::string> tile_json;
     std::optional<std::string> palette_json;
+    std::optional<std::vector<TileDocumentService::PreparedTileSetSave>> tileset_json;
     if (tile_document_service_->is_dirty())
     {
         tile_json = tile_document_service_->prepare_save();
@@ -3161,6 +3162,14 @@ bool EditorWindow::save_scene()
             }
             writes.push_back({filesystem_path(tile_document_service_->palette_path()), *palette_json});
         }
+        tileset_json = tile_document_service_->prepare_tileset_saves();
+        if (!tileset_json)
+        {
+            QMessageBox::critical(this, QStringLiteral("Save failed"), tile_document_service_->error());
+            return false;
+        }
+        for (const auto& save : *tileset_json)
+            writes.push_back({filesystem_path(save.path), save.encoded});
     }
     const auto result = dragonpixel::serialization::save_utf8_transaction(
         writes, filesystem_path(project_root_), save_fault_for_test_);
@@ -3172,6 +3181,7 @@ bool EditorWindow::save_scene()
             tile_document_service_->accept_save(*tile_json);
         }
         if (palette_json) tile_document_service_->accept_palette_save(*palette_json);
+        if (tileset_json) tile_document_service_->accept_tileset_saves(*tileset_json);
         append_console(QStringLiteral("Transactionally saved scene: %1").arg(scene_path_));
         statusBar()->showMessage(QStringLiteral("Scene and dirty tile documents saved"), 3000);
         scene_->mark_savepoint();

@@ -145,6 +145,7 @@ private:
     void rebuild();
     void update_layer_controls();
     void update_brush();
+    void update_tile_editor();
 
     TileDocumentService* service_{};
     TileCanvas* canvas_{};
@@ -173,6 +174,18 @@ private:
     QSpinBox* group_limit_{};
     QCheckBox* brush_lock_color_{};
     QCheckBox* brush_lock_transform_{};
+    QLineEdit* tile_name_{};
+    QComboBox* tile_kind_{};
+    QComboBox* tile_collider_{};
+    QDoubleSpinBox* tile_minimum_speed_{};
+    QDoubleSpinBox* tile_maximum_speed_{};
+    QDoubleSpinBox* tile_start_time_{};
+    QSpinBox* tile_start_frame_{};
+    QCheckBox* tile_loop_once_{};
+    QCheckBox* tile_paused_{};
+    QCheckBox* tile_update_physics_{};
+    QLineEdit* tile_custom_type_{};
+    QLineEdit* tile_custom_payload_{};
     QImage atlas_;
     QHash<QString, QImage> atlases_;
     QString texture_path_;

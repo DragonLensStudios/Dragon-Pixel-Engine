@@ -3,6 +3,8 @@
 #include <dragonpixel/tiles/tile_grid.h>
 #include <dragonpixel/tiles/tile_evaluator.h>
 
+#include <nlohmann/json.hpp>
+
 #include <QActionGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -612,6 +614,73 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     brush_form->addRow(QString{}, apply_selection);
     layout->addWidget(brush_inspector);
 
+    auto* tile_editor = new QGroupBox{QStringLiteral("Tile Definition Editor"), this};
+    tile_editor->setObjectName(QStringLiteral("TileDefinitionEditor"));
+    tile_editor->setAccessibleName(QStringLiteral("Selected TileSet tile definition editor"));
+    tile_editor->setCheckable(true);
+    tile_editor->setChecked(false);
+    auto* tile_form = new QFormLayout{tile_editor};
+    tile_name_ = new QLineEdit{tile_editor};
+    tile_name_->setObjectName(QStringLiteral("TileDefinitionName"));
+    tile_name_->setMaxLength(256);
+    tile_form->addRow(QStringLiteral("Name"), tile_name_);
+    tile_kind_ = new QComboBox{tile_editor};
+    tile_kind_->setObjectName(QStringLiteral("TileDefinitionKind"));
+    tile_kind_->addItem(QStringLiteral("Basic"), static_cast<int>(dragonpixel::tiles::tile_kind::basic));
+    tile_kind_->addItem(QStringLiteral("Animated"), static_cast<int>(dragonpixel::tiles::tile_kind::animated));
+    tile_kind_->addItem(QStringLiteral("Rule"), static_cast<int>(dragonpixel::tiles::tile_kind::rule));
+    tile_kind_->addItem(QStringLiteral("Rule Override"), static_cast<int>(dragonpixel::tiles::tile_kind::rule_override));
+    tile_kind_->addItem(QStringLiteral("Custom"), static_cast<int>(dragonpixel::tiles::tile_kind::custom));
+    tile_form->addRow(QStringLiteral("Kind"), tile_kind_);
+    tile_collider_ = new QComboBox{tile_editor};
+    tile_collider_->setObjectName(QStringLiteral("TileDefinitionCollider"));
+    tile_collider_->addItem(QStringLiteral("None"), static_cast<int>(dragonpixel::tiles::tile_collider_mode::none));
+    tile_collider_->addItem(QStringLiteral("Grid"), static_cast<int>(dragonpixel::tiles::tile_collider_mode::grid));
+    tile_collider_->addItem(QStringLiteral("Sprite Outline"), static_cast<int>(dragonpixel::tiles::tile_collider_mode::sprite_outline));
+    tile_form->addRow(QStringLiteral("Collider"), tile_collider_);
+    const auto tile_speed = [tile_editor, tile_form](const QString& label, const QString& name,
+                                double minimum, double maximum, double value) {
+        auto* field = new QDoubleSpinBox{tile_editor};
+        field->setObjectName(name);
+        field->setRange(minimum, maximum);
+        field->setDecimals(4);
+        field->setValue(value);
+        tile_form->addRow(label, field);
+        return field;
+    };
+    tile_minimum_speed_ = tile_speed(QStringLiteral("Minimum speed"),
+        QStringLiteral("TileDefinitionMinimumSpeed"), 0.0001, 1000.0, 1.0);
+    tile_maximum_speed_ = tile_speed(QStringLiteral("Maximum speed"),
+        QStringLiteral("TileDefinitionMaximumSpeed"), 0.0001, 1000.0, 1.0);
+    tile_start_time_ = tile_speed(QStringLiteral("Start time"),
+        QStringLiteral("TileDefinitionStartTime"), 0.0, 1'000'000.0, 0.0);
+    tile_start_frame_ = new QSpinBox{tile_editor};
+    tile_start_frame_->setObjectName(QStringLiteral("TileDefinitionStartFrame"));
+    tile_start_frame_->setRange(0, 1'000'000);
+    tile_form->addRow(QStringLiteral("Start frame"), tile_start_frame_);
+    tile_loop_once_ = new QCheckBox{QStringLiteral("Play once"), tile_editor};
+    tile_loop_once_->setObjectName(QStringLiteral("TileDefinitionLoopOnce"));
+    tile_form->addRow(QString{}, tile_loop_once_);
+    tile_paused_ = new QCheckBox{QStringLiteral("Paused"), tile_editor};
+    tile_paused_->setObjectName(QStringLiteral("TileDefinitionPaused"));
+    tile_form->addRow(QString{}, tile_paused_);
+    tile_update_physics_ = new QCheckBox{QStringLiteral("Refresh physics on frame change"), tile_editor};
+    tile_update_physics_->setObjectName(QStringLiteral("TileDefinitionUpdatePhysics"));
+    tile_form->addRow(QString{}, tile_update_physics_);
+    tile_custom_type_ = new QLineEdit{tile_editor};
+    tile_custom_type_->setObjectName(QStringLiteral("TileDefinitionCustomType"));
+    tile_form->addRow(QStringLiteral("Custom type ID"), tile_custom_type_);
+    tile_custom_payload_ = new QLineEdit{QStringLiteral("{}"), tile_editor};
+    tile_custom_payload_->setObjectName(QStringLiteral("TileDefinitionCustomPayload"));
+    tile_form->addRow(QStringLiteral("Custom JSON"), tile_custom_payload_);
+    auto* apply_tile_definition = new QPushButton{
+        QStringLiteral("Apply Tile Definition"), tile_editor};
+    apply_tile_definition->setObjectName(QStringLiteral("ApplyTileDefinition"));
+    apply_tile_definition->setAccessibleName(QStringLiteral(
+        "Apply selected tile definition through Tile workspace Undo"));
+    tile_form->addRow(QString{}, apply_tile_definition);
+    layout->addWidget(tile_editor);
+
     auto* splitter = new QSplitter{Qt::Horizontal, this};
     tiles_ = new QListWidget{splitter};
     tiles_->setObjectName(QStringLiteral("TileList"));
@@ -671,6 +740,7 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         {
             canvas_->set_selected_brush(std::nullopt);
         }
+        update_tile_editor();
         emit authoringStateChanged();
     });
     connect(canvas_, &TileCanvas::brushPicked, this,
@@ -711,6 +781,66 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     connect(group_limit_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_color_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
     connect(brush_lock_transform_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
+    connect(apply_tile_definition, &QPushButton::clicked, this, [this] {
+        const auto* item = tiles_->currentItem();
+        const auto tile_id = item ? dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+        const auto set_id = item ? dragonpixel::core::uuid::parse(
+            item->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (!tile_id || !set_id) return;
+        const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& set) { return set.asset_id == *set_id; });
+        if (owner == service_->tilesets().end()) return;
+        const auto existing = std::find_if(owner->tiles.begin(), owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *tile_id; });
+        if (existing == owner->tiles.end()) return;
+        auto edited = *existing;
+        const auto name = tile_name_->text().trimmed();
+        if (name.isEmpty())
+        {
+            status_->setText(QStringLiteral("Tile definition names cannot be empty."));
+            return;
+        }
+        const auto payload = nlohmann::ordered_json::parse(
+            tile_custom_payload_->text().trimmed().toStdString(), nullptr, false);
+        if (payload.is_discarded())
+        {
+            status_->setText(QStringLiteral("Custom tile payload must be valid JSON."));
+            return;
+        }
+        edited.name = name.toStdString();
+        edited.kind = static_cast<dragonpixel::tiles::tile_kind>(tile_kind_->currentData().toInt());
+        edited.collider_mode = static_cast<dragonpixel::tiles::tile_collider_mode>(
+            tile_collider_->currentData().toInt());
+        edited.minimum_speed = tile_minimum_speed_->value();
+        edited.maximum_speed = tile_maximum_speed_->value();
+        if (edited.minimum_speed > edited.maximum_speed)
+        {
+            status_->setText(QStringLiteral("Minimum animation speed cannot exceed maximum speed."));
+            return;
+        }
+        edited.animation_start_time = tile_start_time_->value();
+        edited.animation_start_frame = static_cast<unsigned>(tile_start_frame_->value());
+        edited.loop_once = tile_loop_once_->isChecked();
+        edited.pause_animation = tile_paused_->isChecked();
+        edited.update_physics = tile_update_physics_->isChecked();
+        edited.custom_type_id = tile_custom_type_->text().trimmed().toStdString();
+        edited.opaque_payload_json = payload.dump();
+        if (edited.kind == dragonpixel::tiles::tile_kind::animated
+            && edited.animation_frames.empty())
+        {
+            edited.animation_frames.push_back({
+                {edited.texture_asset_id.is_nil() ? owner->texture_asset_id : edited.texture_asset_id,
+                    edited.source, edited.pivot},
+                1.0 / 12.0});
+        }
+        if (edited.collider_mode == dragonpixel::tiles::tile_collider_mode::sprite_outline
+            && edited.collision_outline.empty())
+            edited.collision_outline = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
+        if (!service_->update_tile_definition(*set_id, edited))
+            status_->setText(service_->error().isEmpty()
+                ? QStringLiteral("Tile definition did not change.") : service_->error());
+    });
 
     connect(add_loaded_tiles, &QToolButton::clicked, this, [this] {
         if (service_->palette() == nullptr) return;
@@ -1130,6 +1260,47 @@ void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
     update_brush();
 }
 
+void TilePaletteWidget::update_tile_editor()
+{
+    const auto* item = tiles_ == nullptr ? nullptr : tiles_->currentItem();
+    const auto tile_id = item ? dragonpixel::core::uuid::parse(
+        item->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
+    const auto set_id = item ? dragonpixel::core::uuid::parse(
+        item->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+    const dragonpixel::tiles::tile_definition* selected = nullptr;
+    if (tile_id && set_id)
+    {
+        const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+            [&](const auto& set) { return set.asset_id == *set_id; });
+        if (owner != service_->tilesets().end())
+        {
+            const auto tile = std::find_if(owner->tiles.begin(), owner->tiles.end(),
+                [&](const auto& candidate) { return candidate.tile_id == *tile_id; });
+            if (tile != owner->tiles.end()) selected = &*tile;
+        }
+    }
+    for (auto* widget : std::array<QWidget*, 11>{tile_name_, tile_kind_, tile_collider_,
+             tile_minimum_speed_, tile_maximum_speed_, tile_start_time_, tile_start_frame_,
+             tile_loop_once_, tile_paused_, tile_update_physics_, tile_custom_type_})
+        widget->setEnabled(selected != nullptr);
+    tile_custom_payload_->setEnabled(selected != nullptr);
+    if (selected == nullptr) return;
+    tile_name_->setText(QString::fromStdString(selected->name));
+    tile_kind_->setCurrentIndex(tile_kind_->findData(static_cast<int>(selected->kind)));
+    tile_collider_->setCurrentIndex(
+        tile_collider_->findData(static_cast<int>(selected->collider_mode)));
+    tile_minimum_speed_->setValue(selected->minimum_speed);
+    tile_maximum_speed_->setValue(selected->maximum_speed);
+    tile_start_time_->setValue(selected->animation_start_time);
+    tile_start_frame_->setValue(static_cast<int>(std::min<unsigned>(
+        selected->animation_start_frame, 1'000'000U)));
+    tile_loop_once_->setChecked(selected->loop_once);
+    tile_paused_->setChecked(selected->pause_animation);
+    tile_update_physics_->setChecked(selected->update_physics);
+    tile_custom_type_->setText(QString::fromStdString(selected->custom_type_id));
+    tile_custom_payload_->setText(QString::fromStdString(selected->opaque_payload_json));
+}
+
 void TilePaletteWidget::update_brush()
 {
     canvas_->set_selected_brush(active_brush());
@@ -1246,6 +1417,7 @@ void TilePaletteWidget::rebuild()
     }
     if (tiles_->currentItem() == nullptr && tiles_->count() > 0) tiles_->setCurrentRow(0);
     rebuilding_ = false;
+    update_tile_editor();
     update_brush();
     update_layer_controls();
     status_->setText(QStringLiteral("%1 | %2 targets | %3 palette cells | %4 TileSet(s) | Atlas %5%6")

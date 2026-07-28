@@ -16,6 +16,13 @@ class TileDocumentService final : public QObject
     Q_OBJECT
 
 public:
+    struct PreparedTileSetSave final
+    {
+        std::size_t index{};
+        QString path;
+        std::string encoded;
+    };
+
     struct Brush final
     {
         dragonpixel::core::uuid tile_id;
@@ -57,9 +64,12 @@ public:
     [[nodiscard]] bool save();
     [[nodiscard]] std::optional<std::string> prepare_save();
     [[nodiscard]] std::optional<std::string> prepare_palette_save();
+    [[nodiscard]] std::optional<std::vector<PreparedTileSetSave>> prepare_tileset_saves();
     void accept_save(std::string_view encoded);
     void accept_palette_save(std::string_view encoded);
+    void accept_tileset_saves(const std::vector<PreparedTileSetSave>& saves);
     [[nodiscard]] bool is_palette_dirty() const noexcept;
+    [[nodiscard]] bool is_tileset_dirty(std::size_t index) const noexcept;
     [[nodiscard]] bool is_loaded() const noexcept { return tilemap_.has_value() && !tilesets_.empty(); }
     [[nodiscard]] bool is_dirty() const noexcept;
     [[nodiscard]] bool has_active_stroke() const noexcept { return stroke_before_.has_value(); }
@@ -73,6 +83,7 @@ public:
     }
     [[nodiscard]] const dragonpixel::tiles::tile_palette_document* palette() const noexcept;
     [[nodiscard]] const QString& palette_path() const noexcept { return palette_path_; }
+    [[nodiscard]] const QStringList& tileset_paths() const noexcept { return tileset_paths_; }
     [[nodiscard]] std::optional<dragonpixel::core::uuid> tile_at(int layer_index, int x, int y) const;
     [[nodiscard]] std::optional<Brush> brush_at(int layer_index, int x, int y) const;
 
@@ -83,6 +94,9 @@ public:
     [[nodiscard]] bool set_layer_visible(int layer_index, bool visible);
     [[nodiscard]] bool move_layer(int layer_index, int destination_index);
     [[nodiscard]] bool remove_layer(int layer_index);
+    [[nodiscard]] bool update_tile_definition(
+        const dragonpixel::core::uuid& tile_set_id,
+        const dragonpixel::tiles::tile_definition& tile);
 
     [[nodiscard]] bool add_palette_cell(int u, int v, const Brush& brush);
     [[nodiscard]] bool remove_palette_cell(int u, int v);
@@ -144,6 +158,7 @@ private:
     struct WorkspaceState final
     {
         dragonpixel::tiles::tilemap_document tilemap;
+        std::vector<dragonpixel::tiles::tile_set_document> tilesets;
         std::optional<dragonpixel::tiles::tile_palette_document> palette;
     };
 
@@ -173,5 +188,6 @@ private:
     QString palette_path_;
     QString saved_encoding_;
     QString saved_palette_encoding_;
+    QStringList saved_tileset_encodings_;
     QString error_;
 };

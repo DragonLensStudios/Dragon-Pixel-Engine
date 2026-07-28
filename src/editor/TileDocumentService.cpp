@@ -56,6 +56,7 @@ void TileDocumentService::clear()
     palette_path_.clear();
     saved_encoding_.clear();
     saved_palette_encoding_.clear();
+    saved_tileset_encodings_.clear();
     error_.clear();
     emit documentChanged();
     emit dirtyChanged(false);
@@ -167,6 +168,10 @@ bool TileDocumentService::load(
     saved_encoding_ = QString::fromStdString(dragonpixel::tiles::write_tilemap(*tilemap_));
     saved_palette_encoding_ = palette_
         ? QString::fromStdString(dragonpixel::tiles::write_tile_palette(*palette_)) : QString{};
+    saved_tileset_encodings_.clear();
+    for (const auto& set : tilesets_)
+        saved_tileset_encodings_.push_back(
+            QString::fromStdString(dragonpixel::tiles::write_tile_set(set)));
     undo_.clear();
     redo_.clear();
     stroke_before_.reset();
@@ -180,17 +185,23 @@ bool TileDocumentService::save()
 {
     const auto map_encoded = prepare_save();
     const auto palette_encoded = palette_ ? prepare_palette_save() : std::optional<std::string>{};
-    if (!map_encoded || (palette_ && !palette_encoded))
+    const auto tileset_saves = prepare_tileset_saves();
+    if (!map_encoded || (palette_ && !palette_encoded) || !tileset_saves)
     {
         return false;
     }
     dragonpixel::serialization::save_result result;
+    std::vector<dragonpixel::serialization::utf8_transaction_write> writes{
+        {filesystem_path(tilemap_path_), *map_encoded},
+    };
     if (palette_)
     {
-        const std::vector<dragonpixel::serialization::utf8_transaction_write> writes{
-            {filesystem_path(tilemap_path_), *map_encoded},
-            {filesystem_path(palette_path_), *palette_encoded},
-        };
+        writes.push_back({filesystem_path(palette_path_), *palette_encoded});
+    }
+    for (const auto& save : *tileset_saves)
+        writes.push_back({filesystem_path(save.path), save.encoded});
+    if (writes.size() > 1)
+    {
         result = dragonpixel::serialization::save_utf8_transaction(
             writes, filesystem_path(QFileInfo{tilemap_path_}.absolutePath()));
     }
@@ -207,6 +218,7 @@ bool TileDocumentService::save()
     }
     accept_save(*map_encoded);
     if (palette_encoded) accept_palette_save(*palette_encoded);
+    accept_tileset_saves(*tileset_saves);
     return true;
 }
 
@@ -261,6 +273,41 @@ std::optional<std::string> TileDocumentService::prepare_palette_save()
     return encoded;
 }
 
+std::optional<std::vector<TileDocumentService::PreparedTileSetSave>>
+TileDocumentService::prepare_tileset_saves()
+{
+    if (stroke_before_)
+    {
+        error_ = QStringLiteral("Finish or cancel the active tile stroke before saving.");
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
+    if (tilesets_.size() != static_cast<std::size_t>(tileset_paths_.size())
+        || tilesets_.size() != static_cast<std::size_t>(saved_tileset_encodings_.size()))
+    {
+        error_ = QStringLiteral("Loaded TileSet paths and savepoints are inconsistent.");
+        emit diagnostic(error_);
+        return std::nullopt;
+    }
+    std::vector<PreparedTileSetSave> result;
+    for (std::size_t index = 0; index < tilesets_.size(); ++index)
+    {
+        if (!is_tileset_dirty(index)) continue;
+        const auto encoded = dragonpixel::tiles::write_tile_set(tilesets_[index]);
+        const auto parsed = dragonpixel::tiles::read_tile_set(encoded);
+        if (!parsed.succeeded())
+        {
+            error_ = QStringLiteral("Refusing to save invalid TileSet %1: %2")
+                .arg(tileset_paths_.at(static_cast<qsizetype>(index)),
+                    QString::fromStdString(parsed.error));
+            emit diagnostic(error_);
+            return std::nullopt;
+        }
+        result.push_back({index, tileset_paths_.at(static_cast<qsizetype>(index)), encoded});
+    }
+    return result;
+}
+
 void TileDocumentService::accept_save(std::string_view encoded)
 {
     saved_encoding_ = QString::fromUtf8(encoded.data(), static_cast<qsizetype>(encoded.size()));
@@ -275,11 +322,31 @@ void TileDocumentService::accept_palette_save(std::string_view encoded)
     emit dirtyChanged(is_dirty());
 }
 
+void TileDocumentService::accept_tileset_saves(
+    const std::vector<PreparedTileSetSave>& saves)
+{
+    for (const auto& save : saves)
+    {
+        if (save.index >= static_cast<std::size_t>(saved_tileset_encodings_.size())) continue;
+        saved_tileset_encodings_[static_cast<qsizetype>(save.index)] = QString::fromUtf8(
+            save.encoded.data(), static_cast<qsizetype>(save.encoded.size()));
+    }
+    error_.clear();
+    emit dirtyChanged(is_dirty());
+}
+
 bool TileDocumentService::is_dirty() const noexcept
 {
     const auto map_dirty = tilemap_
         && QString::fromStdString(dragonpixel::tiles::write_tilemap(*tilemap_)) != saved_encoding_;
-    return map_dirty || is_palette_dirty();
+    const auto set_dirty = std::any_of(tilesets_.begin(), tilesets_.end(),
+        [this, index = std::size_t{}](const auto& set) mutable {
+            const auto current = index++;
+            return current >= static_cast<std::size_t>(saved_tileset_encodings_.size())
+                || QString::fromStdString(dragonpixel::tiles::write_tile_set(set))
+                    != saved_tileset_encodings_.at(static_cast<qsizetype>(current));
+        });
+    return map_dirty || is_palette_dirty() || set_dirty;
 }
 
 bool TileDocumentService::is_palette_dirty() const noexcept
@@ -297,6 +364,14 @@ const dragonpixel::tiles::tilemap_document* TileDocumentService::tilemap() const
 const dragonpixel::tiles::tile_set_document* TileDocumentService::tileset() const noexcept
 {
     return tilesets_.empty() ? nullptr : &tilesets_.front();
+}
+
+bool TileDocumentService::is_tileset_dirty(std::size_t index) const noexcept
+{
+    return index < tilesets_.size()
+        && (index >= static_cast<std::size_t>(saved_tileset_encodings_.size())
+            || QString::fromStdString(dragonpixel::tiles::write_tile_set(tilesets_[index]))
+                != saved_tileset_encodings_.at(static_cast<qsizetype>(index)));
 }
 
 const dragonpixel::tiles::tile_palette_document* TileDocumentService::palette() const noexcept
@@ -351,12 +426,13 @@ std::optional<TileDocumentService::Brush> TileDocumentService::brush_at(
 
 TileDocumentService::WorkspaceState TileDocumentService::snapshot() const
 {
-    return {*tilemap_, palette_};
+    return {*tilemap_, tilesets_, palette_};
 }
 
 void TileDocumentService::restore(WorkspaceState state)
 {
     tilemap_ = std::move(state.tilemap);
+    tilesets_ = std::move(state.tilesets);
     palette_ = std::move(state.palette);
 }
 
@@ -364,7 +440,8 @@ bool TileDocumentService::commit_document_edit(
     WorkspaceState before,
     bool previous_dirty)
 {
-    if (!tilemap_ || (before.tilemap == *tilemap_ && before.palette == palette_))
+    if (!tilemap_ || (before.tilemap == *tilemap_ && before.tilesets == tilesets_
+        && before.palette == palette_))
     {
         return false;
     }
@@ -485,6 +562,34 @@ bool TileDocumentService::remove_layer(int layer_index)
     const auto dirty = is_dirty();
     tilemap_->layers.erase(tilemap_->layers.begin() + layer_index);
     normalize_layer_order();
+    return commit_document_edit(std::move(before), dirty);
+}
+
+bool TileDocumentService::update_tile_definition(
+    const dragonpixel::core::uuid& tile_set_id,
+    const dragonpixel::tiles::tile_definition& tile)
+{
+    if (stroke_before_ || tile.name.empty() || tile.name.size() > 256) return false;
+    const auto set = std::find_if(tilesets_.begin(), tilesets_.end(),
+        [&](const auto& candidate) { return candidate.asset_id == tile_set_id; });
+    if (set == tilesets_.end()) return false;
+    const auto existing = std::find_if(set->tiles.begin(), set->tiles.end(),
+        [&](const auto& candidate) { return candidate.tile_id == tile.tile_id; });
+    if (existing == set->tiles.end() || *existing == tile) return false;
+    auto candidate = *set;
+    candidate.tiles[static_cast<std::size_t>(std::distance(set->tiles.begin(), existing))] = tile;
+    const auto encoded = dragonpixel::tiles::write_tile_set(candidate);
+    const auto parsed = dragonpixel::tiles::read_tile_set(encoded);
+    if (!parsed.succeeded())
+    {
+        error_ = QStringLiteral("Tile definition edit was rejected: %1")
+            .arg(QString::fromStdString(parsed.error));
+        emit diagnostic(error_);
+        return false;
+    }
+    auto before = snapshot();
+    const auto dirty = is_dirty();
+    *set = std::move(candidate);
     return commit_document_edit(std::move(before), dirty);
 }
 

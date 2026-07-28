@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QGroupBox>
 #include <QIcon>
 #include <QImage>
 #include <QImageReader>
@@ -727,6 +728,55 @@ private slots:
         auto* tile_list = window.findChild<QListWidget*>(QStringLiteral("TileList"));
         QVERIFY(line_tool != nullptr && brush_behavior != nullptr && tile_list != nullptr);
         QVERIFY(tile_list->count() >= 2);
+        auto* tile_name = window.findChild<QLineEdit*>(QStringLiteral("TileDefinitionName"));
+        auto* tile_kind = window.findChild<QComboBox*>(QStringLiteral("TileDefinitionKind"));
+        auto* tile_collider = window.findChild<QComboBox*>(QStringLiteral("TileDefinitionCollider"));
+        auto* tile_minimum_speed = window.findChild<QDoubleSpinBox*>(
+            QStringLiteral("TileDefinitionMinimumSpeed"));
+        auto* tile_maximum_speed = window.findChild<QDoubleSpinBox*>(
+            QStringLiteral("TileDefinitionMaximumSpeed"));
+        auto* tile_update_physics = window.findChild<QCheckBox*>(
+            QStringLiteral("TileDefinitionUpdatePhysics"));
+        auto* apply_tile_definition = window.findChild<QPushButton*>(
+            QStringLiteral("ApplyTileDefinition"));
+        auto* tile_definition_editor = window.findChild<QGroupBox*>(
+            QStringLiteral("TileDefinitionEditor"));
+        QVERIFY(tile_name != nullptr && tile_kind != nullptr && tile_collider != nullptr
+            && tile_minimum_speed != nullptr && tile_maximum_speed != nullptr
+            && tile_update_physics != nullptr && apply_tile_definition != nullptr
+            && tile_definition_editor != nullptr);
+        tile_definition_editor->setChecked(true);
+        tile_list->setCurrentRow(0);
+        const auto edited_tile_id = dragonpixel::core::uuid::parse(
+            tile_list->currentItem()->data(Qt::UserRole).toString().toStdString());
+        const auto edited_set_id = dragonpixel::core::uuid::parse(
+            tile_list->currentItem()->data(Qt::UserRole + 1).toString().toStdString());
+        QVERIFY(edited_tile_id.has_value() && edited_set_id.has_value());
+        tile_name->setText(QStringLiteral("Animated Scene Tile"));
+        tile_kind->setCurrentIndex(tile_kind->findData(
+            static_cast<int>(dragonpixel::tiles::tile_kind::animated)));
+        tile_collider->setCurrentIndex(tile_collider->findData(
+            static_cast<int>(dragonpixel::tiles::tile_collider_mode::sprite_outline)));
+        tile_minimum_speed->setValue(0.5);
+        tile_maximum_speed->setValue(1.5);
+        tile_update_physics->setChecked(true);
+        apply_tile_definition->click();
+        const auto edited_owner = std::find_if(
+            window.tile_document_service_->tilesets().begin(),
+            window.tile_document_service_->tilesets().end(),
+            [&](const auto& owner) { return owner.asset_id == *edited_set_id; });
+        QVERIFY(edited_owner != window.tile_document_service_->tilesets().end());
+        const auto edited_tile = std::find_if(
+            edited_owner->tiles.begin(), edited_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *edited_tile_id; });
+        QVERIFY(edited_tile != edited_owner->tiles.end());
+        QVERIFY2(edited_tile->name == std::string{"Animated Scene Tile"},
+            qPrintable(window.tile_document_service_->error()));
+        QCOMPARE(edited_tile->kind, dragonpixel::tiles::tile_kind::animated);
+        QCOMPARE(edited_tile->collider_mode,
+            dragonpixel::tiles::tile_collider_mode::sprite_outline);
+        QVERIFY(!edited_tile->animation_frames.empty());
+        QVERIFY(edited_tile->update_physics);
         tile_list->clearSelection();
         tile_list->item(0)->setSelected(true);
         tile_list->item(1)->setSelected(true);
@@ -2237,12 +2287,37 @@ private slots:
         QVERIFY(service.delete_selection(0, 3, 4, 4, 4));
         QVERIFY(!service.brush_at(0, 3, 4));
         QVERIFY(service.add_palette_cell(5, 5, rich));
+        auto edited_tile = service.tilesets().at(1).tiles.front();
+        edited_tile.name = "B0 Animated";
+        edited_tile.kind = dragonpixel::tiles::tile_kind::animated;
+        edited_tile.collider_mode = dragonpixel::tiles::tile_collider_mode::sprite_outline;
+        edited_tile.collision_outline = {
+            {0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
+        edited_tile.animation_frames = {{
+            {texture_b_id, edited_tile.source, edited_tile.pivot}, 0.125}};
+        edited_tile.minimum_speed = 0.75;
+        edited_tile.maximum_speed = 1.25;
+        edited_tile.update_physics = true;
+        QVERIFY(service.update_tile_definition(set_b_id, edited_tile));
+        QCOMPARE(service.tilesets().at(1).tiles.front().name, std::string{"B0 Animated"});
+        QVERIFY(service.is_tileset_dirty(1));
+        const auto prepared_sets = service.prepare_tileset_saves();
+        QVERIFY(prepared_sets.has_value());
+        QCOMPARE(prepared_sets->size(), std::size_t{1});
+        QCOMPARE(prepared_sets->front().path, set_b_path);
         QVERIFY(service.is_dirty());
         QVERIFY2(service.save(), qPrintable(service.error()));
         QVERIFY(!service.is_dirty());
         QVERIFY(dragonpixel::tiles::read_tilemap(read_bytes(map_path).toStdString()).succeeded());
         QVERIFY(dragonpixel::tiles::read_tile_palette(
             read_bytes(palette_path).toStdString()).succeeded());
+        const auto saved_set = dragonpixel::tiles::read_tile_set(
+            read_bytes(set_b_path).toStdString());
+        QVERIFY(saved_set.succeeded());
+        QCOMPARE(saved_set.document->tiles.front().name, std::string{"B0 Animated"});
+        QCOMPARE(saved_set.document->tiles.front().kind,
+            dragonpixel::tiles::tile_kind::animated);
+        QVERIFY(saved_set.document->tiles.front().update_physics);
     }
 
     void png_tileset_creation_is_contained_deterministic_and_non_overwriting()
