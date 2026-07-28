@@ -254,6 +254,7 @@ public static class WorkerHost
                         ["sceneDrivenGraphics"] = true,
                         ["nativePhysics"] = state.PhysicsAvailable,
                         ["projectComponentModules"] = requestedVersion >= 2,
+                        ["tileBrushProposals"] = requestedVersion >= 2 && sessionKind == "preview",
                         ["simulatePreview"] = requestedVersion >= 2 && sessionKind == "preview",
                         ["idBufferPicking"] = requestedVersion >= 2,
                         ["viewportResize"] = requestedVersion >= 2,
@@ -351,6 +352,26 @@ public static class WorkerHost
                     catch (Exception exception) when (
                         exception is ArgumentException or InvalidOperationException
                         or JsonException or OverflowException)
+                    {
+                        await WriteErrorAsync(output, id, -32602, exception.Message).ConfigureAwait(false);
+                        continue;
+                    }
+                    break;
+                case "proposeTileBrush":
+                    if (negotiatedProtocolVersion < 2 || sessionKind != "preview")
+                    {
+                        await WriteErrorAsync(output, id, -32011,
+                            "Tile brush proposals are available only to a negotiated editor preview worker.")
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+                    try
+                    {
+                        result = ProposeTileBrush(request, state);
+                    }
+                    catch (Exception exception) when (
+                        exception is ArgumentException or InvalidDataException
+                        or InvalidOperationException or JsonException or OverflowException)
                     {
                         await WriteErrorAsync(output, id, -32602, exception.Message).ConfigureAwait(false);
                         continue;
@@ -518,6 +539,138 @@ public static class WorkerHost
             ["physicsBodies"] = parsed.Physics.Bodies.Count,
             ["physicsWorldLoaded"] = state.PhysicsWorldLoaded,
         };
+    }
+
+    private static JsonObject ProposeTileBrush(JsonObject request, WorkerState state)
+    {
+        const int maximumProposalCommands = 4096;
+        var parameters = request["params"] as JsonObject
+            ?? throw new ArgumentException("proposeTileBrush requires an object params value.");
+        RequireExactProperties(parameters, "Tile brush proposal",
+            "requestToken", "pluginId", "context", "request");
+        var requestToken = RequiredLong(parameters, "requestToken");
+        if (requestToken <= 0)
+            throw new ArgumentException("Tile brush requestToken must be positive.");
+        var pluginId = RequiredString(parameters, "pluginId");
+        if (!IsCanonicalExtensionId(pluginId))
+            throw new ArgumentException("Tile brush pluginId is not canonical.");
+        var contextValue = parameters["context"] as JsonObject
+            ?? throw new ArgumentException("Tile brush context must be an object.");
+        RequireExactProperties(contextValue, "Tile brush context",
+            "cellX", "cellY", "elevation", "layout", "deterministicSeed",
+            "elapsedSeconds", "mapId", "layerId", "tileSetId", "tileId",
+            "payloadJson", "neighborhoodJson");
+        var layout = RequiredInt(contextValue, "layout");
+        if (layout is < 0 or > 4)
+            throw new ArgumentException("Tile brush layout is outside the supported range.");
+        var elapsedSeconds = RequiredDouble(contextValue, "elapsedSeconds");
+        if (!double.IsFinite(elapsedSeconds) || elapsedSeconds < 0)
+            throw new ArgumentException("Tile brush elapsedSeconds must be finite and non-negative.");
+        if (!ulong.TryParse(RequiredString(contextValue, "deterministicSeed"),
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var deterministicSeed))
+            throw new ArgumentException("Tile brush deterministicSeed must be an unsigned decimal integer.");
+        var mapId = CanonicalId(contextValue, "mapId");
+        var layerId = CanonicalId(contextValue, "layerId");
+        var tileSetId = CanonicalId(contextValue, "tileSetId");
+        var tileId = CanonicalId(contextValue, "tileId");
+        var payloadJson = RequiredString(contextValue, "payloadJson");
+        var neighborhoodJson = RequiredString(contextValue, "neighborhoodJson");
+        ValidateBoundedJson(payloadJson, "Tile brush custom payload");
+        ValidateBoundedJson(neighborhoodJson, "Tile brush neighborhood");
+        var brushRequest = parameters["request"] as JsonObject
+            ?? throw new ArgumentException("Tile brush request must be an object.");
+        var requestJson = brushRequest.ToJsonString();
+        ValidateBoundedJson(requestJson, "Tile brush request");
+        var context = new TileExtensionContext(
+            RequiredInt(contextValue, "cellX"),
+            RequiredInt(contextValue, "cellY"),
+            RequiredInt(contextValue, "elevation"),
+            checked((uint)layout),
+            deterministicSeed,
+            elapsedSeconds,
+            mapId,
+            layerId,
+            tileSetId,
+            tileId,
+            payloadJson,
+            neighborhoodJson);
+        var proposal = state.ProposeTileBrush(pluginId, context, requestJson);
+        var response = new JsonObject
+        {
+            ["requestToken"] = requestToken,
+            ["succeeded"] = proposal.Succeeded,
+            ["commandCount"] = proposal.CommandCount,
+            ["errorCode"] = proposal.ErrorCode,
+            ["errorMessage"] = proposal.ErrorMessage,
+        };
+        if (!proposal.Succeeded) return response;
+        using var proposalDocument = JsonDocument.Parse(proposal.ResultJson);
+        var commands = proposalDocument.RootElement.GetProperty("commands");
+        if (commands.GetArrayLength() > maximumProposalCommands)
+            throw new InvalidDataException(
+                $"Tile brush proposal exceeds the {maximumProposalCommands}-command editor limit.");
+        response["commands"] = JsonNode.Parse(commands.GetRawText());
+        return response;
+    }
+
+    private static void RequireExactProperties(
+        JsonObject value,
+        string context,
+        params string[] expected)
+    {
+        var remaining = expected.ToHashSet(StringComparer.Ordinal);
+        foreach (var property in value)
+        {
+            if (!remaining.Remove(property.Key))
+                throw new ArgumentException($"{context} contains unsupported property {property.Key}.");
+        }
+        if (remaining.Count != 0)
+            throw new ArgumentException($"{context} is missing property {remaining.Order().First()}.");
+    }
+
+    private static int RequiredInt(JsonObject value, string name) =>
+        value[name]?.GetValue<int>()
+        ?? throw new ArgumentException($"Tile brush request requires integer property {name}.");
+
+    private static long RequiredLong(JsonObject value, string name) =>
+        value[name]?.GetValue<long>()
+        ?? throw new ArgumentException($"Tile brush request requires integer property {name}.");
+
+    private static double RequiredDouble(JsonObject value, string name) =>
+        value[name]?.GetValue<double>()
+        ?? throw new ArgumentException($"Tile brush request requires number property {name}.");
+
+    private static string RequiredString(JsonObject value, string name) =>
+        value[name]?.GetValue<string>()
+        ?? throw new ArgumentException($"Tile brush request requires string property {name}.");
+
+    private static string CanonicalId(JsonObject value, string name)
+    {
+        var text = RequiredString(value, name);
+        if (!Guid.TryParseExact(text, "D", out var parsed)
+            || !StringComparer.Ordinal.Equals(text, parsed.ToString("D")))
+            throw new ArgumentException($"Tile brush {name} must be a canonical UUID.");
+        return text;
+    }
+
+    private static bool IsCanonicalExtensionId(string value) =>
+        value.Length is > 0 and <= 128
+        && value[0] is >= 'a' and <= 'z'
+        && value.All(static character =>
+            character is >= 'a' and <= 'z' or >= '0' and <= '9'
+            or '.' or '-' or '_');
+
+    private static void ValidateBoundedJson(string value, string context)
+    {
+        if (System.Text.Encoding.UTF8.GetByteCount(value) > 1024 * 1024)
+            throw new ArgumentException($"{context} exceeds the 1 MiB limit.");
+        using var _ = JsonDocument.Parse(value, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = false,
+            CommentHandling = JsonCommentHandling.Disallow,
+            MaxDepth = 32,
+        });
     }
 
     private static JsonObject CreateDiagnostics(IFrameworkSceneAdapter adapter, WorkerState state)
@@ -763,6 +916,23 @@ public static class WorkerHost
                 {
                     return _physicsWorld is not null;
                 }
+            }
+        }
+
+        public TileExtensionBrushProposal ProposeTileBrush(
+            string pluginId,
+            TileExtensionContext context,
+            string requestJson)
+        {
+            lock (_gate)
+            {
+                return _projectComponents?.ProposeBrush(pluginId, context, requestJson)
+                    ?? new TileExtensionBrushProposal(
+                        false,
+                        string.Empty,
+                        0,
+                        "DPE-TILE-EXT-UNAVAILABLE",
+                        "The requested tile extension is missing or incompatible.");
             }
         }
 

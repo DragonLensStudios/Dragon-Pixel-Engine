@@ -53,9 +53,13 @@ int32_t DPE_TILE_EXTENSION_PLUGIN_CALL propose_brush(
     const std::string request_json{request.data, request.length};
     auto json = request_json.find("\"malformed\":true") != std::string::npos
         ? std::string{"[]"}
-        : std::string{"{\"commands\":[{\"kind\":\"paint\",\"x\":2,\"y\":-3,"
-                      "\"tileSetId\":\"4fe655df-c40f-4e48-a5cc-fbe9bd356ac6\","
-                      "\"tileId\":\"b4a8bd46-f46a-4490-be95-f8a149187deb\"}]}"};
+        : std::string{"{\"commands\":[{\"kind\":\"paint\",\"x\":"}
+            + std::to_string(context->cell_x) + ",\"y\":"
+            + std::to_string(context->cell_y) + ",\"tileSetId\":\""
+            + std::string{context->tile_set_id.data, context->tile_set_id.length}
+            + "\",\"tileId\":\""
+            + std::string{context->tile_id.data, context->tile_id.length}
+            + "\"}]}";
     *result = {static_cast<uint32_t>(sizeof(dpe_tile_extension_result_v1)), 0,
         extension_string(std::move(json)), {}, {}};
     return 0;
