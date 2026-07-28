@@ -190,7 +190,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Aggregate diff and commit sequence reviewed.
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop` and left unmerged for human review.
-- [ ] Reported extensionless-PNG creation failure is regression-covered and repaired without weakening non-PNG rejection.
+- [x] Reported extensionless-PNG creation failure is regression-covered and repaired without weakening non-PNG rejection.
 - [ ] Correction verification, evidence, branch push, and draft PR #6 update are complete.
 - [ ] Human review and merge occur after this implementation handoff.
 
@@ -209,6 +209,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Aggregate review complete | Reviewed the focused four-commit sequence and the complete branch diff from `develop`. The work remains within the accepted static orthogonal, one-TileSet authoring workflow; no durable tile/asset/scene/snapshot format, C ABI, managed public contract, worker protocol, support claim, threshold, or unrelated file changed. `git diff --check develop...HEAD` is clean before the final evidence commit. |
 | 2026-07-27 | Draft PR handoff | Pushed `feature/tilemap-authoring-workspace` and opened draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) into `develop`. The PR includes the exact complete Release result, focused and aggregate ASan results including the repeated POC J failure, separate MonoGame/KNI evidence, bundle hashes, unsupported scope, recovery behavior, and remaining platform gates. It is intentionally unmerged for human review. |
 | 2026-07-27 | PNG intake correction started | The supplied extensionless file `Tileset_Ground_JMguEL` exists and begins with the standard PNG signature. The preview succeeds because `QImage` detects content, while `TileSetCreationService::create` rejects the same file solely because `QFileInfo::suffix()` is not `png`. The smallest complete correction is content-based PNG acceptance shared by preview/create, explicit rejection of mislabeled non-PNG data, and focused creation/regression evidence on this same active feature branch and draft PR. Required document mirrors and `DPE-ARCH-0014` were reverified before source changes. |
+| 2026-07-27 | PNG intake correction implemented and focused verification passed | Added a regression that first failed 2 passed / 1 failed in 9 ms at the exact suffix-only rejection. Preview and Create now share one forced-PNG content decoder over one captured byte sequence, accept a valid extensionless PNG, retain the exact validated bytes in a normalized contained `.png`, reject missing and mislabeled non-PNG input before output, expose the full selected path as a tooltip, and offer an all-files picker fallback. The existing plus new direct/wizard intake workflows pass **4/4 in 36 ms** under Release and **4/4 in 66 ms** under MSVC AddressSanitizer. The expanded tilemap workflow set, including Scene View editing, Project/Hierarchy/Inspector attachment, layer/brush transactions, both PNG intake cases, and recoverable scene-plus-tile save, passes **8/8 in 37.941 seconds** under Release and **8/8 in 63.733 seconds** under AddressSanitizer with no sanitizer finding. Commit: `03267d8`. |
 
 ## Handoff Notes
 
