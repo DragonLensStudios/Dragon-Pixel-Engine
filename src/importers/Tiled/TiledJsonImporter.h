@@ -17,6 +17,7 @@ struct import_request final
     core::uuid tileset_asset_id;
     core::uuid texture_asset_id;
     double pixels_per_unit{32.0};
+    bool import_isometric_as_z_as_y{};
 };
 
 struct import_diagnostic final
@@ -32,6 +33,10 @@ struct import_result final
     std::filesystem::path tilemap_path;
     std::filesystem::path tileset_path;
     std::filesystem::path texture_path;
+    std::vector<std::filesystem::path> tileset_paths;
+    std::vector<std::filesystem::path> texture_paths;
+    std::vector<core::uuid> tileset_asset_ids;
+    std::vector<core::uuid> texture_asset_ids;
     std::size_t tile_count{};
     std::size_t layer_count{};
     std::size_t cell_count{};

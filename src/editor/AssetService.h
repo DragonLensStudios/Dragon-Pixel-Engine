@@ -30,6 +30,13 @@ struct AssetImportRequest final
 
 struct TileAssetPublicationRequest final
 {
+    struct Document final
+    {
+        QString asset_id;
+        QByteArray bytes;
+        QString name_suffix;
+    };
+
     QString project_manifest_path;
     QString base_name;
     QString tilemap_asset_id;
@@ -42,6 +49,8 @@ struct TileAssetPublicationRequest final
     double pixels_per_unit{32.0};
     QString palette_asset_id;
     QByteArray palette_bytes;
+    QVector<Document> tilesets;
+    QVector<Document> textures;
 };
 
 struct TilemapCreationRequest final
