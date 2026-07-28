@@ -924,6 +924,8 @@ void EditorWindow::build_interface()
     project_type_filter_->addItem(QStringLiteral("All types"), QString{});
     project_type_filter_->addItem(QStringLiteral("Scenes"), QStringLiteral("scene"));
     project_type_filter_->addItem(QStringLiteral("Prefabs"), QStringLiteral("prefab"));
+    project_type_filter_->addItem(QStringLiteral("Tilemaps"), QStringLiteral("tilemap"));
+    project_type_filter_->addItem(QStringLiteral("TileSets"), QStringLiteral("tileset"));
     project_type_filter_->addItem(QStringLiteral("Assets"), QStringLiteral("asset"));
     project_type_filter_->addItem(QStringLiteral("Scripts / Components"), QStringLiteral("component"));
     connect(project_type_filter_, &QComboBox::currentIndexChanged, this, [this](int) {
@@ -1080,25 +1082,14 @@ void EditorWindow::build_interface()
     project_details_->setObjectName(QStringLiteral("ProjectDetailsPane"));
     project_details_->setAccessibleName(QStringLiteral("Selected project asset details"));
     project_details_->setWordWrap(true);
+    project_details_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     project_details_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
     project_details_->setMinimumHeight(48);
     project_layout->addWidget(project_details_);
-    const auto update_details = [this](const QModelIndex& current) {
-        if (!current.isValid())
-        {
-            project_details_->setText(QStringLiteral("Select an asset to see details."));
-            return;
-        }
-        const auto path = current.siblingAtColumn(0).data(EditorRoles::project_path).toString();
-        const auto kind = current.siblingAtColumn(static_cast<int>(ProjectColumn::kind_type)).data().toString();
-        const auto status = current.siblingAtColumn(static_cast<int>(ProjectColumn::overall_status)).data().toString();
-        project_details_->setText(QStringLiteral("%1  •  %2  •  %3")
-            .arg(kind, status, QDir::toNativeSeparators(path)));
-    };
     connect(project_explorer_->selectionModel(), &QItemSelectionModel::currentChanged,
-        this, [update_details](const QModelIndex& current) { update_details(current); });
+        this, [this](const QModelIndex& current) { update_project_details(current); });
     connect(project_thumbnail_view_->selectionModel(), &QItemSelectionModel::currentChanged,
-        this, [update_details](const QModelIndex& current) { update_details(current); });
+        this, [this](const QModelIndex& current) { update_project_details(current); });
 
     console_model_ = new ConsoleModel(this);
     console_filter_ = new RecursiveFilterProxyModel(this);
@@ -1199,6 +1190,13 @@ void EditorWindow::build_interface()
     connect(tile_document_service_, &TileDocumentService::dirtyChanged, this, [this](bool) {
         update_window_title();
         update_action_states();
+    });
+    connect(tile_document_service_, &TileDocumentService::documentChanged, this, [this] {
+        if (project_content_stack_ == nullptr) return;
+        const auto current = project_content_stack_->currentIndex() == 0
+            ? project_explorer_->currentIndex()
+            : project_thumbnail_view_->currentIndex();
+        if (current.isValid()) update_project_details(current);
     });
 
     auto* project_hub_panel = new QWidget(this);
@@ -1871,7 +1869,9 @@ bool EditorWindow::create_tilemap_from_tileset(
         ? project_index_.candidate->find_by_id(tileset_asset_id) : nullptr;
     if (map_entry == nullptr || set_entry == nullptr
         || !tile_palette_->load_documents(
-            map_entry->resolved_source_path, set_entry->resolved_source_path))
+            map_entry->resolved_source_path,
+            set_entry->resolved_source_path,
+            tile_texture_path_for(set_entry)))
     {
         append_console(QStringLiteral("The Tilemap was created but could not be opened in the Tile Palette."),
             QStringLiteral("Warning"), QStringLiteral("Tile Authoring"),
@@ -1970,7 +1970,8 @@ bool EditorWindow::perform_tiled_tilemap_import(
     }
 
     rebuild_assets();
-    if (!tile_palette_->load_documents(result.tilemap_path, result.tileset_path))
+    if (!tile_palette_->load_documents(
+            result.tilemap_path, result.tileset_path, result.texture_path))
     {
         append_console(QStringLiteral("The imported assets were published, but the Tile Palette could not open them."),
             QStringLiteral("Error"), QStringLiteral("Tile Import"), result.tilemap_path,
@@ -1991,6 +1992,25 @@ bool EditorWindow::perform_tiled_tilemap_import(
         {}, {}, result.operation_id, {}, result.tilemap_asset_id, result.tilemap_path);
     statusBar()->showMessage(QStringLiteral("Tiled tilemap imported into the Tile Palette"), 5000);
     return true;
+}
+
+QString EditorWindow::tile_texture_path_for(
+    const ProjectIndexEntry* tileset_entry) const
+{
+    if (tileset_entry == nullptr || !project_index_.candidate
+        || tileset_entry->dependencies.isEmpty())
+    {
+        return {};
+    }
+    const auto* texture_entry = project_index_.candidate->find_by_id(
+        tileset_entry->dependencies.front());
+    if (texture_entry == nullptr
+        || texture_entry->kind != ProjectIndexEntryKind::asset
+        || !texture_entry->structurally_valid)
+    {
+        return {};
+    }
+    return texture_entry->resolved_source_path;
 }
 
 void EditorWindow::create_project_component(ProjectComponentLanguage language)
@@ -3095,6 +3115,100 @@ void EditorWindow::update_project_browser_folder(const QModelIndex& folder_index
     if (logical.isEmpty()) logical = QStringLiteral("Project");
     project_breadcrumb_->setText(QStringLiteral("Project / %1")
         .arg(logical == QStringLiteral("Project") ? QString{} : logical));
+}
+
+void EditorWindow::update_project_details(const QModelIndex& proxy_index)
+{
+    if (!proxy_index.isValid())
+    {
+        project_details_->setText(QStringLiteral("Select an asset to see details."));
+        return;
+    }
+    const auto index = proxy_index.siblingAtColumn(0);
+    QStringList lines;
+    lines.push_back(index.data().toString());
+    lines.push_back(QStringLiteral("Kind: %1 | Status: %2")
+        .arg(proxy_index.siblingAtColumn(static_cast<int>(ProjectColumn::kind_type)).data().toString(),
+            proxy_index.siblingAtColumn(static_cast<int>(ProjectColumn::overall_status)).data().toString()));
+    const auto path = index.data(EditorRoles::project_path).toString();
+    if (!path.isEmpty())
+    {
+        lines.push_back(QStringLiteral("Path: %1").arg(QDir::toNativeSeparators(path)));
+    }
+    const auto id = index.data(EditorRoles::project_entry_id).toString();
+    const auto* entry = project_index_.candidate && !id.isEmpty()
+        ? project_index_.candidate->find_by_id(id) : nullptr;
+    if (entry == nullptr)
+    {
+        project_details_->setText(lines.join(QLatin1Char('\n')));
+        return;
+    }
+
+    lines.push_back(QStringLiteral("ID: %1 | Format: v%2")
+        .arg(entry->id).arg(entry->format_version));
+    lines.push_back(QStringLiteral("Import: %1 | Dependencies: %2 | Structure: %3")
+        .arg(index.data(EditorRoles::project_import_status).toString(),
+            index.data(EditorRoles::project_dependency_status).toString(),
+            entry->structurally_valid ? QStringLiteral("Valid") : QStringLiteral("Invalid")));
+    if (!entry->dependencies.isEmpty())
+    {
+        QStringList dependencies;
+        for (const auto& dependency_id : entry->dependencies)
+        {
+            const auto* dependency = project_index_.candidate->find_by_id(dependency_id);
+            dependencies.push_back(dependency == nullptr
+                ? dependency_id
+                : QStringLiteral("%1 (%2)").arg(dependency->display_name, dependency_id));
+        }
+        lines.push_back(QStringLiteral("Uses: %1").arg(dependencies.join(QStringLiteral(", "))));
+    }
+
+    if (entry->asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive))
+    {
+        std::optional<dragonpixel::tiles::tilemap_document> document;
+        if (tile_document_service_->tilemap() != nullptr
+            && QFileInfo{tile_document_service_->tilemap_path()}.absoluteFilePath()
+                == QFileInfo{entry->resolved_source_path}.absoluteFilePath())
+        {
+            document = *tile_document_service_->tilemap();
+        }
+        else
+        {
+            QFile file{entry->resolved_source_path};
+            if (file.size() <= 64 * 1024 * 1024 && file.open(QIODevice::ReadOnly))
+            {
+                document = dragonpixel::tiles::read_tilemap(file.readAll().toStdString()).document;
+            }
+        }
+        if (document)
+        {
+            std::size_t occupied_cells{};
+            std::size_t visible_layers{};
+            for (const auto& layer : document->layers)
+            {
+                if (layer.visible) ++visible_layers;
+                for (const auto& chunk : layer.chunks) occupied_cells += chunk.cells.size();
+            }
+            lines.push_back(QStringLiteral("Layers: %1 (%2 visible) | Occupied cells: %3")
+                .arg(document->layers.size()).arg(visible_layers).arg(occupied_cells));
+        }
+    }
+    else if (entry->asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
+    {
+        QFile file{entry->resolved_source_path};
+        if (file.size() <= 64 * 1024 * 1024 && file.open(QIODevice::ReadOnly))
+        {
+            const auto result = dragonpixel::tiles::read_tile_set(file.readAll().toStdString());
+            if (result.document)
+            {
+                const auto& set = *result.document;
+                lines.push_back(QStringLiteral("Cell size: %1 x %2 px | Pixels per unit: %3 | Tiles: %4")
+                    .arg(set.cell_size.x).arg(set.cell_size.y)
+                    .arg(set.pixels_per_unit).arg(set.tiles.size()));
+            }
+        }
+    }
+    project_details_->setText(lines.join(QLatin1Char('\n')));
 }
 
 QString EditorWindow::current_project_folder_relative() const
@@ -5937,7 +6051,10 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
                     break;
                 }
                 if (map_entry != nullptr && set_entry != nullptr
-                    && tile_palette_->load_documents(map_entry->resolved_source_path, set_entry->resolved_source_path))
+                    && tile_palette_->load_documents(
+                        map_entry->resolved_source_path,
+                        set_entry->resolved_source_path,
+                        tile_texture_path_for(set_entry)))
                 {
                     tile_palette_dock_->show();
                     tile_palette_dock_->raise();

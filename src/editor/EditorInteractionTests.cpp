@@ -423,6 +423,20 @@ private slots:
         QVERIFY(window.tile_document_service_->tilemap() != nullptr);
         QCOMPARE(QFileInfo{window.tile_document_service_->tilemap_path()}.fileName(),
             QStringLiteral("TiledImportLevel.dpetilemap"));
+        auto* tile_status = window.findChild<QLabel*>(QStringLiteral("TileStatus"));
+        auto* tile_list = window.findChild<QListWidget*>(QStringLiteral("TileList"));
+        QVERIFY(tile_status != nullptr && tile_status->text().contains(QStringLiteral("Atlas ready")));
+        QVERIFY(tile_list != nullptr && tile_list->count() == 4);
+        QVERIFY(!tile_list->item(0)->icon().pixmap(48, 48).isNull());
+        auto* flip_x = window.findChild<QToolButton*>(QStringLiteral("TileBrushFlipX"));
+        auto* rotate = window.findChild<QToolButton*>(QStringLiteral("TileBrushRotate"));
+        QVERIFY(flip_x != nullptr && rotate != nullptr);
+        QTest::mouseClick(flip_x, Qt::LeftButton);
+        QTest::mouseClick(rotate, Qt::LeftButton);
+        const auto brush = window.tile_palette_->active_brush();
+        QVERIFY(brush.has_value());
+        QVERIFY(brush->flip_x);
+        QCOMPARE(brush->rotation_quarter_turns, 1U);
         QVERIFY(window.project_index_.succeeded());
         const auto tilemap = std::find_if(window.project_index_.candidate->entries.cbegin(),
             window.project_index_.candidate->entries.cend(), [](const auto& entry) {
@@ -1319,6 +1333,19 @@ private slots:
         const auto alternate_map_source = find_role(
             window.project_model_, EditorRoles::asset_id, alternate_map_id);
         QVERIFY(primary_map_source.isValid() && alternate_map_source.isValid());
+        const auto primary_map_proxy = window.project_filter_->mapFromSource(
+            primary_map_source.siblingAtColumn(0));
+        QVERIFY(primary_map_proxy.isValid());
+        window.update_project_details(primary_map_proxy);
+        QVERIFY(window.project_details_->text().contains(QStringLiteral("Layers: 1")));
+        QVERIFY(window.project_details_->text().contains(QStringLiteral("Occupied cells: 0")));
+        const auto tileset_source = find_role(
+            window.project_model_, EditorRoles::asset_id, tileset_id);
+        const auto tileset_proxy = window.project_filter_->mapFromSource(
+            tileset_source.siblingAtColumn(0));
+        QVERIFY(tileset_proxy.isValid());
+        window.update_project_details(tileset_proxy);
+        QVERIFY(window.project_details_->text().contains(QStringLiteral("Pixels per unit:")));
 
         const auto tilemap_count_before = window.scene_->entities().size();
         const auto* primary_map_entry = window.project_index_.candidate->find_by_id(primary_map_id);
@@ -1517,12 +1544,33 @@ private slots:
         TileDocumentService tiles;
         QVERIFY(tiles.load(map_copy, set_copy));
         const auto tile_id = tiles.tileset()->tiles.front().tile_id;
+        const auto layer_id = dragonpixel::core::uuid::parse(
+            "8a715462-37d9-4e3e-b9db-8b82a94d7aa1");
+        QVERIFY(layer_id.has_value());
+        QVERIFY(tiles.add_layer(QStringLiteral("Decor"), *layer_id));
+        QCOMPARE(tiles.tilemap()->layers.size(), std::size_t{2});
+        QCOMPARE(tiles.tilemap()->layers.back().layer_id, *layer_id);
+        QVERIFY(tiles.rename_layer(1, QStringLiteral("Foreground")));
+        QVERIFY(tiles.set_layer_visible(1, false));
+        QVERIFY(tiles.move_layer(1, 0));
+        QCOMPARE(tiles.tilemap()->layers.front().layer_id, *layer_id);
+        QCOMPARE(tiles.tilemap()->layers.at(0).order, 0U);
+        QCOMPARE(tiles.tilemap()->layers.at(1).order, 1U);
+        QVERIFY(tiles.remove_layer(0));
+        QCOMPARE(tiles.tilemap()->layers.size(), std::size_t{1});
+        QVERIFY(!tiles.remove_layer(0));
+        QVERIFY(tiles.undo());
+        QCOMPARE(tiles.tilemap()->layers.size(), std::size_t{2});
+        QCOMPARE(tiles.tilemap()->layers.front().layer_id, *layer_id);
         tiles.begin_stroke();
-        QVERIFY(tiles.paint_cell(0, 32, 0, tile_id));
+        const TileDocumentService::Brush transformed_brush{
+            tile_id, true, false, 1U};
+        QVERIFY(tiles.paint_cell(0, 32, 0, transformed_brush));
         QVERIFY(tiles.paint_cell(0, -1, -1, tile_id));
         tiles.commit_stroke();
         QVERIFY(tiles.is_dirty());
         QVERIFY(tiles.tile_at(0, 32, 0).has_value());
+        QVERIFY(tiles.brush_at(0, 32, 0) == std::optional{transformed_brush});
         QVERIFY(tiles.tile_at(0, -1, -1).has_value());
         QVERIFY(tiles.undo());
         QVERIFY(!tiles.tile_at(0, 32, 0).has_value());

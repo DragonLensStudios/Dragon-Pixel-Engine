@@ -168,9 +168,9 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Empty Tilemap creation is atomic, indexed, dependency-bound, and failure-covered.
 - [x] Tilemap preset and Project-to-Scene/Hierarchy drag creation are command-backed and undoable.
 - [x] Compatible Project-to-Inspector assignment remains validated and covered.
-- [ ] Project details expose useful read-only TileSet/Tilemap facts.
-- [ ] Palette displays actual atlas art with visible missing-data fallback.
-- [ ] Layer management and transformed brushes are complete and undoable.
+- [x] Project details expose useful read-only TileSet/Tilemap facts.
+- [x] Palette displays actual atlas art with visible missing-data fallback.
+- [x] Layer management and transformed brushes are complete and undoable.
 - [ ] 2D Scene View painting, overlay, cancellation, and preview refresh are complete.
 - [ ] Existing pixels-per-unit is consumed consistently by the adapter path.
 - [ ] Focused Windows strict Release verification passes.
@@ -191,6 +191,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Existing owners inspected | Confirmed that TileDocumentService owns loaded mutation/Undo/save; AssetService owns publication; ProjectModel owns versioned drag identity; Scene commands own GameObject/component changes; AuthoringViewport owns editor-camera pointer mapping; and runtime snapshot v4 already carries TileSet pixels-per-unit. Existing palette tools and Inspector assignment are reusable, while empty-map creation, Tilemap preset/drop, atlas previews, public layer/transform controls, rich tile details, and Scene View painting are missing. |
 | 2026-07-27 | Scope accepted and branch started | Selected the bounded orthogonal Tilemap authoring workspace above and created `feature/tilemap-authoring-workspace` directly from current `develop`. No durable format, ABI, public managed contract, or process-topology revision is required. |
 | 2026-07-27 | Increment 1 complete | Added AssetService empty-Tilemap publication from one indexed TileSet, including generated stable map/layer IDs, one initial layer, asset-v3 dependency revision, two-file staged publication, collision/type/name/native-document checks, and post-publication index validation/removal. Added the Transform + Tilemap2D preset, Assets and Project context creation actions, toolbar/Hierarchy add entries, Project-to-Scene and Project-to-Hierarchy drops, and retained filtered Inspector assignment. Focused Release `s1.native_core`, `s3.asset_service`, and `poc_o.asset_import_cache_integrity` passed 3/3 in 7.51 seconds. The affected public Qt workflow passed 3/3 assertions groups in 13.029 seconds, including two map creations, viewport/Hierarchy attachment, and Inspector reassignment. The first direct build attempt lacked the configured MSVC standard-library environment and failed before compilation; rerunning in the Visual Studio 2022 developer shell succeeded. A 124-second full interaction-alias attempt timed out and is inconclusive, not passing evidence. |
+| 2026-07-27 | Increment 2 complete | Added stable-ID layer add/rename/visibility/reorder/remove operations with full before-image Undo, final-layer and count/name guards, transformed brush paint/fill/rectangle/eyedropper state, atlas-cropped nearest-neighbor list/canvas rendering with a visible fallback, tile-focused Project filters/details, and accessible layer/brush controls. The three affected Qt workflows passed 5/5 test stages in 21.911 seconds under strict Windows Release and 5/5 in 35.569 seconds under MSVC AddressSanitizer (`detect_leaks=0`, fail-fast enabled). Both configurations built with `/W4 /WX`; the ASan build completed without sanitizer findings. |
 
 ## Handoff Notes
 

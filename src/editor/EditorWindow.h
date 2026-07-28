@@ -122,6 +122,7 @@ private:
     void rebuild_scene_summary();
     void rebuild_assets();
     void update_project_browser_folder(const QModelIndex& folder_index);
+    void update_project_details(const QModelIndex& proxy_index);
     [[nodiscard]] QString current_project_folder_relative() const;
     void import_asset_paths(const QStringList& paths);
     bool handle_project_browser_drop(const QMimeData* data, const QModelIndex& destination_source);
@@ -190,6 +191,8 @@ private:
     [[nodiscard]] bool perform_tiled_tilemap_import(
         const QString& source,
         double pixels_per_unit);
+    [[nodiscard]] QString tile_texture_path_for(
+        const ProjectIndexEntry* tileset_entry) const;
     void create_project_component(ProjectComponentLanguage language);
     void build_project_components();
     void edit_project_source(const QString& source_path);
