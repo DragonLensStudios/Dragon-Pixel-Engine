@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Implementation complete; ready for human review
-> **Disposition:** Ready for review; not merged
+> **Status:** PR correction active; draft PR #6 open
+> **Disposition:** Implementation correction in progress; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
@@ -120,12 +120,20 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Verify every changed mirrored Markdown pair, UTF-8/LF/no-BOM, links, JSON fixtures, `git diff --check`, aggregate diff, and focused commit sequence.
 - Push the branch and open a draft PR into `develop`; do not merge.
 
+### Increment 5: PNG TileSet intake correction
+
+- Reproduce the reported Create TileSet failure with a valid extensionless PNG that the preview can decode.
+- Replace filename-suffix acceptance with authoritative PNG content validation shared by preview and creation, while retaining a `.png` destination inside the project.
+- Reject missing, unreadable, mislabeled, and non-PNG sources before any project output is written, and keep full-path feedback visible when the field is clipped.
+- Run the focused Release and MSVC AddressSanitizer interaction coverage, the accepted aggregate regression matrix, bundle verification, and update draft PR #6 without merging it.
+
 ## Affected Tests and Verification Strategy
 
 - Native scene: Tilemap preset components/defaults, primary asset assignment, transaction Undo/Redo, scene serialization/reopen, and existing preset regressions.
 - TileDocumentService: layer add/rename/visibility/reorder/remove, final-layer refusal, stable IDs, cell transform paint/eyedropper, chunk boundaries, dirty state, Undo/Redo, deterministic save/reopen, and cancellation.
 - AssetService/ProjectIndex/ProjectModel: empty Tilemap publication, dependency revision, collision/invalid selection/invalid document/no-partial-output failure, discovery, tile filtering/details, and drag payload identity.
 - Qt interactions: create action and context action, automatic palette opening, real atlas previews, layer/brush controls, keyboard/focus/accessibility, Tilemap Scene/Hierarchy drop, Inspector assignment, 2D Scene View stroke/overlay/cancel, and no Play/3D mutation.
+- PNG TileSet intake: valid `.png` and extensionless PNG content, mislabeled non-PNG rejection, missing-source rejection, normalized contained `.png` output, and zero partial files after rejected input.
 - Managed/runtime: existing snapshot-v4 parsing and both adapter tile-drawing tests, with pixels-per-unit sizing and real tile pixels/picking reported separately.
 - Serialization/recovery: scene-plus-tilemap transaction tests, invalid/missing dependency preservation, atomic publication, and no write on rejected operations.
 - Packaging: developer bundle manifest/hash verification and packaged MonoGame self-test; no new runtime file is expected.
@@ -154,6 +162,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - **High-frequency worker reload:** debounce document-driven preview refresh and keep tile-local preview changes cancelable before commit.
 - **Loss during layer removal/reorder:** make each operation one full before-image Undo item, refuse final-layer removal, and test occupied-layer restoration.
 - **Atlas path confusion:** resolve the texture through stable indexed dependencies, load read-only, validate image/source rectangles, and fall back diagnostically.
+- **Preview/create disagreement:** use the same content-based PNG decoder at both boundaries; do not accept by suffix alone or reject valid PNG bytes because a temporary/downloaded file has no extension.
 - **Stale Project drag/selection:** preserve drag format revision/project identity validation and re-resolve every asset ID in the current candidate index.
 - **Cross-platform input differences:** keep pointer mapping in Qt logical coordinates and validate guarded behavior without OS-specific events.
 
@@ -181,6 +190,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Aggregate diff and commit sequence reviewed.
 - [x] Branch pushed.
 - [x] Draft PR opened into `develop` and left unmerged for human review.
+- [ ] Reported extensionless-PNG creation failure is regression-covered and repaired without weakening non-PNG rejection.
+- [ ] Correction verification, evidence, branch push, and draft PR #6 update are complete.
 - [ ] Human review and merge occur after this implementation handoff.
 
 ## Work Log
@@ -197,7 +208,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Production bundle verified | `Build-Production-Editor.ps1 -Fast` generated the production-style Windows bundle. All **189** manifest records exist and SHA-256-verify, and the packaged MonoGame self-test exits successfully with development-path overrides removed. Final hashes: editor `EBBDD9273DEF8A32B75309E9A04131366DBCA281ECA2A8E395C5342BF2A6D85F`, Tiled importer worker `4B83ADCA6BD9E8CD81D7E2C7FC66A3455C2759D075CE2A91A42ADDD1489C3B5F`, manifest `BF510DB25EF185250F8DA41387BD3605A1E253AC972936B35C3B9CB01902445E`. This remains a developer bundle, not a signed POC R release package. |
 | 2026-07-27 | Aggregate review complete | Reviewed the focused four-commit sequence and the complete branch diff from `develop`. The work remains within the accepted static orthogonal, one-TileSet authoring workflow; no durable tile/asset/scene/snapshot format, C ABI, managed public contract, worker protocol, support claim, threshold, or unrelated file changed. `git diff --check develop...HEAD` is clean before the final evidence commit. |
 | 2026-07-27 | Draft PR handoff | Pushed `feature/tilemap-authoring-workspace` and opened draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) into `develop`. The PR includes the exact complete Release result, focused and aggregate ASan results including the repeated POC J failure, separate MonoGame/KNI evidence, bundle hashes, unsupported scope, recovery behavior, and remaining platform gates. It is intentionally unmerged for human review. |
+| 2026-07-27 | PNG intake correction started | The supplied extensionless file `Tileset_Ground_JMguEL` exists and begins with the standard PNG signature. The preview succeeds because `QImage` detects content, while `TileSetCreationService::create` rejects the same file solely because `QFileInfo::suffix()` is not `png`. The smallest complete correction is content-based PNG acceptance shared by preview/create, explicit rejection of mislabeled non-PNG data, and focused creation/regression evidence on this same active feature branch and draft PR. Required document mirrors and `DPE-ARCH-0014` were reverified before source changes. |
 
 ## Handoff Notes
 
-Implementation and the focused Windows Release/AddressSanitizer evidence are ready for review in draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6). The complete Release matrix is green; the broader ASan run retains the repeated POC J Qt-painted-FPS failure described above even though both aggregate editor interaction aliases and the feature-focused sanitizer set pass. The branch is pushed and intentionally unmerged. Remaining non-orthogonal formats, multi-TileSet maps, reimport, rule/animated/terrain tiles, complete POC K/O evidence, current Ubuntu/macOS matrices, accessibility review, the open POC J gate, and KNI production support remain explicit follow-up work.
+Draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) remains open and intentionally unmerged while the reported extensionless-PNG TileSet creation correction is implemented and verified. The prior complete Release result, focused sanitizer evidence, repeated aggregate POC J performance failure, and remaining scope/platform limitations remain valid historical evidence until the correction's final matrix and handoff update supersede this active note.
