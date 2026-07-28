@@ -811,17 +811,29 @@ private slots:
         QFile snapshot{snapshot_path};
         QVERIFY(snapshot.open(QIODevice::ReadOnly));
         const auto root = nlohmann::ordered_json::parse(snapshot.readAll().toStdString());
+        QCOMPARE(root.at("snapshotFormatVersion").get<int>(), 5);
         const auto runtime_map = std::find_if(
             root.at("tilemaps").cbegin(), root.at("tilemaps").cend(),
             [&](const auto& value) { return value.value("assetId", std::string{})
                 == map_id.toStdString(); });
         QVERIFY(runtime_map != root.at("tilemaps").cend());
+        QCOMPARE(runtime_map->at("grid").at("layout").get<std::string>(), std::string{"rectangular"});
         QVERIFY(runtime_map->at("layers").at(0).at("cells").size() >= 4);
+        const auto& runtime_cell = runtime_map->at("layers").at(0).at("cells").at(0);
+        QCOMPARE(runtime_cell.at("tileSetId").get<std::string>(), tileset_id.toStdString());
+        QCOMPARE(runtime_cell.at("resolvedTileSetId").get<std::string>(), tileset_id.toStdString());
+        QCOMPARE(runtime_cell.at("resolvedTileId").get<std::string>(), tile_id.to_string());
+        QVERIFY(runtime_cell.contains("tint"));
+        QVERIFY(runtime_cell.contains("offset"));
+        QVERIFY(runtime_cell.contains("scale"));
+        QVERIFY(runtime_map->at("layers").at(0).contains("renderer"));
         const auto runtime_set = std::find_if(
             root.at("tileSets").cbegin(), root.at("tileSets").cend(),
             [&](const auto& value) { return value.value("assetId", std::string{})
                 == tileset_id.toStdString(); });
         QVERIFY(runtime_set != root.at("tileSets").cend());
+        QCOMPARE(runtime_set->at("formatVersion").get<int>(), 2);
+        QVERIFY(runtime_set->contains("texturePngBase64ByAssetId"));
         QCOMPARE(runtime_set->at("pixelsPerUnit").get<double>(), 32.0);
     }
 
