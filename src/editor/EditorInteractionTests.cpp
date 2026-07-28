@@ -763,11 +763,55 @@ private slots:
         QVERIFY(prefab_index.isValid());
         std::unique_ptr<QMimeData> prefab_mime{
             window.project_model_->mimeData({prefab_index.siblingAtColumn(0)})};
+        QDragEnterEvent prefab_enter{
+            QPoint{8, 8}, Qt::CopyAction, prefab_mime.get(),
+            Qt::LeftButton, Qt::NoModifier};
+        QApplication::sendEvent(tile_list->viewport(), &prefab_enter);
+        QVERIFY(prefab_enter.isAccepted());
         QDropEvent prefab_drop{
             QPointF{8.0, 8.0}, Qt::CopyAction, prefab_mime.get(),
             Qt::LeftButton, Qt::NoModifier};
         QApplication::sendEvent(tile_list->viewport(), &prefab_drop);
         QCOMPARE(brush_behavior->currentData().toString(), QStringLiteral("object"));
+
+        const auto target_entity_id = window.selected_entity_id();
+        QVERIFY(target_entity_id.has_value());
+        const auto scene_entity_count = window.scene_->entities().size();
+        auto* paint_tool = window.findChild<QAction*>(QStringLiteral("TilePaintTool"));
+        auto* erase_tool = window.findChild<QAction*>(QStringLiteral("TileEraseTool"));
+        QVERIFY(paint_tool != nullptr && erase_tool != nullptr);
+        paint_tool->trigger();
+        QTest::mouseClick(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_3_0);
+        QCOMPARE(window.scene_->entities().size(), scene_entity_count + 1);
+        QVERIFY(!window.tile_document_service_->tile_at(0, 3, 0).has_value());
+        constexpr std::string_view placement_type{
+            "7edf6876-d677-42a8-a204-2eff41bb45f4"};
+        const auto entities_after_placement = window.scene_->entities();
+        const auto placed = std::find_if(
+            entities_after_placement.begin(), entities_after_placement.end(),
+            [&](const auto& candidate) {
+                return candidate.parent_id == target_entity_id
+                    && std::any_of(candidate.components.cbegin(), candidate.components.cend(),
+                        [&](const auto& component) {
+                            return component.type_id == placement_type;
+                        });
+            });
+        QVERIFY(placed != entities_after_placement.end());
+        const auto placement = std::find_if(
+            placed->components.cbegin(), placed->components.cend(), [&](const auto& component) {
+                return component.type_id == placement_type;
+            });
+        QCOMPARE(placement->properties.at("dpe.tileobject.cell_x").get<int>(), 3);
+        QCOMPARE(placement->properties.at("dpe.tileobject.cell_y").get<int>(), 0);
+        QCOMPARE(placement->properties.at("dpe.tileobject.map").get<std::string>(),
+            window.tile_document_service_->tilemap()->asset_id.to_string());
+        const auto placed_id = placed->id;
+
+        erase_tool->trigger();
+        QTest::mouseClick(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_3_0);
+        QCOMPARE(window.scene_->entities().size(), scene_entity_count);
+        QVERIFY(window.scene_->find_entity(placed_id) == nullptr);
+
         brush_behavior->setCurrentIndex(brush_behavior->findData(QStringLiteral("basic")));
 
         line_tool->trigger();
