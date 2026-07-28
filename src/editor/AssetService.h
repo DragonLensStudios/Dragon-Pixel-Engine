@@ -42,6 +42,13 @@ struct TileAssetPublicationRequest final
     double pixels_per_unit{32.0};
 };
 
+struct TilemapCreationRequest final
+{
+    QString project_manifest_path;
+    QString tileset_asset_id;
+    QString name;
+};
+
 struct AssetOperationResult final
 {
     bool succeeded{};
@@ -78,6 +85,8 @@ public:
         const AssetImportRequest& request) const = 0;
     [[nodiscard]] virtual AssetOperationResult publish_tile_import(
         const TileAssetPublicationRequest& request) const = 0;
+    [[nodiscard]] virtual AssetOperationResult create_tilemap(
+        const TilemapCreationRequest& request) const = 0;
     [[nodiscard]] virtual AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const = 0;
@@ -122,6 +131,8 @@ public:
         const AssetImportRequest& request) const override;
     [[nodiscard]] AssetOperationResult publish_tile_import(
         const TileAssetPublicationRequest& request) const override;
+    [[nodiscard]] AssetOperationResult create_tilemap(
+        const TilemapCreationRequest& request) const override;
     [[nodiscard]] AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const override;

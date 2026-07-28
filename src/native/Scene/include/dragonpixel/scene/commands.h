@@ -28,6 +28,7 @@ enum class entity_preset
     cube,
     camera,
     light,
+    tilemap,
 };
 
 struct create_preset_command final

@@ -182,6 +182,10 @@ private:
     void repair_prefab();
     void unpack_prefab(bool completely);
     void create_tile_set_from_png();
+    void create_tilemap_from_selected_tileset();
+    [[nodiscard]] bool create_tilemap_from_tileset(
+        const QString& tileset_asset_id,
+        const QString& name);
     void import_tiled_tilemap();
     [[nodiscard]] bool perform_tiled_tilemap_import(
         const QString& source,

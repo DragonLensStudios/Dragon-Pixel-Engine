@@ -1281,6 +1281,117 @@ private slots:
         QCOMPARE(QString::fromStdString(sprite_component->properties.at("dpe.sprite.asset").get<std::string>()),
             stable_asset_id);
 
+        const auto tileset_entry = std::find_if(
+            window.project_index_.candidate->entries.cbegin(),
+            window.project_index_.candidate->entries.cend(),
+            [](const auto& entry) {
+                return entry.kind == ProjectIndexEntryKind::asset
+                    && entry.asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive);
+            });
+        QVERIFY(tileset_entry != window.project_index_.candidate->entries.cend());
+        const auto tileset_id = tileset_entry->id;
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset_id, QStringLiteral("Interaction Map")));
+        QVERIFY(window.create_tilemap_from_tileset(
+            tileset_id, QStringLiteral("Alternate Interaction Map")));
+        const auto created_maps = [&window] {
+            QStringList ids;
+            for (const auto& entry : window.project_index_.candidate->entries)
+            {
+                if (entry.kind == ProjectIndexEntryKind::asset
+                    && entry.asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive)
+                    && (QFileInfo{entry.resolved_source_path}.completeBaseName()
+                            == QStringLiteral("Interaction Map")
+                        || QFileInfo{entry.resolved_source_path}.completeBaseName()
+                            == QStringLiteral("Alternate Interaction Map")))
+                {
+                    ids.push_back(entry.id);
+                }
+            }
+            ids.sort();
+            return ids;
+        }();
+        QCOMPARE(created_maps.size(), 2);
+        const auto primary_map_id = created_maps.front();
+        const auto alternate_map_id = created_maps.back();
+        const auto primary_map_source = find_role(
+            window.project_model_, EditorRoles::asset_id, primary_map_id);
+        const auto alternate_map_source = find_role(
+            window.project_model_, EditorRoles::asset_id, alternate_map_id);
+        QVERIFY(primary_map_source.isValid() && alternate_map_source.isValid());
+
+        const auto tilemap_count_before = window.scene_->entities().size();
+        const auto* primary_map_entry = window.project_index_.candidate->find_by_id(primary_map_id);
+        QVERIFY(primary_map_entry != nullptr);
+        window.viewport_->project_item_dropped(
+            window.project_index_.candidate->project_id,
+            static_cast<qint64>(window.project_model_->drag_revision()),
+            primary_map_entry->absolute_path,
+            QStringLiteral("asset"), QStringLiteral("tilemap"), primary_map_id);
+        QCOMPARE(window.scene_->entities().size(), tilemap_count_before + 1);
+        const auto tilemap_entity_id = window.selected_entity_id();
+        QVERIFY(tilemap_entity_id.has_value());
+        const auto* tilemap_entity = window.scene_->find_entity(*tilemap_entity_id);
+        QVERIFY(tilemap_entity != nullptr);
+        const auto tilemap_component = std::find_if(
+            tilemap_entity->components.cbegin(), tilemap_entity->components.cend(),
+            [](const auto& component) {
+                return component.type_id
+                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+            });
+        QVERIFY(tilemap_component != tilemap_entity->components.cend());
+        QCOMPARE(QString::fromStdString(tilemap_component->properties
+            .at("dpe.tilemap.asset").get<std::string>()), primary_map_id);
+
+        const auto tilemap_field = find_text(
+            window.inspector_->model(), QStringLiteral("Tilemap"));
+        QVERIFY(tilemap_field.isValid());
+        std::unique_ptr<QMimeData> alternate_map_mime{
+            window.project_model_->mimeData({alternate_map_source})};
+        QVERIFY(window.assign_inspector_asset_drop(
+            window.inspector_, tilemap_field, alternate_map_mime.get()));
+        tilemap_entity = window.scene_->find_entity(*tilemap_entity_id);
+        const auto reassigned_component = std::find_if(
+            tilemap_entity->components.cbegin(), tilemap_entity->components.cend(),
+            [](const auto& component) {
+                return component.type_id
+                    == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+            });
+        QCOMPARE(QString::fromStdString(reassigned_component->properties
+            .at("dpe.tilemap.asset").get<std::string>()), alternate_map_id);
+
+        std::unique_ptr<QMimeData> hierarchy_map_mime{
+            window.project_model_->mimeData({primary_map_source})};
+        const auto hierarchy_parent_proxy = find_text(
+            window.hierarchy_->model(), QStringLiteral("Dragon Sprite (2D)"));
+        QVERIFY(hierarchy_parent_proxy.isValid());
+        const auto hierarchy_parent_source = window.hierarchy_filter_->mapToSource(
+            hierarchy_parent_proxy);
+        const auto before_hierarchy_drop = window.scene_->entities().size();
+        QVERIFY(window.hierarchy_model_->dropMimeData(
+            hierarchy_map_mime.get(), Qt::CopyAction, -1, 0, hierarchy_parent_source));
+        QCOMPARE(window.scene_->entities().size(), before_hierarchy_drop + 1);
+        const auto parent_entity = std::find_if(
+            window.scene_->entities().begin(), window.scene_->entities().end(),
+            [](const auto& entity) {
+                return entity.name == "Dragon Sprite (2D)";
+            });
+        QVERIFY(parent_entity != window.scene_->entities().end());
+        const auto parent_id = std::optional<dragonpixel::core::uuid>{parent_entity->id};
+        const auto child_tilemap = std::find_if(
+            window.scene_->entities().begin(), window.scene_->entities().end(),
+            [&](const auto& entity) {
+                return entity.parent_id == parent_id
+                    && std::any_of(entity.components.begin(), entity.components.end(),
+                        [](const auto& component) {
+                            return component.type_id
+                                == dragonpixel::metadata::builtin_component_ids::tilemap_2d;
+                        });
+            });
+        QVERIFY(child_tilemap != window.scene_->entities().end());
+        QCOMPARE(child_tilemap->parent_id,
+            std::optional<dragonpixel::core::uuid>{*parent_id});
+
         const auto prefab_folder = find_role(window.project_model_, EditorRoles::project_logical_path,
             QStringLiteral("Prefabs"));
         QVERIFY(prefab_folder.isValid());

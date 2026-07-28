@@ -111,6 +111,16 @@ std::vector<component_record> make_preset_components(const create_preset_command
                 {"dpe.light.range", 10.0},
             }));
         break;
+    case entity_preset::tilemap:
+        components.push_back(make_component(
+            metadata::builtin_component_ids::tilemap_2d,
+            "DragonPixel.Native.Tilemap2DComponent",
+            {
+                {"dpe.tilemap.asset", value.primary_asset.value_or("")},
+                {"dpe.tilemap.tint", {{"r", 1.0}, {"g", 1.0}, {"b", 1.0}, {"a", 1.0}}},
+                {"dpe.tilemap.layer", 0},
+            }));
+        break;
     }
     return components;
 }

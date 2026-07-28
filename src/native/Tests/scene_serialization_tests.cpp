@@ -413,6 +413,7 @@ void verify_history_validation_and_presets()
     scene value{parse_uuid("30000000-0000-4000-8000-000000000001"), "History"};
     const auto empty_id = parse_uuid("30000000-0000-4000-8000-000000000011");
     const auto sprite_id = parse_uuid("30000000-0000-4000-8000-000000000012");
+    const auto tilemap_id = parse_uuid("30000000-0000-4000-8000-000000000013");
     const std::vector<command> create_presets{
         create_preset_command{empty_id, "Empty GameObject", entity_preset::empty},
         create_preset_command{
@@ -423,6 +424,14 @@ void verify_history_validation_and_presets()
             std::nullopt,
             std::string{"30000000-0000-4000-8000-000000000099"},
         },
+        create_preset_command{
+            tilemap_id,
+            "Tilemap GameObject",
+            entity_preset::tilemap,
+            std::nullopt,
+            std::nullopt,
+            std::string{"30000000-0000-4000-8000-000000000098"},
+        },
     };
 
     value.mark_savepoint();
@@ -431,25 +440,31 @@ void verify_history_validation_and_presets()
     require(preview.succeeded && value.entities().empty() && value.history_size() == 0,
         "Dry-run validation mutated authoritative scene state or history.");
     const auto committed = value.apply_transaction(create_presets, "Create two GameObjects");
-    require(committed.succeeded && committed.applied_count == 2
+    require(committed.succeeded && committed.applied_count == 3
             && value.history_size() == 1 && value.history_position() == 1 && value.is_dirty(),
         "Compound preset transaction was not recorded as one dirty history item.");
     const auto* empty = value.find_entity(empty_id);
     const auto* sprite = value.find_entity(sprite_id);
+    const auto* tilemap = value.find_entity(tilemap_id);
     const auto* sprite_component = sprite == nullptr ? nullptr
         : find_component(*sprite, dragonpixel::metadata::builtin_component_ids::sprite);
-    require(empty != nullptr && sprite != nullptr
+    const auto* tilemap_component = tilemap == nullptr ? nullptr
+        : find_component(*tilemap, dragonpixel::metadata::builtin_component_ids::tilemap_2d);
+    require(empty != nullptr && sprite != nullptr && tilemap != nullptr
             && find_component(*empty, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
             && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
-            && sprite_component != nullptr,
+            && sprite_component != nullptr && tilemap_component != nullptr,
         "GameObject presets did not include mandatory Transform and preset components.");
     require(sprite_component->properties.at("dpe.sprite.asset")
                 == "30000000-0000-4000-8000-000000000099",
         "The transactional Sprite preset did not preserve its requested primitive/asset binding.");
+    require(tilemap_component->properties.at("dpe.tilemap.asset")
+                == "30000000-0000-4000-8000-000000000098",
+        "The transactional Tilemap preset did not preserve its requested Tilemap binding.");
 
     require(value.undo().succeeded && value.entities().empty() && !value.is_dirty() && value.can_redo(),
         "Undo did not restore the initial clean savepoint for a compound transaction.");
-    require(value.redo().succeeded && value.entities().size() == 2 && value.is_dirty(),
+    require(value.redo().succeeded && value.entities().size() == 3 && value.is_dirty(),
         "Redo did not restore the complete compound transaction.");
     value.mark_savepoint();
     require(!value.is_dirty(), "Marking the current history position as saved did not clear dirty state.");

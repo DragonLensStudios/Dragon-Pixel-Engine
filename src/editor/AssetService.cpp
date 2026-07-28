@@ -731,6 +731,166 @@ AssetOperationResult AssetService::publish_tile_import(
     return result;
 }
 
+AssetOperationResult AssetService::create_tilemap(
+    const TilemapCreationRequest& request) const
+{
+    constexpr qsizetype max_tileset_bytes = 64 * 1024 * 1024;
+    AssetOperationResult result;
+    result.operation_id = next_id();
+    const auto project = load_project(request.project_manifest_path, result);
+    if (!project)
+    {
+        return result;
+    }
+    if (!safe_tile_import_name(request.name))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-NAME"),
+            QStringLiteral("Tilemap names must be portable and contain at most 128 characters."),
+            request.name);
+        return result;
+    }
+    const auto tileset_id = canonical_uuid(request.tileset_asset_id);
+    const auto* tileset_entry = asset_entry(*project, tileset_id);
+    if (tileset_id.isEmpty() || tileset_entry == nullptr
+        || !tileset_entry->structurally_valid
+        || !tileset_entry->asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET"),
+            QStringLiteral("Create Tilemap requires one structurally valid indexed TileSet."),
+            request.tileset_asset_id);
+        return result;
+    }
+    QByteArray tileset_bytes;
+    QString read_error;
+    if (!read_regular_file(tileset_entry->resolved_source_path, tileset_bytes, read_error)
+        || tileset_bytes.isEmpty() || tileset_bytes.size() > max_tileset_bytes)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET-READ"),
+            read_error.isEmpty()
+                ? QStringLiteral("The selected TileSet is empty or exceeds its validation limit.")
+                : read_error,
+            tileset_entry->resolved_source_path);
+        return result;
+    }
+    const auto parsed_set = dragonpixel::tiles::read_tile_set(
+        std::string_view{tileset_bytes.constData(),
+            static_cast<std::size_t>(tileset_bytes.size())});
+    if (!parsed_set.succeeded()
+        || QString::fromStdString(parsed_set.document->asset_id.to_string()) != tileset_id)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET-DOCUMENT"),
+            QStringLiteral("The selected TileSet document is invalid or does not match its asset identity."),
+            tileset_entry->resolved_source_path);
+        return result;
+    }
+
+    const auto tilemap_id = canonical_uuid(next_id());
+    const auto layer_id = canonical_uuid(next_id());
+    if (tilemap_id.isEmpty() || layer_id.isEmpty() || tilemap_id == layer_id
+        || project->candidate.find_by_id(tilemap_id) != nullptr)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-IDS"),
+            QStringLiteral("The Tilemap operation did not produce distinct canonical identities."));
+        return result;
+    }
+    dragonpixel::tiles::tilemap_document map{
+        *dragonpixel::core::uuid::parse(tilemap_id.toStdString()),
+        request.name.toStdString(),
+        {parsed_set.document->asset_id},
+        {{*dragonpixel::core::uuid::parse(layer_id.toStdString()), "Layer 1", true, 0, {}}},
+    };
+    const auto map_bytes = QByteArray::fromStdString(
+        dragonpixel::tiles::write_tilemap(map));
+    const auto parsed_map = dragonpixel::tiles::read_tilemap(
+        std::string_view{map_bytes.constData(), static_cast<std::size_t>(map_bytes.size())});
+    if (!parsed_map.succeeded())
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-DOCUMENT"),
+            QStringLiteral("The generated empty Tilemap failed native validation."));
+        return result;
+    }
+
+    const auto assets = resolve_asset_folder(*project, QStringLiteral("Assets"), result);
+    if (!assets)
+    {
+        return result;
+    }
+    const auto tilemap_path = QDir{*assets}.filePath(
+        QStringLiteral("Tiles/%1.dpetilemap").arg(request.name));
+    const auto metadata_path = QDir{*assets}.filePath(
+        request.name + QStringLiteral(".tilemap.dpeasset"));
+    for (const auto& path : {tilemap_path, metadata_path})
+    {
+        if (collision_exists(path))
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-COLLISION"),
+                QStringLiteral("A Tilemap destination already exists."), path);
+            return result;
+        }
+    }
+
+    const auto map_hash = sha256(map_bytes);
+    const auto tileset_hash = sha256(tileset_bytes);
+    const auto source = QStringLiteral("Tiles/%1.dpetilemap").arg(request.name);
+    const QJsonObject metadata{
+        {QStringLiteral("$schema"), QStringLiteral("https://dragonpixel.dev/schemas/v3/asset-metadata.schema.json")},
+        {QStringLiteral("format"), QStringLiteral("dpe.asset")},
+        {QStringLiteral("formatVersion"), 3},
+        {QStringLiteral("engineVersion"), QStringLiteral("1.0.0")},
+        {QStringLiteral("assetId"), tilemap_id},
+        {QStringLiteral("assetType"), QStringLiteral("tilemap")},
+        {QStringLiteral("source"), source},
+        {QStringLiteral("sourceOwnership"), QStringLiteral("generated")},
+        {QStringLiteral("sourceHash"), map_hash},
+        {QStringLiteral("importHash"), map_hash},
+        {QStringLiteral("importer"), QJsonObject{
+            {QStringLiteral("id"), QStringLiteral("dragonpixel.tilemap-editor")},
+            {QStringLiteral("version"), 1}}},
+        {QStringLiteral("cacheKey"), QStringLiteral("sha256:") + map_hash},
+        {QStringLiteral("dependencies"), QJsonArray{tileset_id}},
+        {QStringLiteral("dependencyRevisions"), QJsonArray{QJsonObject{
+            {QStringLiteral("assetId"), tileset_id},
+            {QStringLiteral("sourceHash"), tileset_hash}}}},
+        {QStringLiteral("importSettings"), QJsonObject{
+            {QStringLiteral("grid"), QStringLiteral("orthogonal")}}},
+        {QStringLiteral("recoveryState"), QJsonObject{
+            {QStringLiteral("state"), QStringLiteral("ready")}}},
+        {QStringLiteral("importerDiagnostics"), QJsonArray{}},
+        {QStringLiteral("previewDiagnostics"), QJsonArray{}},
+    };
+    const QVector<PendingFile> pending{
+        {tilemap_path, map_bytes},
+        {metadata_path, json_bytes(metadata)},
+    };
+    result.asset_ids = {tilemap_id};
+    result.metadata_paths = {metadata_path};
+    result.affected_paths = {tilemap_path, metadata_path};
+    if (!commit_files(project->project_root, result.operation_id, pending, {}, result))
+    {
+        result.asset_ids.clear();
+        result.metadata_paths.clear();
+        result.affected_paths.clear();
+        return result;
+    }
+    const auto validated = ProjectIndexService{}.build_candidate(request.project_manifest_path);
+    const auto* validated_map = validated.candidate
+        ? validated.candidate->find_by_id(tilemap_id) : nullptr;
+    if (!validated.succeeded() || validated_map == nullptr
+        || validated_map->dependencies != QStringList{tileset_id})
+    {
+        QFile::remove(tilemap_path);
+        QFile::remove(metadata_path);
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-VALIDATION"),
+            QStringLiteral("The created Tilemap failed project-index validation and was removed."));
+        result.asset_ids.clear();
+        result.metadata_paths.clear();
+        result.affected_paths.clear();
+        return result;
+    }
+    result.succeeded = true;
+    return result;
+}
+
 AssetOperationResult AssetService::create_folder(
     const QString& project_manifest_path,
     const QString& project_relative_folder) const

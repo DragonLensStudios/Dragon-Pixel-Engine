@@ -103,6 +103,111 @@ class AssetServiceTests final : public QObject
     Q_OBJECT
 
 private slots:
+    void creates_empty_tilemap_from_indexed_tileset()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto manifest = create_project(temp);
+        QVERIFY(!manifest.isEmpty());
+        AssetService service;
+        const auto imported = service.publish_tile_import(tile_publication(manifest));
+        QVERIFY(imported.succeeded);
+
+        const auto result = service.create_tilemap({
+            manifest,
+            imported.asset_ids.at(1),
+            QStringLiteral("Editable Map"),
+        });
+        QVERIFY2(result.succeeded, result.diagnostics.isEmpty()
+            ? "unknown Tilemap creation failure"
+            : qPrintable(result.diagnostics.constFirst().message));
+        QCOMPARE(result.asset_ids.size(), 1);
+        QCOMPARE(result.metadata_paths.size(), 1);
+        QCOMPARE(result.affected_paths.size(), 2);
+
+        const auto indexed = ProjectIndexService{}.build_candidate(manifest);
+        QVERIFY(indexed.succeeded());
+        const auto* map_entry = indexed.candidate->find_by_id(result.asset_ids.constFirst());
+        QVERIFY(map_entry != nullptr);
+        QCOMPARE(map_entry->asset_type, QStringLiteral("tilemap"));
+        QCOMPARE(map_entry->source_ownership, QStringLiteral("generated"));
+        QCOMPARE(map_entry->dependencies, QStringList{imported.asset_ids.at(1)});
+        QCOMPARE(map_entry->document.value(QStringLiteral("importer")).toObject()
+            .value(QStringLiteral("id")).toString(),
+            QStringLiteral("dragonpixel.tilemap-editor"));
+        QCOMPARE(map_entry->document.value(QStringLiteral("dependencyRevisions"))
+            .toArray().size(), 1);
+
+        QFile map_file{map_entry->resolved_source_path};
+        QVERIFY(map_file.open(QIODevice::ReadOnly));
+        const auto parsed = dragonpixel::tiles::read_tilemap(
+            map_file.readAll().toStdString());
+        QVERIFY(parsed.succeeded());
+        QCOMPARE(QString::fromStdString(parsed.document->name),
+            QStringLiteral("Editable Map"));
+        QCOMPARE(parsed.document->tile_set_dependencies.size(), std::size_t{1});
+        QCOMPARE(QString::fromStdString(
+            parsed.document->tile_set_dependencies.front().to_string()),
+            imported.asset_ids.at(1));
+        QCOMPARE(parsed.document->layers.size(), std::size_t{1});
+        QCOMPARE(QString::fromStdString(parsed.document->layers.front().name),
+            QStringLiteral("Layer 1"));
+        QVERIFY(parsed.document->layers.front().chunks.empty());
+    }
+
+    void rejects_invalid_or_colliding_empty_tilemap_without_partial_files()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const auto manifest = create_project(temp);
+        QVERIFY(!manifest.isEmpty());
+        AssetService service;
+        const auto imported = service.publish_tile_import(tile_publication(manifest));
+        QVERIFY(imported.succeeded);
+
+        const auto wrong_type = service.create_tilemap({
+            manifest,
+            imported.asset_ids.front(),
+            QStringLiteral("Rejected Map"),
+        });
+        QVERIFY(!wrong_type.succeeded);
+        QCOMPARE(wrong_type.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILEMAP-TILESET"));
+        const auto assets = QDir{QFileInfo{manifest}.absolutePath()}.filePath(
+            QStringLiteral("Assets"));
+        QVERIFY(!QFileInfo::exists(QDir{assets}.filePath(
+            QStringLiteral("Rejected Map.tilemap.dpeasset"))));
+
+        const auto invalid_name = service.create_tilemap({
+            manifest,
+            imported.asset_ids.at(1),
+            QStringLiteral("../escape"),
+        });
+        QVERIFY(!invalid_name.succeeded);
+        QCOMPARE(invalid_name.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILEMAP-NAME"));
+
+        const auto created = service.create_tilemap({
+            manifest,
+            imported.asset_ids.at(1),
+            QStringLiteral("Collision Map"),
+        });
+        QVERIFY(created.succeeded);
+        const auto map_before = read_bytes(created.affected_paths.front());
+        const auto metadata_before = read_bytes(created.metadata_paths.front());
+        const auto collision = service.create_tilemap({
+            manifest,
+            imported.asset_ids.at(1),
+            QStringLiteral("Collision Map"),
+        });
+        QVERIFY(!collision.succeeded);
+        QCOMPARE(collision.diagnostics.constFirst().code,
+            QStringLiteral("DPE-ASSET-TILEMAP-COLLISION"));
+        QCOMPARE(read_bytes(created.affected_paths.front()), map_before);
+        QCOMPARE(read_bytes(created.metadata_paths.front()), metadata_before);
+        QVERIFY(ProjectIndexService{}.build_candidate(manifest).succeeded());
+    }
+
     void publishes_validated_tile_import_with_dependency_chain()
     {
         QTemporaryDir temp;
