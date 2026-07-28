@@ -777,6 +777,80 @@ private slots:
             dragonpixel::tiles::tile_collider_mode::sprite_outline);
         QVERIFY(!edited_tile->animation_frames.empty());
         QVERIFY(edited_tile->update_physics);
+        auto* frame_duration = window.findChild<QDoubleSpinBox*>(
+            QStringLiteral("TileAnimationFrameDuration"));
+        auto* set_animation_frames = window.findChild<QPushButton*>(
+            QStringLiteral("SetTileAnimationFramesFromSelection"));
+        auto* rule_topology = window.findChild<QComboBox*>(
+            QStringLiteral("TileRuleTopology"));
+        auto* rule_match = window.findChild<QComboBox*>(
+            QStringLiteral("TileRuleMatchTransform"));
+        auto* rule_output = window.findChild<QComboBox*>(
+            QStringLiteral("TileRuleOutputKind"));
+        auto* rule_neighbor = window.findChild<QComboBox*>(
+            QStringLiteral("TileRuleNeighborCondition"));
+        auto* rule_offset_x = window.findChild<QSpinBox*>(
+            QStringLiteral("TileRuleNeighborOffsetX"));
+        auto* rule_offset_y = window.findChild<QSpinBox*>(
+            QStringLiteral("TileRuleNeighborOffsetY"));
+        auto* add_rule = window.findChild<QPushButton*>(
+            QStringLiteral("AddTileRuleFromSelection"));
+        auto* create_override = window.findChild<QPushButton*>(
+            QStringLiteral("CreateTileRuleOverrideFromSelection"));
+        QVERIFY(frame_duration != nullptr && set_animation_frames != nullptr
+            && rule_topology != nullptr && rule_match != nullptr
+            && rule_output != nullptr && rule_neighbor != nullptr
+            && rule_offset_x != nullptr && rule_offset_y != nullptr
+            && add_rule != nullptr && create_override != nullptr);
+        tile_list->clearSelection();
+        tile_list->setCurrentRow(0);
+        tile_list->item(0)->setSelected(true);
+        tile_list->item(1)->setSelected(true);
+        frame_duration->setValue(0.125);
+        set_animation_frames->click();
+        const auto framed_tile = std::find_if(
+            edited_owner->tiles.begin(), edited_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *edited_tile_id; });
+        QCOMPARE(framed_tile->animation_frames.size(), std::size_t{2});
+        QCOMPARE(framed_tile->animation_frames.front().duration_seconds, 0.125);
+        rule_topology->setCurrentIndex(rule_topology->findData(
+            static_cast<int>(dragonpixel::tiles::grid_layout::hex_point_top)));
+        rule_match->setCurrentIndex(rule_match->findData(
+            static_cast<int>(dragonpixel::tiles::rule_match_transform::rotated)));
+        rule_output->setCurrentIndex(rule_output->findData(
+            static_cast<int>(dragonpixel::tiles::rule_output_kind::random)));
+        rule_neighbor->setCurrentIndex(rule_neighbor->findData(
+            static_cast<int>(dragonpixel::tiles::rule_neighbor_condition::same_tile)));
+        rule_offset_x->setValue(-1);
+        rule_offset_y->setValue(0);
+        add_rule->click();
+        const auto rule_tile = std::find_if(
+            edited_owner->tiles.begin(), edited_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *edited_tile_id; });
+        QCOMPARE(rule_tile->kind, dragonpixel::tiles::tile_kind::rule);
+        QCOMPARE(rule_tile->rules.size(), std::size_t{1});
+        QCOMPARE(rule_tile->rules.front().topology,
+            dragonpixel::tiles::grid_layout::hex_point_top);
+        QCOMPARE(rule_tile->rules.front().match_transform,
+            dragonpixel::tiles::rule_match_transform::rotated);
+        QCOMPARE(rule_tile->rules.front().output_kind,
+            dragonpixel::tiles::rule_output_kind::random);
+        QCOMPARE(rule_tile->rules.front().neighbors.size(), std::size_t{1});
+        QCOMPARE(rule_tile->rules.front().outputs.size(), std::size_t{2});
+        tile_list->clearSelection();
+        tile_list->setCurrentRow(1);
+        tile_list->item(0)->setSelected(true);
+        create_override->click();
+        const auto override_id = dragonpixel::core::uuid::parse(
+            tile_list->currentItem()->data(Qt::UserRole).toString().toStdString());
+        QVERIFY(override_id.has_value());
+        const auto override_tile = std::find_if(
+            edited_owner->tiles.begin(), edited_owner->tiles.end(),
+            [&](const auto& tile) { return tile.tile_id == *override_id; });
+        QCOMPARE(override_tile->kind, dragonpixel::tiles::tile_kind::rule_override);
+        QVERIFY(override_tile->override_source.has_value());
+        QCOMPARE(override_tile->override_source->tile_id, *edited_tile_id);
+        QVERIFY(!override_tile->overrides.empty());
         tile_list->clearSelection();
         tile_list->item(0)->setSelected(true);
         tile_list->item(1)->setSelected(true);
