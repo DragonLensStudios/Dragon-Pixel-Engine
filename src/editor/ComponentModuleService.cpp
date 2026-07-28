@@ -59,7 +59,7 @@ bool write_atomic(const QString& path, const QByteArray& bytes, QString& error)
     return true;
 }
 
-constexpr auto component_generator_identity = "dpe-component-generator-v2";
+constexpr auto component_generator_identity = "dpe-component-generator-v3";
 constexpr auto component_build_configuration = "Release";
 
 struct DeclaredComponentRoot final
@@ -467,8 +467,60 @@ typedef struct dpe_component_plugin_v2 {
     const char* (DPE_COMPONENT_CALL *last_error)(dpe_component_handle handle);
 } dpe_component_plugin_v2;
 
+enum {
+    DPE_TILE_EXTENSION_ABI_V1 = 1,
+    DPE_TILE_EXTENSION_CAPABILITY_EVALUATE_TILES_V1 = 1u << 0,
+    DPE_TILE_EXTENSION_CAPABILITY_PROPOSE_BRUSH_V1 = 1u << 1,
+    DPE_TILE_EXTENSION_MAX_BATCH_V1 = 65536,
+    DPE_TILE_EXTENSION_MAX_COMMANDS_V1 = 1048576
+};
+
+typedef struct dpe_tile_extension_string_v1 {
+    const char* data;
+    size_t length;
+} dpe_tile_extension_string_v1;
+
+typedef struct dpe_tile_extension_context_v1 {
+    uint32_t struct_size;
+    int32_t cell_x;
+    int32_t cell_y;
+    int32_t elevation;
+    uint32_t layout;
+    uint64_t deterministic_seed;
+    double elapsed_seconds;
+    dpe_tile_extension_string_v1 map_id;
+    dpe_tile_extension_string_v1 layer_id;
+    dpe_tile_extension_string_v1 tile_set_id;
+    dpe_tile_extension_string_v1 tile_id;
+    dpe_tile_extension_string_v1 payload_json;
+    dpe_tile_extension_string_v1 neighborhood_json;
+} dpe_tile_extension_context_v1;
+
+typedef struct dpe_tile_extension_result_v1 {
+    uint32_t struct_size;
+    int32_t status;
+    dpe_tile_extension_string_v1 result_json;
+    dpe_tile_extension_string_v1 error_code;
+    dpe_tile_extension_string_v1 error_message;
+} dpe_tile_extension_result_v1;
+
+typedef struct dpe_tile_extension_plugin_v1 {
+    uint32_t abi_version;
+    uint32_t struct_size;
+    uint32_t capabilities;
+    uint32_t reserved;
+    dpe_tile_extension_string_v1 plugin_id;
+    int32_t (DPE_COMPONENT_CALL *evaluate_tiles)(const dpe_tile_extension_context_v1*, size_t,
+        dpe_tile_extension_result_v1*, size_t);
+    int32_t (DPE_COMPONENT_CALL *propose_brush)(const dpe_tile_extension_context_v1*,
+        dpe_tile_extension_string_v1, dpe_tile_extension_result_v1*);
+    void (DPE_COMPONENT_CALL *release_string)(dpe_tile_extension_string_v1);
+} dpe_tile_extension_plugin_v1;
+
 DPE_COMPONENT_EXPORT const dpe_component_plugin_v1* DPE_COMPONENT_CALL dpe_component_plugin_get_v1(void);
 DPE_COMPONENT_EXPORT const dpe_component_plugin_v2* DPE_COMPONENT_CALL dpe_component_plugin_get_v2(void);
+DPE_COMPONENT_EXPORT const dpe_tile_extension_plugin_v1* DPE_COMPONENT_CALL
+dpe_tile_extension_plugin_get_v1(void);
 
 #ifdef __cplusplus
 }
@@ -1050,6 +1102,8 @@ struct ComponentRecord final
     QString source_relative;
     QString source_absolute;
     int root_index{-1};
+    QString tile_extension_id;
+    QStringList tile_extension_capabilities;
 };
 
 struct ComponentInputModel final
@@ -1155,6 +1209,13 @@ bool valid_uuid(const QString& value)
         && dragonpixel::core::uuid::parse(value.toStdString()).has_value();
 }
 
+bool valid_plugin_id(const QString& value)
+{
+    static const QRegularExpression stable_id{
+        QStringLiteral("^[a-z][a-z0-9.-]{1,126}[a-z0-9]$")};
+    return stable_id.match(value).hasMatch();
+}
+
 bool validate_component_manifest_bytes(
     const QByteArray& bytes,
     const QString& manifest_path,
@@ -1202,6 +1263,8 @@ bool validate_component_manifest_bytes(
         const auto owner = component.value(QStringLiteral("owner")).toString();
         const auto qualified_name = component.value(QStringLiteral("qualifiedName")).toString();
         const auto display_name = component.value(QStringLiteral("displayName")).toString();
+        QString tile_extension_id;
+        QStringList tile_extension_capabilities;
         if (!valid_uuid(type_id) || type_ids.contains(type_id)
             || qualified_name.trimmed().isEmpty() || display_name.trimmed().isEmpty()
             || component.value(QStringLiteral("schemaVersion")).toInt(0) <= 0
@@ -1251,6 +1314,43 @@ bool validate_component_manifest_bytes(
                         .arg(manifest_path);
             return false;
         }
+        if (component.contains(QStringLiteral("tileExtension")))
+        {
+            const auto extension_value = component.value(QStringLiteral("tileExtension"));
+            const auto extension = extension_value.toObject();
+            const auto extension_keys = extension.keys();
+            const auto keys = QSet<QString>{extension_keys.cbegin(), extension_keys.cend()};
+            tile_extension_id = extension.value(QStringLiteral("pluginId")).toString();
+            const auto capabilities = extension.value(QStringLiteral("capabilities")).toArray();
+            QSet<QString> unique_capabilities;
+            for (const auto& capability_value : capabilities)
+            {
+                const auto capability = capability_value.toString();
+                if (!capability_value.isString()
+                    || (capability != QStringLiteral("evaluate-tiles")
+                        && capability != QStringLiteral("propose-brush"))
+                    || unique_capabilities.contains(capability))
+                {
+                    error = QStringLiteral("Tile extension has an unsupported or duplicate capability: %1")
+                                .arg(manifest_path);
+                    return false;
+                }
+                unique_capabilities.insert(capability);
+                tile_extension_capabilities.push_back(capability);
+            }
+            std::sort(tile_extension_capabilities.begin(), tile_extension_capabilities.end());
+            if (language != QStringLiteral("cpp") || !extension_value.isObject()
+                || keys != QSet<QString>{QStringLiteral("pluginId"), QStringLiteral("capabilities")}
+                || !valid_plugin_id(tile_extension_id) || capabilities.isEmpty()
+                || std::any_of(records.cbegin(), records.cend(), [&](const auto& record) {
+                    return record.tile_extension_id == tile_extension_id;
+                }))
+            {
+                error = QStringLiteral("Tile extension identity, language, or declaration is invalid: %1")
+                            .arg(manifest_path);
+                return false;
+            }
+        }
         module_ids.insert(module_id);
         const auto declared_source = QDir::fromNativeSeparators(
             component.value(QStringLiteral("sourcePath")).toString());
@@ -1286,7 +1386,8 @@ bool validate_component_manifest_bytes(
                         .arg(declared_source);
             return false;
         }
-        records.push_back({type_id, module_id, language, source_relative, source_absolute, root_index});
+        records.push_back({type_id, module_id, language, source_relative, source_absolute, root_index,
+            tile_extension_id, tile_extension_capabilities});
     }
     return true;
 }
@@ -1665,6 +1766,17 @@ QJsonObject runtime_component(const ComponentRecord& component)
     };
 }
 
+QJsonObject runtime_tile_extension(const ComponentRecord& component)
+{
+    QJsonArray capabilities;
+    for (const auto& capability : component.tile_extension_capabilities)
+        capabilities.push_back(capability);
+    return {
+        {QStringLiteral("pluginId"), component.tile_extension_id},
+        {QStringLiteral("capabilities"), capabilities},
+    };
+}
+
 bool validate_artifact(
     const QString& canonical_root,
     const QString& expected_directory,
@@ -1727,7 +1839,7 @@ bool validate_runtime_manifest(
     const auto expected_cxx_identity = QString::fromLatin1(QCryptographicHash::hash(
         identity.cxx_identity, QCryptographicHash::Sha256).toHex());
     if (manifest.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.runtime-modules")
-        || manifest.value(QStringLiteral("formatVersion")).toInt(-1) != 1
+        || manifest.value(QStringLiteral("formatVersion")).toInt(-1) != 2
         || manifest.value(QStringLiteral("buildHash")).toString() != identity.build_hash
         || manifest.value(QStringLiteral("platform")).toString() != platform_name()
         || manifest.value(QStringLiteral("architecture")).toString() != architecture_name()
@@ -1753,6 +1865,8 @@ bool validate_runtime_manifest(
     QHash<QString, QString> expected_managed_modules;
     QHash<QString, QString> expected_native_modules;
     QHash<QString, QString> expected_sources;
+    QHash<QString, QString> expected_tile_extensions;
+    QHash<QString, QStringList> expected_tile_extension_capabilities;
     for (const auto& component : model.components)
     {
         if (component.language == QStringLiteral("csharp"))
@@ -1766,6 +1880,12 @@ bool validate_runtime_manifest(
             expected_native_modules.insert(component.type_id, component.module_id);
         }
         expected_sources.insert(component.type_id, component.source_relative);
+        if (!component.tile_extension_id.isEmpty())
+        {
+            expected_tile_extensions.insert(component.type_id, component.tile_extension_id);
+            expected_tile_extension_capabilities.insert(
+                component.type_id, component.tile_extension_capabilities);
+        }
     }
     QSet<QString> actual_managed;
     const auto managed_modules = manifest.value(QStringLiteral("managedModules")).toArray();
@@ -1817,6 +1937,7 @@ bool validate_runtime_manifest(
         const auto module = value.toObject();
         const auto component = module.value(QStringLiteral("component")).toObject();
         const auto type_id = component.value(QStringLiteral("typeId")).toString();
+        const auto extension = module.value(QStringLiteral("tileExtension"));
         QString artifact;
         if (!module.value(QStringLiteral("component")).isObject()
             || !expected_native.contains(type_id) || actual_native.contains(type_id)
@@ -1829,6 +1950,32 @@ bool validate_runtime_manifest(
         {
             if (error.isEmpty()) error = QStringLiteral("Native runtime component metadata is invalid or stale.");
             return false;
+        }
+        const auto expected_extension_id = expected_tile_extensions.value(type_id);
+        if (expected_extension_id.isEmpty() != extension.isUndefined())
+        {
+            error = QStringLiteral("Native runtime tile-extension declaration is missing or unexpected.");
+            return false;
+        }
+        if (!expected_extension_id.isEmpty())
+        {
+            const auto extension_object = extension.toObject();
+            QStringList capabilities;
+            for (const auto& capability_value : extension_object.value(QStringLiteral("capabilities")).toArray())
+                capabilities.push_back(capability_value.toString());
+            std::sort(capabilities.begin(), capabilities.end());
+            auto expected_capabilities = expected_tile_extension_capabilities.value(type_id);
+            std::sort(expected_capabilities.begin(), expected_capabilities.end());
+            const auto extension_keys = extension_object.keys();
+            if (!extension.isObject()
+                || QSet<QString>{extension_keys.cbegin(), extension_keys.cend()}
+                    != QSet<QString>{QStringLiteral("pluginId"), QStringLiteral("capabilities")}
+                || extension_object.value(QStringLiteral("pluginId")).toString() != expected_extension_id
+                || capabilities != expected_capabilities)
+            {
+                error = QStringLiteral("Native runtime tile-extension identity or capabilities are stale.");
+                return false;
+            }
         }
         actual_native.insert(type_id);
     }
@@ -2360,19 +2507,22 @@ ComponentBuildResult ComponentModuleService::build(
                 result.error = error;
                 return result;
             }
-            native_modules.push_back(QJsonObject{
+            QJsonObject native_module{
                 {QStringLiteral("path"), artifact},
                 {QStringLiteral("sha256"), QString::fromLatin1(
                     QCryptographicHash::hash(artifact_bytes, QCryptographicHash::Sha256).toHex())},
                 {QStringLiteral("component"), runtime_component(component)},
-            });
+            };
+            if (!component.tile_extension_id.isEmpty())
+                native_module.insert(QStringLiteral("tileExtension"), runtime_tile_extension(component));
+            native_modules.push_back(native_module);
         }
 
         QJsonArray declared_roots;
         for (const auto& declared : roots) declared_roots.push_back(declared.declared);
         const QJsonObject runtime_manifest{
             {QStringLiteral("format"), QStringLiteral("dpe.runtime-modules")},
-            {QStringLiteral("formatVersion"), 1},
+            {QStringLiteral("formatVersion"), 2},
             {QStringLiteral("buildHash"), result.build_hash},
             {QStringLiteral("platform"), platform_name()},
             {QStringLiteral("architecture"), architecture_name()},

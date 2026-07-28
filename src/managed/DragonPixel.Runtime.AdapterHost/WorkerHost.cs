@@ -507,7 +507,7 @@ public static class WorkerHost
             throw new InvalidDataException("loadSnapshot requires params.snapshotPath.");
         }
         var requestedRevision = request["params"]?["snapshotRevision"]?.GetValue<long>() ?? 0;
-        var parsed = SceneSnapshotParser.Parse(snapshotPath, requestedRevision);
+        var parsed = state.ParseSnapshot(snapshotPath, requestedRevision);
         state.ReplaceSnapshot(parsed, snapshotPath);
         return new JsonObject
         {
@@ -822,6 +822,9 @@ public static class WorkerHost
 
         public void UpdateFramePacing(FramePacingCounters counters) =>
             Volatile.Write(ref _framePacing, counters);
+
+        public ParsedSceneSnapshot ParseSnapshot(string path, long requestedRevision) =>
+            SceneSnapshotParser.Parse(path, requestedRevision, _projectComponents);
 
         public void ReplaceSnapshot(ParsedSceneSnapshot parsed, string snapshotPath)
         {

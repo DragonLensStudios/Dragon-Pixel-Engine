@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DragonPixel.Contracts;
 
@@ -21,7 +22,10 @@ internal static class SceneSnapshotParser
     private const string TilemapType = "eea820b4-79e4-4dd6-86f8-04c93c3486fb";
     private const string InputMotion2DType = "64348aba-c5a4-42fc-86e6-e99f9640e36d";
 
-    public static ParsedSceneSnapshot Parse(string path, long requestedRevision)
+    public static ParsedSceneSnapshot Parse(
+        string path,
+        long requestedRevision,
+        ProjectComponentRuntime? projectRuntime = null)
     {
         var bytes = File.ReadAllBytes(path);
         using var document = JsonDocument.Parse(bytes);
@@ -69,7 +73,8 @@ internal static class SceneSnapshotParser
         {
             throw new InvalidDataException($"Runtime snapshot version {snapshotFormatVersion} was unsupported.");
         }
-        var runtimeTilemaps = ReadRuntimeTilemaps(root, snapshotFormatVersion, diagnostics);
+        var runtimeTilemaps = ReadRuntimeTilemaps(
+            root, snapshotFormatVersion, diagnostics, projectRuntime);
         var entities = new List<RenderEntity>();
         var entityIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entityElement in entityArray.EnumerateArray())
@@ -322,7 +327,9 @@ internal static class SceneSnapshotParser
         float AnimationStartTime,
         int AnimationStartFrame,
         bool AnimationLoopOnce,
-        bool AnimationPaused);
+        bool AnimationPaused,
+        string CustomTypeId,
+        string CustomPayloadJson);
 
     private static IReadOnlyDictionary<string, RenderAsset> ReadRuntimeAssets(
         JsonElement root,
@@ -389,7 +396,8 @@ internal static class SceneSnapshotParser
     private static IReadOnlyDictionary<string, RenderTilemap> ReadRuntimeTilemaps(
         JsonElement root,
         int snapshotFormatVersion,
-        List<string> diagnostics)
+        List<string> diagnostics,
+        ProjectComponentRuntime? projectRuntime)
     {
         var sets = new Dictionary<string, RuntimeTileSet>(StringComparer.Ordinal);
         if (root.TryGetProperty("tileSets", out var tileSets) && tileSets.ValueKind == JsonValueKind.Array)
@@ -459,6 +467,8 @@ internal static class SceneSnapshotParser
                         var startFrame = 0;
                         var loopOnce = false;
                         var paused = false;
+                        var customTypeId = string.Empty;
+                        var customPayloadJson = "{}";
                         if (snapshotFormatVersion >= 5
                             && tile.TryGetProperty("animation", out var animation)
                             && animation.ValueKind == JsonValueKind.Object)
@@ -490,6 +500,15 @@ internal static class SceneSnapshotParser
                                 }
                             }
                         }
+                        if (snapshotFormatVersion >= 5
+                            && ReadString(tile, "kind", "basic") == "custom"
+                            && tile.TryGetProperty("custom", out var custom)
+                            && custom.ValueKind == JsonValueKind.Object)
+                        {
+                            customTypeId = ReadString(custom, "typeId", string.Empty);
+                            if (custom.TryGetProperty("payload", out var payload))
+                                customPayloadJson = payload.GetRawText();
+                        }
                         definitions[tileId] = new RuntimeTileDefinition(
                             new RenderColor(
                                 0.25f + (hash[0] / 255.0f * 0.7f),
@@ -501,7 +520,8 @@ internal static class SceneSnapshotParser
                             ReadInt(source, snapshotFormatVersion >= 5 ? "y" : "sourceY", 0),
                             Math.Max(1, ReadInt(source, snapshotFormatVersion >= 5 ? "width" : "sourceWidth", 1)),
                             Math.Max(1, ReadInt(source, snapshotFormatVersion >= 5 ? "height" : "sourceHeight", 1)),
-                            animationFrames, minimumSpeed, maximumSpeed, startTime, startFrame, loopOnce, paused);
+                            animationFrames, minimumSpeed, maximumSpeed, startTime, startFrame, loopOnce, paused,
+                            customTypeId, customPayloadJson);
                     }
                 }
                 sets.Add(id, new RuntimeTileSet(id, textures, cellWidth, cellHeight, definitions));
@@ -563,6 +583,7 @@ internal static class SceneSnapshotParser
             {
                 foreach (var layer in layerValues.EnumerateArray())
                 {
+                    var layerId = OptionalString(layer, "layerId") ?? string.Empty;
                     var cells = new List<RenderTileCell>();
                     if (layer.TryGetProperty("cells", out var cellValues) && cellValues.ValueKind == JsonValueKind.Array)
                     {
@@ -581,8 +602,11 @@ internal static class SceneSnapshotParser
                             {
                                 diagnostics.Add($"Tilemap {id} retained missing tile id {resolvedTileId}.");
                                 tile = new RuntimeTileDefinition(new RenderColor(1, 0, 1, 1), string.Empty,
-                                    0, 0, 1, 1, Array.Empty<RenderTileAnimationFrame>(), 1, 1, 0, 0, false, false);
+                                    0, 0, 1, 1, Array.Empty<RenderTileAnimationFrame>(), 1, 1, 0, 0, false, false,
+                                    string.Empty, "{}");
                             }
+                            var cellX = ReadInt(cell, "x", 0);
+                            var cellY = ReadInt(cell, "y", 0);
                             var sourceX = tile.SourceX;
                             var sourceY = tile.SourceY;
                             var sourceWidth = tile.SourceWidth;
@@ -605,28 +629,122 @@ internal static class SceneSnapshotParser
                                 && offsetValue.ValueKind == JsonValueKind.Object ? offsetValue : cell;
                             var scale = cell.TryGetProperty("scale", out var scaleValue)
                                 && scaleValue.ValueKind == JsonValueKind.Object ? scaleValue : cell;
+                            var flipX = OptionalBool(cell, "flipX", false);
+                            var flipY = OptionalBool(cell, "flipY", false);
+                            var rotationDegrees = ReadFloat(cell, "rotationDegrees", 0);
+                            var offsetX = ReadFloat(offset, "x", 0);
+                            var offsetY = ReadFloat(offset, "y", 0);
+                            var scaleX = ReadFloat(scale, "x", 1);
+                            var scaleY = ReadFloat(scale, "y", 1);
+                            var elevation = ReadInt(cell, "elevation", 0);
+                            var placeholder = OptionalBool(cell, "placeholder", false);
+                            var color = ReadColor(cell, "tint", placeholder
+                                ? new RenderColor(1, 0, 1, 1)
+                                : textures.ContainsKey(renderTextureAssetId) ? RenderColor.White : tile.Color);
+                            if (!string.IsNullOrWhiteSpace(tile.CustomTypeId))
+                            {
+                                if (projectRuntime is null)
+                                {
+                                    diagnostics.Add(
+                                        $"Custom tile {tileId} requires unavailable extension {tile.CustomTypeId}; opaque data was preserved.");
+                                }
+                                else
+                                {
+                                    var context = new TileExtensionContext(
+                                        cellX, cellY, elevation, checked((uint)layout),
+                                        StableTileExtensionSeed(id, layerId, cellX, cellY, tile.CustomTypeId),
+                                        0.0, id, layerId, tileSetId, tileId,
+                                        tile.CustomPayloadJson, "{}");
+                                    var evaluated = projectRuntime.EvaluateTiles(tile.CustomTypeId, [context])[0];
+                                    if (evaluated.Succeeded)
+                                    {
+                                        using var extensionDocument = JsonDocument.Parse(evaluated.ResultJson);
+                                        var extension = extensionDocument.RootElement;
+                                        color = ReadColor(extension, "tint", color);
+                                        flipX = OptionalBool(extension, "flipX", flipX);
+                                        flipY = OptionalBool(extension, "flipY", flipY);
+                                        rotationDegrees = ReadFloat(extension, "rotationDegrees", rotationDegrees);
+                                        elevation = ReadInt(extension, "elevation", elevation);
+                                        if (extension.TryGetProperty("offset", out var extensionOffset)
+                                            && extensionOffset.ValueKind == JsonValueKind.Object)
+                                        {
+                                            offsetX = ReadFloat(extensionOffset, "x", offsetX);
+                                            offsetY = ReadFloat(extensionOffset, "y", offsetY);
+                                        }
+                                        if (extension.TryGetProperty("scale", out var extensionScale)
+                                            && extensionScale.ValueKind == JsonValueKind.Object)
+                                        {
+                                            scaleX = ReadFloat(extensionScale, "x", scaleX);
+                                            scaleY = ReadFloat(extensionScale, "y", scaleY);
+                                        }
+                                        if (OptionalString(extension, "tileSetId") is { } extensionSetId
+                                            && OptionalString(extension, "tileId") is { } extensionTileId)
+                                        {
+                                            var outputSetId = CanonicalId(extensionSetId,
+                                                "tile-extension output TileSet id");
+                                            var outputTileId = CanonicalId(extensionTileId,
+                                                "tile-extension output tile id");
+                                            var outputSet = mapSets.FirstOrDefault(candidate => candidate.AssetId == outputSetId);
+                                            if (outputSet is not null
+                                                && outputSet.Tiles.TryGetValue(outputTileId, out var outputTile))
+                                            {
+                                                tile = outputTile;
+                                                renderTextureAssetId = tile.TextureAssetId;
+                                                sourceX = tile.SourceX;
+                                                sourceY = tile.SourceY;
+                                                sourceWidth = tile.SourceWidth;
+                                                sourceHeight = tile.SourceHeight;
+                                            }
+                                            else
+                                            {
+                                                diagnostics.Add(
+                                                    $"Tile extension {tile.CustomTypeId} proposed an unresolved tile output; the source tile was retained.");
+                                            }
+                                        }
+                                        if (extension.TryGetProperty("sprite", out var extensionSprite)
+                                            && extensionSprite.ValueKind == JsonValueKind.Object)
+                                        {
+                                            if (OptionalString(extensionSprite, "textureAssetId") is { } extensionTexture)
+                                                renderTextureAssetId = CanonicalId(extensionTexture,
+                                                    "tile-extension sprite texture id");
+                                            var extensionSource = extensionSprite.TryGetProperty("source", out var valueSource)
+                                                && valueSource.ValueKind == JsonValueKind.Object
+                                                    ? valueSource : extensionSprite;
+                                            sourceX = ReadInt(extensionSource, "x", sourceX);
+                                            sourceY = ReadInt(extensionSource, "y", sourceY);
+                                            sourceWidth = Math.Max(1, ReadInt(extensionSource, "width", sourceWidth));
+                                            sourceHeight = Math.Max(1, ReadInt(extensionSource, "height", sourceHeight));
+                                        }
+                                        placeholder = false;
+                                    }
+                                    else
+                                    {
+                                        diagnostics.Add(
+                                            $"Custom tile {tileId} extension {tile.CustomTypeId} was disabled for this cell: "
+                                            + $"{evaluated.ErrorCode} {evaluated.ErrorMessage}");
+                                    }
+                                }
+                            }
                             cells.Add(new RenderTileCell(
-                                ReadInt(cell, "x", 0),
-                                ReadInt(cell, "y", 0),
+                                cellX,
+                                cellY,
                                 tileSetId,
                                 tileId,
-                                ReadColor(cell, "tint", OptionalBool(cell, "placeholder", false)
-                                    ? new RenderColor(1, 0, 1, 1)
-                                    : textures.ContainsKey(renderTextureAssetId) ? RenderColor.White : tile.Color),
+                                color,
                                 renderTextureAssetId,
                                 sourceX,
                                 sourceY,
                                 sourceWidth,
                                 sourceHeight,
-                                OptionalBool(cell, "flipX", false),
-                                OptionalBool(cell, "flipY", false),
+                                flipX,
+                                flipY,
                                 Math.Clamp(ReadInt(cell, "rotationQuarterTurns", 0), 0, 3),
-                                ReadFloat(cell, "rotationDegrees", 0),
-                                ReadFloat(offset, "x", 0),
-                                ReadFloat(offset, "y", 0),
-                                ReadFloat(scale, "x", 1),
-                                ReadFloat(scale, "y", 1),
-                                ReadInt(cell, "elevation", 0),
+                                rotationDegrees,
+                                offsetX,
+                                offsetY,
+                                scaleX,
+                                scaleY,
+                                elevation,
                                 OptionalBool(cell, "lockColor", false),
                                 OptionalBool(cell, "lockTransform", false),
                                 tile.AnimationFrames,
@@ -692,6 +810,18 @@ internal static class SceneSnapshotParser
             throw new InvalidDataException($"Invalid {field}: {value}.");
         }
         return id.ToString("D");
+    }
+
+    private static ulong StableTileExtensionSeed(
+        string mapId,
+        string layerId,
+        int x,
+        int y,
+        string typeId)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{mapId}\n{layerId}\n{x}\n{y}\n{typeId}"));
+        return System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(bytes);
     }
 
     private static string RequiredString(JsonElement element, string name) =>

@@ -1,12 +1,40 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using DragonPixel.Contracts;
 using NumericsQuaternion = System.Numerics.Quaternion;
 using NumericsVector3 = System.Numerics.Vector3;
 
 namespace DragonPixel.Runtime;
+
+internal sealed record TileExtensionContext(
+    int CellX,
+    int CellY,
+    int Elevation,
+    uint Layout,
+    ulong DeterministicSeed,
+    double ElapsedSeconds,
+    string MapId,
+    string LayerId,
+    string TileSetId,
+    string TileId,
+    string PayloadJson,
+    string NeighborhoodJson);
+
+internal sealed record TileExtensionEvaluationResult(
+    bool Succeeded,
+    string ResultJson,
+    string ErrorCode,
+    string ErrorMessage);
+
+internal sealed record TileExtensionBrushProposal(
+    bool Succeeded,
+    string ResultJson,
+    int CommandCount,
+    string ErrorCode,
+    string ErrorMessage);
 
 internal sealed class ProjectComponentRuntime : IDisposable
 {
@@ -36,6 +64,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
     private readonly object _gate = new();
     private Dictionary<string, IProjectComponentFactory> _managedFactories = new(StringComparer.Ordinal);
     private Dictionary<string, NativePlugin> _nativePlugins = new(StringComparer.Ordinal);
+    private Dictionary<string, TileExtensionPlugin> _tileExtensions = new(StringComparer.Ordinal);
     private readonly List<IRuntimeInstance> _instances = new();
     private Dictionary<string, DragonPixel.Contracts.Transform> _managedTransforms = new(StringComparer.Ordinal);
     private Dictionary<string, ManagedTransformOrigin> _managedTransformOrigins = new(StringComparer.Ordinal);
@@ -91,6 +120,70 @@ internal sealed class ProjectComponentRuntime : IDisposable
             {
                 return _instances.Count;
             }
+        }
+    }
+
+    public int TileExtensionCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _tileExtensions.Count;
+            }
+        }
+    }
+
+    public IReadOnlyList<TileExtensionEvaluationResult> EvaluateTiles(
+        string pluginId,
+        IReadOnlyList<TileExtensionContext> contexts)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        TileExtensionPlugin? extension;
+        lock (_gate) _tileExtensions.TryGetValue(pluginId, out extension);
+        if (extension is null)
+        {
+            return contexts.Select(static _ => new TileExtensionEvaluationResult(
+                false, string.Empty, "DPE-TILE-EXT-UNAVAILABLE",
+                "The requested tile extension is missing or incompatible.")).ToArray();
+        }
+        try
+        {
+            return extension.Evaluate(contexts);
+        }
+        catch (Exception exception)
+        {
+            AddDiagnostic(ProjectComponentDiagnosticSeverity.Error,
+                $"Tile extension {pluginId} evaluation was disabled for this request: {exception.Message}");
+            return contexts.Select(_ => new TileExtensionEvaluationResult(
+                false, string.Empty, "DPE-TILE-EXT-EVALUATION-FAILED", exception.Message)).ToArray();
+        }
+    }
+
+    public TileExtensionBrushProposal ProposeBrush(
+        string pluginId,
+        TileExtensionContext context,
+        string requestJson)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        TileExtensionPlugin? extension;
+        lock (_gate) _tileExtensions.TryGetValue(pluginId, out extension);
+        if (extension is null)
+        {
+            return new TileExtensionBrushProposal(false, string.Empty, 0,
+                "DPE-TILE-EXT-UNAVAILABLE",
+                "The requested tile extension is missing or incompatible.");
+        }
+        try
+        {
+            return extension.ProposeBrush(context, requestJson);
+        }
+        catch (Exception exception)
+        {
+            AddDiagnostic(ProjectComponentDiagnosticSeverity.Error,
+                $"Tile extension {pluginId} brush proposal was rejected: {exception.Message}");
+            return new TileExtensionBrushProposal(false, string.Empty, 0,
+                "DPE-TILE-EXT-PROPOSAL-FAILED", exception.Message);
         }
     }
 
@@ -302,6 +395,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
             _instances.Clear();
             foreach (var plugin in _nativePlugins.Values) plugin.Dispose();
             _nativePlugins = new Dictionary<string, NativePlugin>(StringComparer.Ordinal);
+            _tileExtensions = new Dictionary<string, TileExtensionPlugin>(StringComparer.Ordinal);
             _managedFactories = new Dictionary<string, IProjectComponentFactory>(StringComparer.Ordinal);
             _disposed = true;
         }
@@ -355,6 +449,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
         var manifest = ValidateManifest(manifestPath);
         var managedFactories = new Dictionary<string, IProjectComponentFactory>(StringComparer.Ordinal);
         var nativePlugins = new Dictionary<string, NativePlugin>(StringComparer.Ordinal);
+        var tileExtensions = new Dictionary<string, TileExtensionPlugin>(StringComparer.Ordinal);
         try
         {
             foreach (var module in manifest.ManagedModules)
@@ -400,6 +495,15 @@ internal sealed class ProjectComponentRuntime : IDisposable
                     throw new InvalidDataException(
                         $"Duplicate native component type ID {module.Component.TypeId}.");
                 }
+                if (module.TileExtension is { } declaredExtension)
+                {
+                    var extension = plugin.LoadTileExtension(declaredExtension);
+                    if (!tileExtensions.TryAdd(declaredExtension.PluginId, extension))
+                    {
+                        throw new InvalidDataException(
+                            $"Duplicate tile-extension plugin ID {declaredExtension.PluginId}.");
+                    }
+                }
                 ValidateArtifactCurrent(module.Path, module.Sha256, manifest.CacheRoot);
             }
 
@@ -408,6 +512,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _managedFactories = managedFactories;
                 _nativePlugins = nativePlugins;
+                _tileExtensions = tileExtensions;
             }
         }
         catch
@@ -421,7 +526,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
         }
         AddDiagnostic(ProjectComponentDiagnosticSeverity.Info,
             $"Validated build {manifest.BuildHash} and loaded {manifest.ComponentCount} "
-            + "worker-only project component factory/factories.");
+            + $"worker-only project component factory/factories plus {tileExtensions.Count} tile extension(s).");
     }
 
     private static ValidatedManifest ValidateManifest(string manifestPath)
@@ -443,8 +548,9 @@ internal sealed class ProjectComponentRuntime : IDisposable
             "configuration", "generatorIdentity", "contractsSha256", "componentRoots",
             "toolIdentities", "managedModules", "nativeModules",
         ]);
+        var formatVersion = RequireInt32(root, "formatVersion", "runtime-module manifest");
         if (RequireString(root, "format", "runtime-module manifest") != "dpe.runtime-modules"
-            || RequireInt32(root, "formatVersion", "runtime-module manifest") != 1)
+            || formatVersion is not (1 or 2))
         {
             throw new InvalidDataException("Unsupported project runtime-module manifest.");
         }
@@ -461,9 +567,11 @@ internal sealed class ProjectComponentRuntime : IDisposable
             buildHash,
             $"{platform}-{architecture}");
         ValidateManifestPlacement(manifestFile.FullName, cacheRoot, expectedBuildDirectory);
+        var expectedGeneratorIdentity = formatVersion == 1
+            ? "dpe-component-generator-v2" : "dpe-component-generator-v3";
         if (RequireString(root, "configuration", "runtime-module manifest") != "Release"
             || RequireString(root, "generatorIdentity", "runtime-module manifest")
-                != "dpe-component-generator-v2")
+                != expectedGeneratorIdentity)
         {
             throw new InvalidDataException("Runtime-module configuration or generator identity is unsupported.");
         }
@@ -484,7 +592,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
         var artifactPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var managedModules = ParseManagedModules(root.GetProperty("managedModules"), cacheRoot,
             expectedBuildDirectory, componentRoots, typeIds, moduleIds, sourcePaths, artifactPaths);
-        var nativeModules = ParseNativeModules(root.GetProperty("nativeModules"), cacheRoot,
+        var nativeModules = ParseNativeModules(root.GetProperty("nativeModules"), formatVersion, cacheRoot,
             expectedBuildDirectory, componentRoots, typeIds, moduleIds, sourcePaths, artifactPaths);
         if (managedModules.Count == 0 && nativeModules.Count == 0)
         {
@@ -530,6 +638,7 @@ internal sealed class ProjectComponentRuntime : IDisposable
 
     private static IReadOnlyList<ValidatedNativeModule> ParseNativeModules(
         JsonElement value,
+        int formatVersion,
         string cacheRoot,
         string expectedBuildDirectory,
         IReadOnlyList<string> componentRoots,
@@ -545,14 +654,50 @@ internal sealed class ProjectComponentRuntime : IDisposable
             : OperatingSystem.IsMacOS() ? ".dylib" : ".so";
         foreach (var module in value.EnumerateArray())
         {
-            RequireExactProperties(module, "native module", ["path", "sha256", "component"]);
+            var hasTileExtension = module.TryGetProperty("tileExtension", out var tileExtensionValue);
+            RequireExactProperties(module, "native module", hasTileExtension && formatVersion >= 2
+                ? ["path", "sha256", "component", "tileExtension"]
+                : ["path", "sha256", "component"]);
+            if (hasTileExtension && formatVersion < 2)
+                throw new InvalidDataException("Runtime-module manifest v1 cannot declare tile extensions.");
             var path = ParseArtifact(module, cacheRoot,
                 Path.Combine(expectedBuildDirectory, "native"), extension, artifactPaths, "native module");
             var component = ParseComponent(module.GetProperty("component"), ".cpp", componentRoots,
                 typeIds, moduleIds, sourcePaths, "native component");
-            modules.Add(new ValidatedNativeModule(path, RequireSha256(module, "sha256", "native module"), component));
+            var tileExtension = hasTileExtension
+                ? ParseTileExtension(tileExtensionValue) : null;
+            modules.Add(new ValidatedNativeModule(path,
+                RequireSha256(module, "sha256", "native module"), component, tileExtension));
         }
         return modules;
+    }
+
+    private static ValidatedTileExtension ParseTileExtension(JsonElement value)
+    {
+        RequireExactProperties(value, "tile extension", ["pluginId", "capabilities"]);
+        var pluginId = RequireString(value, "pluginId", "tile extension");
+        if (!IsStablePluginId(pluginId))
+            throw new InvalidDataException("Tile-extension pluginId is not a stable portable identifier.");
+        if (!value.TryGetProperty("capabilities", out var capabilitiesValue)
+            || capabilitiesValue.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Tile-extension capabilities must be an array.");
+        uint capabilities = 0;
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in capabilitiesValue.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || item.GetString() is not { } name
+                || !names.Add(name))
+                throw new InvalidDataException("Tile-extension capabilities contain a malformed duplicate.");
+            capabilities |= name switch
+            {
+                "evaluate-tiles" => TileExtensionPlugin.EvaluateCapability,
+                "propose-brush" => TileExtensionPlugin.BrushCapability,
+                _ => throw new InvalidDataException($"Unsupported tile-extension capability {name}."),
+            };
+        }
+        if (capabilities == 0)
+            throw new InvalidDataException("Tile extension must declare at least one capability.");
+        return new ValidatedTileExtension(pluginId, capabilities);
     }
 
     private static ValidatedComponent ParseComponent(
@@ -795,6 +940,12 @@ internal sealed class ProjectComponentRuntime : IDisposable
         value.Length == 64 && value.All(character =>
             (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f'));
 
+    private static bool IsStablePluginId(string value) => value.Length is >= 3 and <= 128
+        && value[0] is >= 'a' and <= 'z'
+        && value[^1] is not '.' and not '-'
+        && value.All(character => character is >= 'a' and <= 'z'
+            || character is >= '0' and <= '9' || character is '.' or '-');
+
     private static string RequireSha256(JsonElement value, string propertyName, string context)
     {
         var result = RequireString(value, propertyName, context);
@@ -855,7 +1006,8 @@ internal sealed class ProjectComponentRuntime : IDisposable
     private sealed record ValidatedManagedModule(
         string Path, string Sha256, IReadOnlyList<ValidatedComponent> Components);
     private sealed record ValidatedNativeModule(
-        string Path, string Sha256, ValidatedComponent Component);
+        string Path, string Sha256, ValidatedComponent Component, ValidatedTileExtension? TileExtension);
+    private sealed record ValidatedTileExtension(string PluginId, uint Capabilities);
     private sealed record ValidatedManifest(
         string CacheRoot,
         string BuildHash,
@@ -1007,6 +1159,19 @@ internal sealed class ProjectComponentRuntime : IDisposable
     private delegate IntPtr LastErrorDelegate(IntPtr handle);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void NativeDiagnosticDelegate(IntPtr user, int severity, IntPtr message, nuint length);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int EvaluateTilesDelegate(
+        [In] NativeTileExtensionContext[] contexts,
+        nuint contextCount,
+        [In, Out] NativeTileExtensionResult[] results,
+        nuint resultCount);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int ProposeBrushDelegate(
+        ref NativeTileExtensionContext context,
+        NativeTileExtensionString request,
+        out NativeTileExtensionResult result);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void ReleaseTileExtensionStringDelegate(NativeTileExtensionString value);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeApi
@@ -1031,6 +1196,54 @@ internal sealed class ProjectComponentRuntime : IDisposable
         public IntPtr SetProperties;
         public IntPtr DispatchLifecycle;
         public IntPtr LastError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeTileExtensionString
+    {
+        public IntPtr Data;
+        public nuint Length;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeTileExtensionContext
+    {
+        public uint StructSize;
+        public int CellX;
+        public int CellY;
+        public int Elevation;
+        public uint Layout;
+        public ulong DeterministicSeed;
+        public double ElapsedSeconds;
+        public NativeTileExtensionString MapId;
+        public NativeTileExtensionString LayerId;
+        public NativeTileExtensionString TileSetId;
+        public NativeTileExtensionString TileId;
+        public NativeTileExtensionString PayloadJson;
+        public NativeTileExtensionString NeighborhoodJson;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeTileExtensionResult
+    {
+        public uint StructSize;
+        public int Status;
+        public NativeTileExtensionString ResultJson;
+        public NativeTileExtensionString ErrorCode;
+        public NativeTileExtensionString ErrorMessage;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeTileExtensionApi
+    {
+        public uint AbiVersion;
+        public uint StructSize;
+        public uint Capabilities;
+        public uint Reserved;
+        public NativeTileExtensionString PluginId;
+        public IntPtr EvaluateTiles;
+        public IntPtr ProposeBrush;
+        public IntPtr ReleaseString;
     }
 
     private enum NativeLifecyclePhase
@@ -1134,6 +1347,31 @@ internal sealed class ProjectComponentRuntime : IDisposable
             Action<ProjectComponentDiagnosticSeverity, string> diagnostic) =>
             new(this, entityId, properties, diagnostic);
 
+        public TileExtensionPlugin LoadTileExtension(ValidatedTileExtension expected)
+        {
+            if (!NativeLibrary.TryGetExport(
+                    _library, "dpe_tile_extension_plugin_get_v1", out var getApiPointer))
+                throw new InvalidDataException(
+                    $"Native module declared tile extension {expected.PluginId} but exports no v1 API.");
+            var getApi = Marshal.GetDelegateForFunctionPointer<GetApiDelegate>(getApiPointer);
+            var pointer = getApi();
+            if (pointer == IntPtr.Zero)
+                throw new InvalidDataException("Tile-extension v1 API pointer is null.");
+            var api = Marshal.PtrToStructure<NativeTileExtensionApi>(pointer);
+            var pluginId = ReadNativeString(api.PluginId, 128, "tile-extension plugin ID");
+            if (api.AbiVersion != 1
+                || api.StructSize < checked((uint)Marshal.SizeOf<NativeTileExtensionApi>())
+                || api.Reserved != 0
+                || !StringComparer.Ordinal.Equals(pluginId, expected.PluginId)
+                || api.Capabilities != expected.Capabilities
+                || api.ReleaseString == IntPtr.Zero)
+            {
+                throw new InvalidDataException(
+                    "Tile-extension ABI, size, identity, capabilities, or reserved fields do not match its manifest.");
+            }
+            return new TileExtensionPlugin(api, pluginId);
+        }
+
         public void Dispose() => NativeLibrary.Free(_library);
 
         public IntPtr CreateHandle(IntPtr entity, NativeDiagnosticDelegate diagnostic) => _create(entity, diagnostic, IntPtr.Zero);
@@ -1151,6 +1389,290 @@ internal sealed class ProjectComponentRuntime : IDisposable
                 : 0;
         }
         public string LastError(IntPtr handle) => Marshal.PtrToStringUTF8(_lastError(handle)) ?? "unknown native component error";
+    }
+
+    private sealed class TileExtensionPlugin
+    {
+        public const uint EvaluateCapability = 1U << 0;
+        public const uint BrushCapability = 1U << 1;
+        private const int MaximumBatch = 65_536;
+        private const int MaximumCommands = 1_048_576;
+        private const int MaximumInputBytes = 1024 * 1024;
+        private const int MaximumResultBytes = 1024 * 1024;
+
+        private readonly string _pluginId;
+        private readonly uint _capabilities;
+        private readonly EvaluateTilesDelegate? _evaluate;
+        private readonly ProposeBrushDelegate? _proposeBrush;
+        private readonly ReleaseTileExtensionStringDelegate _release;
+
+        public TileExtensionPlugin(NativeTileExtensionApi api, string pluginId)
+        {
+            _pluginId = pluginId;
+            _capabilities = api.Capabilities;
+            if ((_capabilities & EvaluateCapability) != 0)
+            {
+                if (api.EvaluateTiles == IntPtr.Zero)
+                    throw new InvalidDataException("Tile extension declared evaluation without an entry point.");
+                _evaluate = Marshal.GetDelegateForFunctionPointer<EvaluateTilesDelegate>(api.EvaluateTiles);
+            }
+            if ((_capabilities & BrushCapability) != 0)
+            {
+                if (api.ProposeBrush == IntPtr.Zero)
+                    throw new InvalidDataException("Tile extension declared brush proposals without an entry point.");
+                _proposeBrush = Marshal.GetDelegateForFunctionPointer<ProposeBrushDelegate>(api.ProposeBrush);
+            }
+            _release = Marshal.GetDelegateForFunctionPointer<ReleaseTileExtensionStringDelegate>(api.ReleaseString);
+        }
+
+        public IReadOnlyList<TileExtensionEvaluationResult> Evaluate(
+            IReadOnlyList<TileExtensionContext> contexts)
+        {
+            if (_evaluate is null)
+                return contexts.Select(_ => Failure("DPE-TILE-EXT-CAPABILITY-DENIED",
+                    $"Tile extension {_pluginId} does not declare tile evaluation.")).ToArray();
+            if (contexts.Count == 0 || contexts.Count > MaximumBatch)
+                throw new InvalidDataException($"Tile-extension batch must contain 1..{MaximumBatch} contexts.");
+            var leases = new List<NativeUtf8Lease>(contexts.Count * 6);
+            var nativeContexts = new NativeTileExtensionContext[contexts.Count];
+            var nativeResults = new NativeTileExtensionResult[contexts.Count];
+            try
+            {
+                for (var index = 0; index < contexts.Count; ++index)
+                    nativeContexts[index] = ToNativeContext(contexts[index], leases);
+                for (var index = 0; index < nativeResults.Length; ++index)
+                    nativeResults[index].StructSize = checked((uint)Marshal.SizeOf<NativeTileExtensionResult>());
+                var callStatus = _evaluate(nativeContexts, checked((nuint)nativeContexts.Length),
+                    nativeResults, checked((nuint)nativeResults.Length));
+                if (callStatus != 0)
+                    throw new InvalidDataException($"Tile-extension evaluation call returned status {callStatus}.");
+                var results = new TileExtensionEvaluationResult[nativeResults.Length];
+                for (var index = 0; index < nativeResults.Length; ++index)
+                    results[index] = ConsumeEvaluation(nativeResults[index]);
+                return results;
+            }
+            finally
+            {
+                foreach (var result in nativeResults) ReleaseResult(result);
+                foreach (var lease in leases) lease.Dispose();
+            }
+        }
+
+        public TileExtensionBrushProposal ProposeBrush(
+            TileExtensionContext context,
+            string requestJson)
+        {
+            if (_proposeBrush is null)
+                return new TileExtensionBrushProposal(false, string.Empty, 0,
+                    "DPE-TILE-EXT-CAPABILITY-DENIED",
+                    $"Tile extension {_pluginId} does not declare brush proposals.");
+            ValidateJsonInput(requestJson, "brush request");
+            var leases = new List<NativeUtf8Lease>(7);
+            var result = new NativeTileExtensionResult
+            {
+                StructSize = checked((uint)Marshal.SizeOf<NativeTileExtensionResult>()),
+            };
+            try
+            {
+                var nativeContext = ToNativeContext(context, leases);
+                var request = AddLease(requestJson, leases, "brush request");
+                var status = _proposeBrush(ref nativeContext, request, out result);
+                if (status != 0)
+                    throw new InvalidDataException($"Tile-extension brush call returned status {status}.");
+                if (result.StructSize < Marshal.SizeOf<NativeTileExtensionResult>())
+                    throw new InvalidDataException("Tile-extension brush result has an invalid size tag.");
+                if (result.Status != 0)
+                {
+                    return new TileExtensionBrushProposal(false, string.Empty, 0,
+                        ReadResultString(result.ErrorCode, 256, "error code"),
+                        ReadResultString(result.ErrorMessage, 4096, "error message"));
+                }
+                var json = ReadResultString(result.ResultJson, MaximumResultBytes, "brush result");
+                if (!TryValidateBrushProposal(json, out var count))
+                    return new TileExtensionBrushProposal(false, string.Empty, 0,
+                        "DPE-TILE-EXT-MALFORMED-PROPOSAL",
+                        "The tile extension returned an invalid or unbounded brush proposal.");
+                return new TileExtensionBrushProposal(true, json, count, string.Empty, string.Empty);
+            }
+            finally
+            {
+                ReleaseResult(result);
+                foreach (var lease in leases) lease.Dispose();
+            }
+        }
+
+        private TileExtensionEvaluationResult ConsumeEvaluation(NativeTileExtensionResult result)
+        {
+            if (result.StructSize < Marshal.SizeOf<NativeTileExtensionResult>())
+                return Failure("DPE-TILE-EXT-MALFORMED-RESULT", "The extension result size tag is invalid.");
+            if (result.Status != 0)
+            {
+                return Failure(ReadResultString(result.ErrorCode, 256, "error code"),
+                    ReadResultString(result.ErrorMessage, 4096, "error message"));
+            }
+            var json = ReadResultString(result.ResultJson, MaximumResultBytes, "evaluation result");
+            if (!TryValidateEvaluation(json))
+                return Failure("DPE-TILE-EXT-MALFORMED-RESULT",
+                    "The tile extension returned malformed evaluation JSON.");
+            return new TileExtensionEvaluationResult(true, json, string.Empty, string.Empty);
+        }
+
+        private static TileExtensionEvaluationResult Failure(string code, string message) =>
+            new(false, string.Empty, code, message);
+
+        private NativeTileExtensionContext ToNativeContext(
+            TileExtensionContext context,
+            List<NativeUtf8Lease> leases)
+        {
+            ValidateJsonInput(context.PayloadJson, "custom payload");
+            ValidateJsonInput(context.NeighborhoodJson, "tile neighborhood");
+            return new NativeTileExtensionContext
+            {
+                StructSize = checked((uint)Marshal.SizeOf<NativeTileExtensionContext>()),
+                CellX = context.CellX,
+                CellY = context.CellY,
+                Elevation = context.Elevation,
+                Layout = context.Layout,
+                DeterministicSeed = context.DeterministicSeed,
+                ElapsedSeconds = context.ElapsedSeconds,
+                MapId = AddLease(context.MapId, leases, "map ID"),
+                LayerId = AddLease(context.LayerId, leases, "layer ID"),
+                TileSetId = AddLease(context.TileSetId, leases, "TileSet ID"),
+                TileId = AddLease(context.TileId, leases, "tile ID"),
+                PayloadJson = AddLease(context.PayloadJson, leases, "custom payload"),
+                NeighborhoodJson = AddLease(context.NeighborhoodJson, leases, "tile neighborhood"),
+            };
+        }
+
+        private static NativeTileExtensionString AddLease(
+            string value,
+            List<NativeUtf8Lease> leases,
+            string context)
+        {
+            var byteCount = Encoding.UTF8.GetByteCount(value);
+            if (byteCount > MaximumInputBytes)
+                throw new InvalidDataException($"Tile-extension {context} exceeds {MaximumInputBytes} UTF-8 bytes.");
+            var lease = new NativeUtf8Lease(value, byteCount);
+            leases.Add(lease);
+            return lease.Value;
+        }
+
+        private static void ValidateJsonInput(string value, string context)
+        {
+            if (Encoding.UTF8.GetByteCount(value) > MaximumInputBytes)
+                throw new InvalidDataException($"Tile-extension {context} exceeds the input limit.");
+            try { using var _ = JsonDocument.Parse(value, JsonOptions); }
+            catch (JsonException exception)
+            {
+                throw new InvalidDataException($"Tile-extension {context} is malformed JSON.", exception);
+            }
+        }
+
+        private static bool TryValidateEvaluation(string json)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json, JsonOptions);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return false;
+                var allowed = new HashSet<string>(
+                    ["tileSetId", "tileId", "sprite", "tint", "flipX", "flipY",
+                     "rotationDegrees", "scale", "offset", "elevation"], StringComparer.Ordinal);
+                foreach (var property in root.EnumerateObject())
+                    if (!allowed.Remove(property.Name)) return false;
+                if (root.TryGetProperty("tileSetId", out var setId)
+                    && (setId.ValueKind != JsonValueKind.String
+                        || !IsCanonicalUuidV4(setId.GetString() ?? string.Empty))) return false;
+                if (root.TryGetProperty("tileId", out var tileId)
+                    && (tileId.ValueKind != JsonValueKind.String
+                        || !IsCanonicalUuidV4(tileId.GetString() ?? string.Empty))) return false;
+                return true;
+            }
+            catch (JsonException) { return false; }
+        }
+
+        private static bool TryValidateBrushProposal(string json, out int commandCount)
+        {
+            commandCount = 0;
+            try
+            {
+                using var document = JsonDocument.Parse(json, JsonOptions);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || root.EnumerateObject().Any(property => property.Name != "commands")
+                    || !root.TryGetProperty("commands", out var commands)
+                    || commands.ValueKind != JsonValueKind.Array) return false;
+                foreach (var command in commands.EnumerateArray())
+                {
+                    if (++commandCount > MaximumCommands || command.ValueKind != JsonValueKind.Object) return false;
+                    var properties = command.EnumerateObject().Select(property => property.Name)
+                        .ToHashSet(StringComparer.Ordinal);
+                    if (!properties.SetEquals(["kind", "x", "y", "tileSetId", "tileId"])
+                        || command.GetProperty("kind").GetString() != "paint"
+                        || !command.GetProperty("x").TryGetInt32(out _)
+                        || !command.GetProperty("y").TryGetInt32(out _)
+                        || !IsCanonicalUuidV4(command.GetProperty("tileSetId").GetString() ?? string.Empty)
+                        || !IsCanonicalUuidV4(command.GetProperty("tileId").GetString() ?? string.Empty)) return false;
+                }
+                return true;
+            }
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        private string ReadResultString(NativeTileExtensionString value, int maximumBytes, string context)
+        {
+            if (value.Length > checked((nuint)maximumBytes)
+                || (value.Length != 0 && value.Data == IntPtr.Zero))
+                throw new InvalidDataException($"Tile-extension {context} is missing or exceeds its bound.");
+            return value.Length == 0 ? string.Empty
+                : Marshal.PtrToStringUTF8(value.Data, checked((int)value.Length)) ?? string.Empty;
+        }
+
+        private void ReleaseResult(NativeTileExtensionResult result)
+        {
+            foreach (var value in new[] { result.ResultJson, result.ErrorCode, result.ErrorMessage })
+                if (value.Data != IntPtr.Zero) _release(value);
+        }
+
+        private static readonly JsonDocumentOptions JsonOptions = new()
+        {
+            AllowTrailingCommas = false,
+            CommentHandling = JsonCommentHandling.Disallow,
+            MaxDepth = 64,
+        };
+    }
+
+    private sealed class NativeUtf8Lease : IDisposable
+    {
+        private IntPtr _pointer;
+        public NativeTileExtensionString Value { get; }
+
+        public NativeUtf8Lease(string value, int byteCount)
+        {
+            _pointer = Marshal.StringToCoTaskMemUTF8(value);
+            Value = new NativeTileExtensionString { Data = _pointer, Length = checked((nuint)byteCount) };
+        }
+
+        public void Dispose()
+        {
+            if (_pointer == IntPtr.Zero) return;
+            Marshal.FreeCoTaskMem(_pointer);
+            _pointer = IntPtr.Zero;
+        }
+    }
+
+    private static string ReadNativeString(
+        NativeTileExtensionString value,
+        int maximumBytes,
+        string context)
+    {
+        if (value.Length == 0 || value.Length > checked((nuint)maximumBytes) || value.Data == IntPtr.Zero)
+            throw new InvalidDataException($"Native {context} is missing or exceeds its bound.");
+        return Marshal.PtrToStringUTF8(value.Data, checked((int)value.Length))
+            ?? throw new InvalidDataException($"Native {context} is not valid UTF-8.");
     }
 
     private sealed class NativeInstance : IRuntimeInstance
