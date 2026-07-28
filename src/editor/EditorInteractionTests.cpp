@@ -961,6 +961,7 @@ private slots:
         auto* brush_behavior = window.findChild<QComboBox*>(QStringLiteral("TileBrushBehavior"));
         auto* tile_list = window.findChild<QListWidget*>(QStringLiteral("TileList"));
         QVERIFY(line_tool != nullptr && brush_behavior != nullptr && tile_list != nullptr);
+        QVERIFY(brush_behavior->findData(QStringLiteral("custom-extension")) >= 0);
         QVERIFY(tile_list->count() >= 2);
         auto* tile_name = window.findChild<QLineEdit*>(QStringLiteral("TileDefinitionName"));
         auto* tile_kind = window.findChild<QComboBox*>(QStringLiteral("TileDefinitionKind"));

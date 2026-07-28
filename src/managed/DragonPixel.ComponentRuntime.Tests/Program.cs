@@ -127,7 +127,11 @@ try
                 && malformedResults[0].ErrorCode == "DPE-TILE-EXT-MALFORMED-RESULT",
             "Malformed tile-extension evaluation output was not contained.");
         var proposal = runtime.ProposeBrush(TileExtensionId, tileContext, "{}");
-        Require(proposal.Succeeded && proposal.CommandCount == 1,
+        Require(proposal.Succeeded && proposal.CommandCount == 1
+                && proposal.ResultJson.Contains("\"x\":4", StringComparison.Ordinal)
+                && proposal.ResultJson.Contains("\"y\":-7", StringComparison.Ordinal)
+                && proposal.ResultJson.Contains(tileContext.TileSetId, StringComparison.Ordinal)
+                && proposal.ResultJson.Contains(tileContext.TileId, StringComparison.Ordinal),
             "The tile extension did not return one bounded brush command proposal.");
         var malformedProposal = runtime.ProposeBrush(
             TileExtensionId, tileContext, "{\"malformed\":true}");
