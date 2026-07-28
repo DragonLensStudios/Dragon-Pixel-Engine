@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Ready-to-paint Tilemap workflow verified; bundle rebuild awaiting editor close
+> **Status:** Windows transient-sharing save correction in progress
 > **Disposition:** Implementation correction in progress; not merged
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
@@ -40,6 +40,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Add a focused tile-edit mode to the 2D Scene View. Pointer strokes map through the selected Tilemap GameObject transform and TileSet cell dimensions, reuse the palette's active layer/tool/brush, support commit/cancel, display a cell overlay, and never mutate a scene or tilemap during Play or 3D view.
 - Refresh the existing immutable snapshot/worker preview after tile-document changes through a bounded coalesced path. Use the already flattened `pixelsPerUnit` value so tile visual size agrees with the authoring grid and existing unit-based collision model.
 - Preserve the existing atomic scene-plus-dirty-tilemap save and unsaved-document prompts.
+- Tolerate bounded transient Windows sharing violations during atomic scene/tile publication without falling back to an in-place overwrite; preserve the prior valid documents and actionable recovery guidance when a lock persists.
 
 ## Non-Goals
 
@@ -143,6 +144,13 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Make activating an unreferenced TileSet offer the same named Tilemap-creation path instead of ending with a dependency warning, and let a newly added Tilemap 2D preset reuse the currently open Tilemap.
 - Cover attachment, reuse, Undo, map persistence when scene attachment is unavailable, palette readiness, Scene View painting, save/reopen, and existing drag/Inspector paths before updating draft PR #6 without merging it.
 
+### Increment 8: Windows transient-sharing save recovery
+
+- Reproduce the reported `ReplaceFileW` error 32 with a real target handle that permits reads but temporarily denies delete-sharing beyond the current 63 ms publication retry window.
+- Give only Windows publication replacement a bounded sub-second backoff suitable for transient scanners/readers; retain the short topology/read and recovery-lease budgets and never use a non-atomic overwrite fallback.
+- Keep persistent-lock exhaustion, exact prior bytes, rollback artifacts, dirty editor state, and a successful retry after handle release covered; make the Save dialog explain that prior data was restored and the user can release the file and retry.
+- Run focused native/editor Release and MSVC AddressSanitizer verification, the accepted final Release matrix, mirror/evidence checks, and update draft PR #6 without merging it.
+
 ## Affected Tests and Verification Strategy
 
 - Native scene: Tilemap preset components/defaults, primary asset assignment, transaction Undo/Redo, scene serialization/reopen, and existing preset regressions.
@@ -154,6 +162,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - Ready-to-paint workflow: default-on wizard option; TileSet-only opt-out; empty-map publication; selected blank Tilemap2D reuse; fallback preset creation; loaded-map preset binding; first-layer/first-brush selection; 2D Scene View edit enablement; paint/save/reopen; Undo; and retained map plus actionable diagnostic if scene attachment cannot complete.
 - Managed/runtime: existing snapshot-v4 parsing and both adapter tile-drawing tests, with pixels-per-unit sizing and real tile pixels/picking reported separately.
 - Serialization/recovery: scene-plus-tilemap transaction tests, invalid/missing dependency preservation, atomic publication, and no write on rejected operations.
+- Windows save sharing: real transient no-delete-share target handle, bounded successful publication after release, persistent-lock rollback/exhaustion, editor dirty-state preservation, and successful retry after the blocker is gone.
 - Packaging: developer bundle manifest/hash verification and packaged MonoGame self-test; no new runtime file is expected.
 
 ## Platform Strategy
@@ -184,6 +193,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - **Misleading image support:** publish the exact accepted raster formats in the picker and README, validate by decoded content rather than suffix, and transcode every non-PNG source so a `.png` destination never contains another codec.
 - **Stale Project drag/selection:** preserve drag format revision/project identity validation and re-resolve every asset ID in the current candidate index.
 - **Partial cross-domain completion:** Tilemap publication and scene mutation have separate authoritative owners. Never delete a successfully published map when scene attachment fails; keep it indexed/open, report the retained asset, and let the user attach it later.
+- **Unsafe lock bypass or hidden deadlock:** lengthen only the bounded Windows publication backoff for a demonstrated transient handle; retain topology validation, atomic replacement, persistent-lock failure, rollback, and existing acceptance timeouts.
 - **Surprising scene mutation:** expose the wizard completion option and default it on for the guided path; an explicit Create Tilemap command may reuse only the one selected Tilemap2D whose reference is empty, never overwrite a non-empty reference implicitly.
 - **Cross-platform input differences:** keep pointer mapping in Qt logical coordinates and validate guarded behavior without OS-specific events.
 
@@ -220,6 +230,8 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 - [x] Existing TileSets and blank Tilemap2D GameObjects can be completed into a paint-ready 2D workflow without drag-and-drop guesswork.
 - [x] The initial layer and first brush are active, Scene View painting is enabled, and paint/save/reopen is regression-covered.
 - [x] Ready-to-paint focused/full verification, branch push, and draft PR #6 update are complete.
+- [ ] A real transient Windows sharing violation beyond the former 63 ms budget commits atomically after handle release, while a persistent lock still fails safely with the prior documents restored.
+- [ ] Save-lock correction focused/full verification, mirrored evidence, branch push, and draft PR #6 update are complete.
 - [ ] Current production-bundle manifest/hash and packaged MonoGame smoke evidence are complete after the interactive editor is closed safely.
 - [ ] Human review and merge occur after this implementation handoff.
 
@@ -250,6 +262,7 @@ The remaining user-facing gaps are connected rather than format-level: the TileS
 | 2026-07-27 | Ready-to-paint verification complete | The exact blank-GameObject path covers assignment, selection, Undo/Redo, first layer/brush, Scene edit enablement, painted-cell save/reopen, and open-map preset reuse. The guided wizard path covers Image -> Texture/TileSet -> Tilemap -> assigned GameObject, and a no-scene case proves retained publication. The affected Release interaction set passed **14/14 in 75.363 seconds**; the affected MSVC AddressSanitizer set passed **15/15 in 140.897 seconds** without a sanitizer finding. Four initial separate editor startups pushed both unchanged 240-second aggregate aliases to timeout, so the same assertions were consolidated into one session and registered as the separate required `s2.tilemap_creation_workflow` CTest instead of increasing a timeout. That focused entry passes in **19.08 seconds** under Release and **33.11 seconds** under ASan. One complete run then passed 60/61 with a silent, non-timeout `poc_h.qt_interactions` process exit; the exact unchanged alias passed immediately in 158.78 seconds. The final complete strict Release preset passes **61/61 in 528.41 seconds**, including `s2.editor_interactions` in 160.78 seconds, `poc_h.qt_interactions` in 160.33 seconds, the focused Tilemap workflow in 19.08 seconds, and POC J in 14.56 seconds. No threshold, timeout, platform, or support claim changed; the previously recorded complete-ASan POC J blocker remains open because the complete ASan preset was not repeated. |
 | 2026-07-27 | Bundle rebuild remains safely blocked | The current production bundle is running interactively as PID 56444 from `out/product/windows-x64/DragonPixelEditor/DragonPixelEditor.exe`. The bundle script intentionally refuses replacement in this state, and Codex did not terminate the process because it may contain unsaved authoring work. New manifest/hash and packaged MonoGame self-test evidence remain pending; prior bundle hashes are not claimed for this binary. |
 | 2026-07-27 | Ready-to-paint review handoff pushed | Reviewed the seven focused correction commits and nine-file correction diff from prior remote HEAD `6bb1f37`; reviewed the complete aggregate branch diff from `origin/develop`; confirmed `git diff --check origin/develop...HEAD` is clean and no unrelated format, ABI, protocol, support, platform, threshold, or timeout change entered the correction. Pushed through `6c8d45e` to `origin/feature/tilemap-authoring-workspace` and replaced draft PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) with the feature-template summary, root cause, exact final verification, failure/recovery coverage, platform separation, bundle blocker, and unchanged limitations. GitHub reports the PR open, draft, targeting `develop`, and unmerged. |
+| 2026-07-27 | Windows sharing-violation correction started | The reported Save failure exhausted seven `ReplaceFileW` attempts with Win32 error 32 and restored the prior scene. Read-only inspection found no residual temporary/backup artifact, an exclusive scene-file probe now succeeds, and Windows Restart Manager reports no current holder, demonstrating that the blocker was transient rather than a persistent editor-owned handle. The publication retry budget is only 63 ms (`1+2+4+8+16+32`), shorter than ordinary bounded scanner/read activity. The smallest safe correction adds a real no-delete-share regression, lengthens only the validated Windows publication backoff, preserves persistent-lock rollback, and adds actionable editor guidance; it does not weaken atomicity or close ADR-0006 handle-pinning limits. |
 
 ## Handoff Notes
 
