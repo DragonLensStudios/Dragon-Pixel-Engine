@@ -1010,14 +1010,19 @@ private slots:
 
         line_tool->trigger();
         QCOMPARE(window.tile_palette_->active_tool(), TileCanvas::Tool::line);
-        const TileDocumentService::Brush transformed{tile_id, true, false, 1U};
+        TileDocumentService::Brush transformed;
+        transformed.tile_id = tile_id;
+        transformed.flip_x = true;
+        transformed.rotation_quarter_turns = 1U;
         window.tile_palette_->select_brush(transformed);
         QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
         QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
         QVERIFY(window.tile_document_service_->brush_at(0, 0, 0)
             == std::optional{transformed});
 
-        window.tile_palette_->select_brush({tile_id, false, false, 0U});
+        TileDocumentService::Brush basic;
+        basic.tile_id = tile_id;
+        window.tile_palette_->select_brush(basic);
         auto* eyedropper = window.findChild<QAction*>(QStringLiteral("TileEyedropperTool"));
         auto* rectangle = window.findChild<QAction*>(QStringLiteral("TileRectangleTool"));
         auto* paint = window.findChild<QAction*>(QStringLiteral("TilePaintTool"));
@@ -1027,7 +1032,11 @@ private slots:
         QVERIFY(window.tile_palette_->active_brush() == std::optional{transformed});
 
         rectangle->trigger();
-        window.tile_palette_->select_brush({tile_id, false, true, 2U});
+        TileDocumentService::Brush reflected;
+        reflected.tile_id = tile_id;
+        reflected.flip_y = true;
+        reflected.rotation_quarter_turns = 2U;
+        window.tile_palette_->select_brush(reflected);
         QTest::mousePress(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_0_0);
         QTest::mouseMove(window.viewport_, cell_1_1);
         QTest::mouseRelease(window.viewport_, Qt::LeftButton, Qt::NoModifier, cell_1_1);
@@ -2241,8 +2250,10 @@ private slots:
         QCOMPARE(tiles.tilemap()->layers.size(), std::size_t{2});
         QCOMPARE(tiles.tilemap()->layers.front().layer_id, *layer_id);
         tiles.begin_stroke();
-        const TileDocumentService::Brush transformed_brush{
-            tile_id, true, false, 1U};
+        TileDocumentService::Brush transformed_brush;
+        transformed_brush.tile_id = tile_id;
+        transformed_brush.flip_x = true;
+        transformed_brush.rotation_quarter_turns = 1U;
         QVERIFY(tiles.paint_cell(0, 32, 0, transformed_brush));
         QVERIFY(tiles.paint_cell(0, -1, -1, tile_id));
         tiles.commit_stroke();
