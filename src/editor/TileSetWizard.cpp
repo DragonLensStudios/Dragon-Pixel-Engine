@@ -78,59 +78,78 @@ bool write_atomic(const QString& path, const QByteArray& bytes, QString& error)
     return true;
 }
 
-struct png_source
+struct image_source
 {
     QImage image;
-    QByteArray bytes;
+    QByteArray png_bytes;
     QString error;
 };
 
-png_source read_png_source(const QString& requested_path)
+image_source read_image_source(const QString& requested_path)
 {
-    png_source result;
+    image_source result;
     const QFileInfo source_info{requested_path.trimmed()};
     if (!source_info.isFile())
     {
-        result.error = QStringLiteral("Select an existing PNG sprite sheet.");
+        result.error = QStringLiteral("Select an existing image sprite sheet.");
         return result;
     }
 
     QFile source{source_info.absoluteFilePath()};
     if (!source.open(QIODevice::ReadOnly))
     {
-        result.error = QStringLiteral("Could not read the selected PNG sprite sheet: %1")
+        result.error = QStringLiteral("Could not read the selected image sprite sheet: %1")
                            .arg(source.errorString());
         return result;
     }
-    result.bytes = source.readAll();
+    auto source_bytes = source.readAll();
     if (source.error() != QFileDevice::NoError)
     {
-        result.error = QStringLiteral("Could not read the selected PNG sprite sheet: %1")
+        result.error = QStringLiteral("Could not read the selected image sprite sheet: %1")
                            .arg(source.errorString());
-        result.bytes.clear();
         return result;
     }
 
-    QBuffer buffer{&result.bytes};
+    QBuffer buffer{&source_bytes};
     if (!buffer.open(QIODevice::ReadOnly))
     {
-        result.error = QStringLiteral("Could not inspect the selected PNG sprite sheet.");
-        result.bytes.clear();
+        result.error = QStringLiteral("Could not inspect the selected image sprite sheet.");
         return result;
     }
-    QImageReader reader{&buffer, QByteArray{"png"}};
+    QImageReader reader{&buffer};
+    reader.setDecideFormatFromContent(true);
     if (!reader.canRead())
     {
-        result.error = QStringLiteral("The selected file is not a readable PNG image.");
-        result.bytes.clear();
+        result.error = QStringLiteral("The selected file is not a supported readable image (PNG, JPEG, BMP, or GIF).");
+        return result;
+    }
+    auto format = reader.format().toLower();
+    if (format == QByteArray{"jpg"}) format = QByteArray{"jpeg"};
+    if (format != QByteArray{"png"} && format != QByteArray{"jpeg"}
+        && format != QByteArray{"bmp"} && format != QByteArray{"gif"})
+    {
+        result.error = QStringLiteral("The selected file is not a supported image format (PNG, JPEG, BMP, or GIF).");
         return result;
     }
     result.image = reader.read();
     if (result.image.isNull())
     {
-        result.error = QStringLiteral("The selected file is not a readable PNG image: %1")
+        result.error = QStringLiteral("The selected file is not a readable image: %1")
                            .arg(reader.errorString());
-        result.bytes.clear();
+        return result;
+    }
+    if (format == QByteArray{"png"})
+    {
+        result.png_bytes = std::move(source_bytes);
+        return result;
+    }
+
+    QBuffer png_buffer{&result.png_bytes};
+    if (!png_buffer.open(QIODevice::WriteOnly) || !result.image.save(&png_buffer, "PNG"))
+    {
+        result.error = QStringLiteral("Could not normalize the selected image to PNG.");
+        result.image = {};
+        result.png_bytes.clear();
     }
     return result;
 }
@@ -162,7 +181,7 @@ QByteArray asset_metadata(
 
 QString slicing_error(const QImage& image, const TileSetCreationRequest& request, int& columns, int& rows)
 {
-    if (image.isNull()) return QStringLiteral("The selected file is not a readable PNG image.");
+    if (image.isNull()) return QStringLiteral("The selected file is not a readable supported image.");
     if (request.cell_width <= 0 || request.cell_height <= 0) return QStringLiteral("Cell dimensions must be positive.");
     const auto usable_width = image.width() - request.margin_x * 2;
     const auto usable_height = image.height() - request.margin_y * 2;
@@ -172,7 +191,7 @@ QString slicing_error(const QImage& image, const TileSetCreationRequest& request
         || (usable_width + request.spacing_x) % stride_x != 0
         || (usable_height + request.spacing_y) % stride_y != 0)
     {
-        return QStringLiteral("The PNG dimensions do not divide evenly using the requested margins, spacing, and cell size.");
+        return QStringLiteral("The image dimensions do not divide evenly using the requested margins, spacing, and cell size.");
     }
     columns = (usable_width + request.spacing_x) / stride_x;
     rows = (usable_height + request.spacing_y) / stride_y;
@@ -187,7 +206,7 @@ TileSetCreationResult TileSetCreationService::create(const TileSetCreationReques
     TileSetCreationResult result;
     const auto project_root = QFileInfo{request.project_root}.absoluteFilePath();
     const auto stem = safe_stem(request.name);
-    const auto source = read_png_source(request.source_png);
+    const auto source = read_image_source(request.source_image);
     if (!source.error.isEmpty())
     {
         result.error = source.error;
@@ -266,7 +285,7 @@ TileSetCreationResult TileSetCreationService::create(const TileSetCreationReques
         result.tile_set_asset_id, QStringLiteral("tileset"), QStringLiteral("Tiles/%1.dpetileset").arg(stem),
         {result.texture_asset_id}, {{QStringLiteral("grid"), QStringLiteral("orthogonal")}});
     const std::array<std::pair<QString, QByteArray>, 4> writes{{
-        {result.texture_path, source.bytes},
+        {result.texture_path, source.png_bytes},
         {result.texture_metadata_path, texture_metadata},
         {result.tile_set_path, tile_bytes},
         {result.tile_set_metadata_path, tile_metadata},
@@ -289,9 +308,9 @@ TileSetCreationResult TileSetCreationService::create(const TileSetCreationReques
 TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
     : QDialog(parent), project_root_(std::move(project_root))
 {
-    setWindowTitle(QStringLiteral("Create TileSet from PNG"));
+    setWindowTitle(QStringLiteral("Create TileSet from Image"));
     setObjectName(QStringLiteral("TileSetWizard"));
-    setAccessibleName(QStringLiteral("Create TileSet from PNG sprite sheet"));
+    setAccessibleName(QStringLiteral("Create TileSet from image sprite sheet"));
     resize(620, 600);
     auto* layout = new QVBoxLayout(this);
     auto* form = new QFormLayout;
@@ -299,14 +318,14 @@ TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
     auto* source_layout = new QHBoxLayout(source_row);
     source_layout->setContentsMargins(0, 0, 0, 0);
     source_ = new QLineEdit(source_row);
-    source_->setObjectName(QStringLiteral("TileSetSourcePng"));
-    source_->setAccessibleName(QStringLiteral("PNG sprite sheet path"));
+    source_->setObjectName(QStringLiteral("TileSetSourceImage"));
+    source_->setAccessibleName(QStringLiteral("Image sprite sheet path"));
     auto* browse = new QPushButton(QStringLiteral("Browse..."), source_row);
     browse->setObjectName(QStringLiteral("BrowseTileSetSource"));
     connect(browse, &QPushButton::clicked, this, &TileSetWizard::browse_source);
     source_layout->addWidget(source_);
     source_layout->addWidget(browse);
-    form->addRow(QStringLiteral("PNG sprite sheet"), source_row);
+    form->addRow(QStringLiteral("Image sprite sheet"), source_row);
     name_ = new QLineEdit(this);
     name_->setObjectName(QStringLiteral("TileSetName"));
     form->addRow(QStringLiteral("Name"), name_);
@@ -362,8 +381,9 @@ TileSetWizard::TileSetWizard(QString project_root, QWidget* parent)
 
 void TileSetWizard::browse_source()
 {
-    const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Select PNG sprite sheet"),
-        project_root_, QStringLiteral("PNG images (*.png);;All files (*)"));
+    const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("Select image sprite sheet"),
+        project_root_, QStringLiteral(
+            "Supported images (*.png *.jpg *.jpeg *.bmp *.gif);;PNG images (*.png);;JPEG images (*.jpg *.jpeg);;BMP images (*.bmp);;GIF images (*.gif);;All files (*)"));
     if (path.isEmpty()) return;
     source_->setText(path);
     if (name_->text().trimmed().isEmpty()) name_->setText(QFileInfo{path}.completeBaseName());
@@ -371,7 +391,7 @@ void TileSetWizard::browse_source()
 
 void TileSetWizard::refresh_preview()
 {
-    const auto source = read_png_source(source_->text());
+    const auto source = read_image_source(source_->text());
     const auto& image = source.image;
     TileSetCreationRequest request{project_root_, source_->text(), name_->text(), cell_width_->value(),
         cell_height_->value(), margin_x_->value(), margin_y_->value(), spacing_x_->value(), spacing_y_->value()};

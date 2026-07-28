@@ -20,6 +20,7 @@
 #include <QHash>
 #include <QIcon>
 #include <QImage>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -303,6 +304,7 @@ private slots:
         auto* new_scene = window.findChild<QAction*>(QStringLiteral("NewSceneAction"));
         auto* save_as = window.findChild<QAction*>(QStringLiteral("SaveSceneAsAction"));
         auto* import_tiled = window.findChild<QAction*>(QStringLiteral("ImportTiledTilemapAction"));
+        auto* create_tileset = window.findChild<QAction*>(QStringLiteral("CreateTileSetFromImageAction"));
 
         QVERIFY(hub != nullptr && hub->isVisible());
         QVERIFY(hub->widget() != nullptr);
@@ -314,6 +316,9 @@ private slots:
         QVERIFY(new_scene != nullptr && !new_scene->isEnabled());
         QVERIFY(save_as != nullptr && !save_as->isEnabled());
         QVERIFY(import_tiled != nullptr && !import_tiled->isEnabled());
+        QVERIFY(create_tileset != nullptr);
+        QCOMPARE(create_tileset->text(), QStringLiteral("Create TileSet from Image..."));
+        QVERIFY(create_tileset->statusTip().contains(QStringLiteral("PNG, JPEG, BMP, or GIF")));
         QVERIFY(!window.scene_.has_value());
         QVERIFY(window.project_manifest_path_.isEmpty());
     }
@@ -1787,7 +1792,7 @@ private slots:
 
         TileSetCreationRequest request;
         request.project_root = temporary.path();
-        request.source_png = outside_png;
+        request.source_image = outside_png;
         request.name = QStringLiteral("Interaction Tiles");
         request.cell_width = 32;
         request.cell_height = 32;
@@ -1828,7 +1833,7 @@ private slots:
 
         TileSetCreationRequest request;
         request.project_root = project.path();
-        request.source_png = extensionless_png;
+        request.source_image = extensionless_png;
         request.name = QStringLiteral("Extensionless Ground");
         request.cell_width = 16;
         request.cell_height = 16;
@@ -1845,7 +1850,7 @@ private slots:
         QCOMPARE(copied_file.readAll(), source_file.readAll());
 
         TileSetWizard wizard{project.path()};
-        auto* source_path = wizard.findChild<QLineEdit*>(QStringLiteral("TileSetSourcePng"));
+        auto* source_path = wizard.findChild<QLineEdit*>(QStringLiteral("TileSetSourceImage"));
         auto* name = wizard.findChild<QLineEdit*>(QStringLiteral("TileSetName"));
         auto* cell_width = wizard.findChild<QSpinBox*>(QStringLiteral("TileCellWidth"));
         auto* cell_height = wizard.findChild<QSpinBox*>(QStringLiteral("TileCellHeight"));
@@ -1853,6 +1858,8 @@ private slots:
         auto* create = wizard.findChild<QPushButton*>(QStringLiteral("CreateTileSetAction"));
         QVERIFY(source_path != nullptr && name != nullptr && cell_width != nullptr && cell_height != nullptr);
         QVERIFY(validation != nullptr && create != nullptr);
+        QCOMPARE(wizard.windowTitle(), QStringLiteral("Create TileSet from Image"));
+        QCOMPARE(wizard.accessibleName(), QStringLiteral("Create TileSet from image sprite sheet"));
         source_path->setText(extensionless_png);
         name->setText(QStringLiteral("Wizard Ground"));
         cell_width->setValue(16);
@@ -1871,23 +1878,101 @@ private slots:
         QCOMPARE(invalid_file.write("not png content"), qint64{15});
         invalid_file.close();
 
-        request.source_png = mislabeled_png;
+        request.source_image = mislabeled_png;
         request.name = QStringLiteral("Mislabeled Input");
         const auto rejected = TileSetCreationService::create(request);
         QVERIFY(!rejected.succeeded);
-        QVERIFY(rejected.error.contains(QStringLiteral("readable PNG")));
+        QVERIFY(rejected.error.contains(QStringLiteral("supported readable image")));
         QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
             QStringLiteral("Assets/Textures/Mislabeled_Input.png"))));
         QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
             QStringLiteral("Assets/Tiles/Mislabeled_Input.dpetileset"))));
 
-        request.source_png = QDir{sources.path()}.filePath(QStringLiteral("MissingSource"));
+        const auto svg_path = QDir{sources.path()}.filePath(QStringLiteral("VectorSheet.svg"));
+        QFile svg_file{svg_path};
+        QVERIFY(svg_file.open(QIODevice::WriteOnly));
+        const QByteArray svg_bytes{
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\">"
+            "<rect width=\"16\" height=\"16\" fill=\"green\"/></svg>"};
+        QCOMPARE(svg_file.write(svg_bytes), svg_bytes.size());
+        svg_file.close();
+        request.source_image = svg_path;
+        request.name = QStringLiteral("Unsupported Vector");
+        const auto unsupported = TileSetCreationService::create(request);
+        QVERIFY(!unsupported.succeeded);
+        QVERIFY(unsupported.error.contains(QStringLiteral("supported image format")));
+        QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
+            QStringLiteral("Assets/Textures/Unsupported_Vector.png"))));
+
+        request.source_image = QDir{sources.path()}.filePath(QStringLiteral("MissingSource"));
         request.name = QStringLiteral("Missing Input");
         const auto missing = TileSetCreationService::create(request);
         QVERIFY(!missing.succeeded);
-        QVERIFY(missing.error.contains(QStringLiteral("existing PNG")));
+        QVERIFY(missing.error.contains(QStringLiteral("existing image")));
         QVERIFY(!QFileInfo::exists(QDir{project.path()}.filePath(
             QStringLiteral("Assets/Textures/Missing_Input.png"))));
+    }
+
+    void image_tileset_creation_normalizes_supported_sources_to_png()
+    {
+        QTemporaryDir project;
+        QTemporaryDir sources;
+        QVERIFY(project.isValid());
+        QVERIFY(sources.isValid());
+        QVERIFY(QDir{project.path()}.mkpath(QStringLiteral("Assets")));
+
+        const auto jpeg_path = QDir{sources.path()}.filePath(QStringLiteral("GroundTiles.jpg"));
+        QImage source{32, 16, QImage::Format_RGB32};
+        source.fill(QColor{52, 96, 58});
+        for (int y = 0; y < source.height(); ++y)
+            for (int x = 16; x < source.width(); ++x) source.setPixelColor(x, y, QColor{130, 92, 48});
+        QVERIFY(source.save(jpeg_path, "JPEG", 95));
+
+        TileSetCreationRequest request;
+        request.project_root = project.path();
+        request.source_image = jpeg_path;
+        request.name = QStringLiteral("JPEG Ground");
+        request.cell_width = 16;
+        request.cell_height = 16;
+        request.pixels_per_unit = 16.0;
+        const auto is_normalized_png = [](const QString& path, const QSize& expected_size) {
+            QFile output{path};
+            if (!output.open(QIODevice::ReadOnly)
+                || output.read(8) != QByteArray::fromHex("89504e470d0a1a0a")) return false;
+            QImageReader reader{path};
+            return reader.format().toLower() == QByteArray{"png"} && reader.size() == expected_size;
+        };
+
+        const auto jpeg = TileSetCreationService::create(request);
+        QVERIFY2(jpeg.succeeded, qPrintable(jpeg.error));
+        QCOMPARE(jpeg.tile_count, 2);
+        QVERIFY(is_normalized_png(jpeg.texture_path, QSize(32, 16)));
+
+        const auto bmp_path = QDir{sources.path()}.filePath(QStringLiteral("GroundTiles.bmp"));
+        QVERIFY(source.save(bmp_path, "BMP"));
+        request.source_image = bmp_path;
+        request.name = QStringLiteral("BMP Ground");
+        const auto bmp = TileSetCreationService::create(request);
+        QVERIFY2(bmp.succeeded, qPrintable(bmp.error));
+        QCOMPARE(bmp.tile_count, 2);
+        QVERIFY(is_normalized_png(bmp.texture_path, QSize(32, 16)));
+
+        const auto gif_path = QDir{sources.path()}.filePath(QStringLiteral("GroundTiles.gif"));
+        QFile gif_source{gif_path};
+        QVERIFY(gif_source.open(QIODevice::WriteOnly));
+        const auto gif_bytes = QByteArray::fromBase64(
+            QByteArray{"R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="});
+        QCOMPARE(gif_source.write(gif_bytes), gif_bytes.size());
+        gif_source.close();
+        request.source_image = gif_path;
+        request.name = QStringLiteral("GIF Ground");
+        request.cell_width = 1;
+        request.cell_height = 1;
+        request.pixels_per_unit = 1.0;
+        const auto gif = TileSetCreationService::create(request);
+        QVERIFY2(gif.succeeded, qPrintable(gif.error));
+        QCOMPARE(gif.tile_count, 1);
+        QVERIFY(is_normalized_png(gif.texture_path, QSize(1, 1)));
     }
 
     void generated_csharp_script_attaches_to_the_selected_gameobject()

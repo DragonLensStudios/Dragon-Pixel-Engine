@@ -14,7 +14,7 @@ class QWidget;
 struct TileSetCreationRequest final
 {
     QString project_root;
-    QString source_png;
+    QString source_image;
     QString name;
     int cell_width{32};
     int cell_height{32};

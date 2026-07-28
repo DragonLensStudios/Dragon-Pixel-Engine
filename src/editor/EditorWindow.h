@@ -184,7 +184,7 @@ private:
     void revert_all_prefab();
     void repair_prefab();
     void unpack_prefab(bool completely);
-    void create_tile_set_from_png();
+    void create_tile_set_from_image();
     void create_tilemap_from_selected_tileset();
     [[nodiscard]] bool create_tilemap_from_tileset(
         const QString& tileset_asset_id,

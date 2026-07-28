@@ -1640,9 +1640,11 @@ void EditorWindow::build_interface()
     });
     assets_menu->addAction(QStringLiteral("Refresh"), this, &EditorWindow::rebuild_assets);
     assets_menu->addSeparator();
-    auto* create_tile_set = assets_menu->addAction(QStringLiteral("Create TileSet from PNG..."));
-    create_tile_set->setObjectName(QStringLiteral("CreateTileSetFromPngAction"));
-    connect(create_tile_set, &QAction::triggered, this, &EditorWindow::create_tile_set_from_png);
+    auto* create_tile_set = assets_menu->addAction(QStringLiteral("Create TileSet from Image..."));
+    create_tile_set->setObjectName(QStringLiteral("CreateTileSetFromImageAction"));
+    create_tile_set->setStatusTip(
+        QStringLiteral("Slice a PNG, JPEG, BMP, or GIF sprite sheet into a reusable TileSet"));
+    connect(create_tile_set, &QAction::triggered, this, &EditorWindow::create_tile_set_from_image);
     auto* create_tilemap = assets_menu->addAction(QStringLiteral("Create Tilemap from Selected TileSet..."));
     create_tilemap->setObjectName(QStringLiteral("CreateTilemapFromSelectedTileSetAction"));
     create_tilemap->setStatusTip(
@@ -1798,7 +1800,7 @@ void EditorWindow::build_interface()
     update_action_states();
 }
 
-void EditorWindow::create_tile_set_from_png()
+void EditorWindow::create_tile_set_from_image()
 {
     if (project_root_.isEmpty())
     {
