@@ -2003,11 +2003,14 @@ bool EditorWindow::create_tilemap_from_tileset(
         ? project_index_.candidate->find_by_id(map_id) : nullptr;
     const auto* set_entry = project_index_.candidate
         ? project_index_.candidate->find_by_id(tileset_asset_id) : nullptr;
+    const auto* palette_entry = project_index_.candidate && result.asset_ids.size() > 1
+        ? project_index_.candidate->find_by_id(result.asset_ids.at(1)) : nullptr;
     if (map_entry == nullptr || set_entry == nullptr
         || !tile_palette_->load_documents(
             map_entry->resolved_source_path,
             set_entry->resolved_source_path,
-            tile_texture_path_for(set_entry)))
+            tile_texture_path_for(set_entry),
+            palette_entry ? palette_entry->resolved_source_path : QString{}))
     {
         append_console(QStringLiteral("The Tilemap was created but could not be opened in the Tile Palette."),
             QStringLiteral("Warning"), QStringLiteral("Tile Authoring"),
@@ -2117,7 +2120,8 @@ bool EditorWindow::perform_tiled_tilemap_import(
 
     rebuild_assets();
     if (!tile_palette_->load_documents(
-            result.tilemap_path, result.tileset_path, result.texture_path))
+            result.tilemap_path, result.tileset_path, result.texture_path,
+            result.palette_path))
     {
         append_console(QStringLiteral("The imported assets were published, but the Tile Palette could not open them."),
             QStringLiteral("Error"), QStringLiteral("Tile Import"), result.tilemap_path,
@@ -3132,6 +3136,7 @@ bool EditorWindow::save_scene()
         {filesystem_path(scene_path_), json},
     };
     std::optional<std::string> tile_json;
+    std::optional<std::string> palette_json;
     if (tile_document_service_->is_dirty())
     {
         tile_json = tile_document_service_->prepare_save();
@@ -3141,6 +3146,16 @@ bool EditorWindow::save_scene()
             return false;
         }
         writes.push_back({filesystem_path(tile_document_service_->tilemap_path()), *tile_json});
+        if (tile_document_service_->is_palette_dirty())
+        {
+            palette_json = tile_document_service_->prepare_palette_save();
+            if (!palette_json)
+            {
+                QMessageBox::critical(this, QStringLiteral("Save failed"), tile_document_service_->error());
+                return false;
+            }
+            writes.push_back({filesystem_path(tile_document_service_->palette_path()), *palette_json});
+        }
     }
     const auto result = dragonpixel::serialization::save_utf8_transaction(
         writes, filesystem_path(project_root_), save_fault_for_test_);
@@ -3151,6 +3166,7 @@ bool EditorWindow::save_scene()
         {
             tile_document_service_->accept_save(*tile_json);
         }
+        if (palette_json) tile_document_service_->accept_palette_save(*palette_json);
         append_console(QStringLiteral("Transactionally saved scene: %1").arg(scene_path_));
         statusBar()->showMessage(QStringLiteral("Scene and dirty tile documents saved"), 3000);
         scene_->mark_savepoint();
@@ -6157,18 +6173,40 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
                 break;
             }
             if ((asset_type.contains(QStringLiteral("tilemap"))
-                    || asset_type.contains(QStringLiteral("tileset")))
+                    || asset_type.contains(QStringLiteral("tileset"))
+                    || asset_type.contains(QStringLiteral("tilepalette")))
                 && project_index_.candidate)
             {
                 const auto asset_id = ProjectModel::asset_id(source);
                 const ProjectIndexEntry* map_entry = nullptr;
                 const ProjectIndexEntry* set_entry = nullptr;
+                const ProjectIndexEntry* palette_entry = nullptr;
                 if (asset_type.contains(QStringLiteral("tilemap")))
                 {
                     map_entry = project_index_.candidate->find_by_id(asset_id);
                     if (map_entry != nullptr && !map_entry->dependencies.isEmpty())
                     {
                         set_entry = project_index_.candidate->find_by_id(map_entry->dependencies.front());
+                    }
+                }
+                else if (asset_type.contains(QStringLiteral("tilepalette")))
+                {
+                    palette_entry = project_index_.candidate->find_by_id(asset_id);
+                    if (palette_entry != nullptr)
+                    {
+                        for (const auto& candidate : project_index_.candidate->entries)
+                        {
+                            const auto covers_palette = std::all_of(
+                                palette_entry->dependencies.begin(), palette_entry->dependencies.end(),
+                                [&](const auto& dependency) { return candidate.dependencies.contains(dependency); });
+                            if (candidate.kind == ProjectIndexEntryKind::asset
+                                && candidate.asset_type.contains(QStringLiteral("tilemap"), Qt::CaseInsensitive)
+                                && covers_palette)
+                            {
+                                map_entry = &candidate;
+                                break;
+                            }
+                        }
                     }
                 }
                 else
@@ -6208,11 +6246,43 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
                 {
                     break;
                 }
+                QStringList tile_set_paths;
+                QStringList texture_paths;
+                if (map_entry != nullptr)
+                {
+                    for (const auto& dependency : map_entry->dependencies)
+                    {
+                        const auto* dependency_entry = project_index_.candidate->find_by_id(dependency);
+                        if (dependency_entry != nullptr
+                            && dependency_entry->asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
+                        {
+                            if (set_entry == nullptr) set_entry = dependency_entry;
+                            tile_set_paths.push_back(dependency_entry->resolved_source_path);
+                            texture_paths.push_back(tile_texture_path_for(dependency_entry));
+                        }
+                    }
+                    if (palette_entry == nullptr)
+                    {
+                        for (const auto& candidate : project_index_.candidate->entries)
+                        {
+                            const auto covered = std::all_of(candidate.dependencies.begin(), candidate.dependencies.end(),
+                                [&](const auto& dependency) { return map_entry->dependencies.contains(dependency); });
+                            if (candidate.kind == ProjectIndexEntryKind::asset
+                                && candidate.asset_type.contains(QStringLiteral("tilepalette"), Qt::CaseInsensitive)
+                                && !candidate.dependencies.isEmpty() && covered)
+                            {
+                                palette_entry = &candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (map_entry != nullptr && set_entry != nullptr
                     && tile_palette_->load_documents(
                         map_entry->resolved_source_path,
-                        set_entry->resolved_source_path,
-                        tile_texture_path_for(set_entry)))
+                        tile_set_paths,
+                        texture_paths,
+                        palette_entry ? palette_entry->resolved_source_path : QString{}))
                 {
                     tile_palette_dock_->show();
                     tile_palette_dock_->raise();

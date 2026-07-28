@@ -1,19 +1,35 @@
 #include "TilePaletteWidget.h"
 
+#include <dragonpixel/tiles/tile_grid.h>
+
 #include <QActionGroup>
+#include <QCheckBox>
 #include <QComboBox>
+#include <QFile>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QDoubleSpinBox>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QMimeData>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QGroupBox>
 #include <QPainter>
 #include <QPushButton>
+#include <QPolygonF>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
+#include <QSettings>
 #include <QSplitter>
 #include <QToolBar>
 #include <QToolButton>
@@ -21,7 +37,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <tuple>
 
 namespace
 {
@@ -85,17 +103,34 @@ QPoint TileCanvas::cell_at(const QPoint& position) const
 {
     const auto size = 32.0 * zoom_;
     const auto origin = QPointF{width() / 2.0, height() / 2.0};
-    return {
-        static_cast<int>(std::floor((position.x() - origin.x()) / size)),
-        static_cast<int>(std::floor((origin.y() - position.y()) / size)),
-    };
+    const auto grid = service_->tilemap()
+        ? service_->tilemap()->grid : dragonpixel::tiles::tile_grid_settings{};
+    const auto cell = dragonpixel::tiles::unproject_cell(grid,
+        {(position.x() - origin.x()) / size, (origin.y() - position.y()) / size});
+    return {cell.x, cell.y};
+}
+
+std::optional<QRect> TileCanvas::selection() const
+{
+    if (!selection_start_ || !selection_end_) return std::nullopt;
+    return QRect{*selection_start_, *selection_end_}.normalized();
 }
 
 QRect TileCanvas::cell_rect(int x, int y) const
 {
+    return cell_polygon(x, y).boundingRect().toAlignedRect();
+}
+
+QPolygonF TileCanvas::cell_polygon(int x, int y) const
+{
     const auto size = 32.0 * zoom_;
     const auto origin = QPointF{width() / 2.0, height() / 2.0};
-    return QRectF{origin.x() + (x * size), origin.y() - ((y + 1) * size), size, size}.toAlignedRect();
+    const auto grid = service_->tilemap()
+        ? service_->tilemap()->grid : dragonpixel::tiles::tile_grid_settings{};
+    QPolygonF polygon;
+    for (const auto& point : dragonpixel::tiles::grid_collision_polygon(grid, {x, y}))
+        polygon.push_back({origin.x() + point.x * size, origin.y() - point.y * size});
+    return polygon;
 }
 
 void TileCanvas::paintEvent(QPaintEvent*)
@@ -103,10 +138,11 @@ void TileCanvas::paintEvent(QPaintEvent*)
     QPainter painter{this};
     painter.fillRect(rect(), palette().color(QPalette::Dark));
     const auto size = 32.0 * zoom_;
-    const auto min_x = static_cast<int>(std::floor(-(width() / 2.0) / size)) - 1;
-    const auto max_x = static_cast<int>(std::ceil((width() / 2.0) / size)) + 1;
-    const auto min_y = static_cast<int>(std::floor(-(height() / 2.0) / size)) - 1;
-    const auto max_y = static_cast<int>(std::ceil((height() / 2.0) / size)) + 1;
+    const auto extent = static_cast<int>(std::ceil(std::max(width(), height()) / size)) + 4;
+    const auto min_x = -extent;
+    const auto max_x = extent;
+    const auto min_y = -extent;
+    const auto max_y = extent;
     if (const auto* map = service_->tilemap(); map != nullptr && layer_ >= 0
         && layer_ < static_cast<int>(map->layers.size()))
     {
@@ -116,12 +152,27 @@ void TileCanvas::paintEvent(QPaintEvent*)
             {
                 const auto x = (chunk.x * 32) + static_cast<int>(cell.index % 32U);
                 const auto y = (chunk.y * 32) + static_cast<int>(cell.index / 32U);
-                const auto tile = std::find_if(service_->tileset()->tiles.begin(), service_->tileset()->tiles.end(),
-                    [&](const auto& value) { return value.tile_id == cell.tile_id; });
+                const dragonpixel::tiles::tile_definition* tile = nullptr;
+                const dragonpixel::tiles::tile_set_document* owner = nullptr;
+                for (const auto& set : service_->tilesets())
+                {
+                    if (!cell.tile_set_id.is_nil() && set.asset_id != cell.tile_set_id) continue;
+                    const auto found = std::find_if(set.tiles.begin(), set.tiles.end(),
+                        [&](const auto& value) { return value.tile_id == cell.tile_id; });
+                    if (found != set.tiles.end())
+                    {
+                        tile = &*found;
+                        owner = &set;
+                        break;
+                    }
+                }
                 const auto rectangle = cell_rect(x, y).adjusted(1, 1, -1, -1);
-                const auto image = tile == service_->tileset()->tiles.end()
+                const auto owner_key = owner
+                    ? QString::fromStdString(owner->asset_id.to_string()) : QString{};
+                const auto owner_atlas = atlases_.value(owner_key, atlas_);
+                const auto image = tile == nullptr
                     ? QImage{}
-                    : tile_image(atlas_, *tile, cell.flip_x, cell.flip_y,
+                    : tile_image(owner_atlas, *tile, cell.flip_x, cell.flip_y,
                           cell.rotation_quarter_turns);
                 if (!image.isNull())
                 {
@@ -133,7 +184,7 @@ void TileCanvas::paintEvent(QPaintEvent*)
                     painter.fillRect(rectangle, tile_color(cell.tile_id));
                     painter.setPen(QColor{30, 30, 30});
                     painter.drawText(rectangle, Qt::AlignCenter,
-                        tile == service_->tileset()->tiles.end()
+                        tile == nullptr
                             ? QStringLiteral("?")
                             : QString::fromStdString(tile->name).left(3));
                 }
@@ -142,15 +193,18 @@ void TileCanvas::paintEvent(QPaintEvent*)
     }
     painter.setPen(QPen{palette().color(QPalette::Mid), 1.0});
     for (int x = min_x; x <= max_x; ++x)
-    {
-        painter.drawLine(cell_rect(x, 0).topLeft().x(), 0, cell_rect(x, 0).topLeft().x(), height());
-    }
-    for (int y = min_y; y <= max_y; ++y)
-    {
-        painter.drawLine(0, cell_rect(0, y).bottom(), width(), cell_rect(0, y).bottom());
-    }
+        for (int y = min_y; y <= max_y; ++y) painter.drawPolygon(cell_polygon(x, y));
     painter.setPen(QPen{QColor{80, 180, 255}, 2.0});
     if (selected_cell_) painter.drawRect(cell_rect(selected_cell_->x(), selected_cell_->y()).adjusted(1, 1, -1, -1));
+    if (selection_start_ && selection_end_)
+    {
+        const auto top_left = cell_rect(std::min(selection_start_->x(), selection_end_->x()),
+            std::max(selection_start_->y(), selection_end_->y())).topLeft();
+        const auto bottom_right = cell_rect(std::max(selection_start_->x(), selection_end_->x()),
+            std::min(selection_start_->y(), selection_end_->y())).bottomRight();
+        painter.setBrush(QColor{80, 180, 255, 35});
+        painter.drawRect(QRect{top_left, bottom_right}.normalized());
+    }
 }
 
 void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
@@ -169,9 +223,7 @@ void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
             if (preview_rectangle && stroke_start_ && selected_brush_)
             {
                 static_cast<void>(service_->preview_rectangle(layer_, stroke_start_->x(), stroke_start_->y(),
-                    cell.x(), cell.y(), selected_brush_->tile_id, false,
-                    selected_brush_->flip_x, selected_brush_->flip_y,
-                    selected_brush_->rotation_quarter_turns));
+                    cell.x(), cell.y(), *selected_brush_));
             }
             break;
         case Tool::fill:
@@ -181,14 +233,21 @@ void TileCanvas::apply_at(const QPoint& cell, bool preview_rectangle)
         case Tool::eyedropper:
             if (const auto brush = service_->brush_at(layer_, cell.x(), cell.y()))
             {
-                emit brushPicked(QString::fromStdString(brush->tile_id.to_string()),
+                emit brushPicked(QString::fromStdString(brush->tile_set_id.to_string()),
+                    QString::fromStdString(brush->tile_id.to_string()),
                     brush->flip_x, brush->flip_y,
                     static_cast<int>(brush->rotation_quarter_turns));
             }
             break;
         case Tool::select:
+            selection_start_ = stroke_start_.value_or(cell);
+            selection_end_ = cell;
             selected_cell_ = cell;
             emit selectionChanged(cell.x(), cell.y());
+            update();
+            break;
+        case Tool::move:
+            selected_cell_ = cell;
             update();
             break;
     }
@@ -216,6 +275,10 @@ void TileCanvas::mouseMoveEvent(QMouseEvent* event)
     {
         apply_at(cell, true);
     }
+    else if (tool_ == Tool::select)
+    {
+        apply_at(cell, false);
+    }
     else if (cell != last_cell_ && (tool_ == Tool::paint || tool_ == Tool::erase))
     {
         apply_at(cell, false);
@@ -230,6 +293,17 @@ void TileCanvas::mouseReleaseEvent(QMouseEvent* event)
     {
         service_->commit_stroke();
     }
+    else if (tool_ == Tool::move && selection_start_ && selection_end_)
+    {
+        const auto destination = cell_at(event->position().toPoint());
+        const auto delta = destination - *stroke_start_;
+        if (service_->move_selection(layer_, selection_start_->x(), selection_start_->y(),
+                selection_end_->x(), selection_end_->y(), delta.x(), delta.y()))
+        {
+            *selection_start_ += delta;
+            *selection_end_ += delta;
+        }
+    }
     stroke_start_.reset();
     last_cell_.reset();
 }
@@ -242,6 +316,27 @@ void TileCanvas::keyPressEvent(QKeyEvent* event)
         stroke_start_.reset();
         last_cell_.reset();
         event->accept();
+        return;
+    }
+    if (selection_start_ && selection_end_ && event->key() == Qt::Key_Delete)
+    {
+        static_cast<void>(service_->delete_selection(layer_, selection_start_->x(), selection_start_->y(),
+            selection_end_->x(), selection_end_->y()));
+        event->accept();
+        return;
+    }
+    const auto delta = event->key() == Qt::Key_Left ? QPoint{-1, 0}
+        : event->key() == Qt::Key_Right ? QPoint{1, 0}
+        : event->key() == Qt::Key_Up ? QPoint{0, 1}
+        : event->key() == Qt::Key_Down ? QPoint{0, -1} : QPoint{};
+    if (selection_start_ && selection_end_ && !delta.isNull()
+        && service_->move_selection(layer_, selection_start_->x(), selection_start_->y(),
+            selection_end_->x(), selection_end_->y(), delta.x(), delta.y()))
+    {
+        *selection_start_ += delta;
+        *selection_end_ += delta;
+        event->accept();
+        update();
         return;
     }
     QWidget::keyPressEvent(event);
@@ -274,18 +369,61 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         return action;
     };
-    configure_tool(add_tool(QStringLiteral("Paint"), QStringLiteral("TilePaintTool"), TileCanvas::Tool::paint),
-        QStringLiteral("1"))->setChecked(true);
-    configure_tool(add_tool(QStringLiteral("Erase"), QStringLiteral("TileEraseTool"), TileCanvas::Tool::erase),
+    auto* paint_action = configure_tool(add_tool(QStringLiteral("Paint"), QStringLiteral("TilePaintTool"), TileCanvas::Tool::paint),
+        QStringLiteral("1"));
+    paint_action->setChecked(true);
+    auto* erase_action = configure_tool(add_tool(QStringLiteral("Erase"), QStringLiteral("TileEraseTool"), TileCanvas::Tool::erase),
         QStringLiteral("2"));
-    configure_tool(add_tool(QStringLiteral("Rect"), QStringLiteral("TileRectangleTool"), TileCanvas::Tool::rectangle),
+    auto* box_action = configure_tool(add_tool(QStringLiteral("Box"), QStringLiteral("TileRectangleTool"), TileCanvas::Tool::rectangle),
         QStringLiteral("3"));
-    configure_tool(add_tool(QStringLiteral("Fill"), QStringLiteral("TileFillTool"), TileCanvas::Tool::fill),
+    auto* fill_action = configure_tool(add_tool(QStringLiteral("Flood"), QStringLiteral("TileFillTool"), TileCanvas::Tool::fill),
         QStringLiteral("4"));
-    configure_tool(add_tool(QStringLiteral("Pick"), QStringLiteral("TileEyedropperTool"), TileCanvas::Tool::eyedropper),
+    auto* pick_action = configure_tool(add_tool(QStringLiteral("Pick"), QStringLiteral("TileEyedropperTool"), TileCanvas::Tool::eyedropper),
         QStringLiteral("5"));
-    configure_tool(add_tool(QStringLiteral("Select"), QStringLiteral("TileSelectionTool"), TileCanvas::Tool::select),
+    auto* select_action = configure_tool(add_tool(QStringLiteral("Select"), QStringLiteral("TileSelectionTool"), TileCanvas::Tool::select),
         QStringLiteral("6"));
+    auto* move_action = configure_tool(add_tool(QStringLiteral("Move"), QStringLiteral("TileMoveTool"), TileCanvas::Tool::move),
+        QStringLiteral("7"));
+    auto* shortcut_profile = new QComboBox{toolbar};
+    shortcut_profile->setObjectName(QStringLiteral("TileShortcutProfile"));
+    shortcut_profile->setAccessibleName(QStringLiteral("Tile tool shortcut profile"));
+    shortcut_profile->addItem(QStringLiteral("Familiar letters"), QStringLiteral("letters"));
+    shortcut_profile->addItem(QStringLiteral("Legacy numbers"), QStringLiteral("numbers"));
+    toolbar->addWidget(shortcut_profile);
+    const auto apply_shortcuts = [paint_action, erase_action, box_action, fill_action,
+                                     pick_action, select_action, move_action](const QString& profile) {
+        const QStringList keys = profile == QStringLiteral("numbers")
+            ? QStringList{QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("3"),
+                  QStringLiteral("4"), QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7")}
+            : QStringList{QStringLiteral("P"), QStringLiteral("E"), QStringLiteral("B"),
+                  QStringLiteral("F"), QStringLiteral("I"), QStringLiteral("S"), QStringLiteral("M")};
+        const std::array actions{paint_action, erase_action, box_action, fill_action,
+            pick_action, select_action, move_action};
+        for (std::size_t index = 0; index < actions.size(); ++index)
+        {
+            actions[index]->setShortcut(QKeySequence{keys.at(static_cast<qsizetype>(index))});
+            actions[index]->setToolTip(QStringLiteral("%1 (%2)")
+                .arg(actions[index]->text(), keys.at(static_cast<qsizetype>(index))));
+        }
+    };
+    QSettings tile_settings;
+    const auto saved_profile = tile_settings.value(
+        QStringLiteral("tiles/shortcutProfile"), QStringLiteral("letters")).toString();
+    shortcut_profile->setCurrentIndex(saved_profile == QStringLiteral("numbers") ? 1 : 0);
+    apply_shortcuts(shortcut_profile->currentData().toString());
+    connect(shortcut_profile, &QComboBox::currentIndexChanged, this,
+        [shortcut_profile, apply_shortcuts](int) {
+            const auto profile = shortcut_profile->currentData().toString();
+            apply_shortcuts(profile);
+            QSettings{}.setValue(QStringLiteral("tiles/shortcutProfile"), profile);
+        });
+    auto* reset_shortcuts = new QToolButton{toolbar};
+    reset_shortcuts->setObjectName(QStringLiteral("ResetTileShortcuts"));
+    reset_shortcuts->setText(QStringLiteral("Reset Keys"));
+    reset_shortcuts->setAccessibleName(QStringLiteral("Reset Tile tool shortcuts"));
+    toolbar->addWidget(reset_shortcuts);
+    connect(reset_shortcuts, &QToolButton::clicked, shortcut_profile,
+        [shortcut_profile] { shortcut_profile->setCurrentIndex(0); });
     toolbar->addSeparator();
     flip_x_ = new QToolButton{toolbar};
     flip_x_->setObjectName(QStringLiteral("TileBrushFlipX"));
@@ -317,10 +455,16 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     layout->addWidget(toolbar);
 
     auto* controls = new QHBoxLayout;
-    controls->addWidget(new QLabel{QStringLiteral("Layer"), this});
+    controls->addWidget(new QLabel{QStringLiteral("Active Palette"), this});
+    palettes_ = new QComboBox{this};
+    palettes_->setObjectName(QStringLiteral("ActiveTilePalette"));
+    palettes_->setAccessibleName(QStringLiteral("Active Tile Palette"));
+    palettes_->setToolTip(QStringLiteral("Selects the durable logical Tile Palette used by the brush."));
+    controls->addWidget(palettes_, 1);
+    controls->addWidget(new QLabel{QStringLiteral("Active Target"), this});
     layers_ = new QComboBox{this};
     layers_->setObjectName(QStringLiteral("TileLayer"));
-    layers_->setAccessibleName(QStringLiteral("Tilemap layer"));
+    layers_->setAccessibleName(QStringLiteral("Active Tilemap target layer"));
     controls->addWidget(layers_, 1);
     layer_visible_ = new QToolButton{this};
     layer_visible_->setObjectName(QStringLiteral("TileLayerVisible"));
@@ -362,6 +506,61 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     controls->addWidget(zoom_);
     layout->addLayout(controls);
 
+    auto* palette_controls = new QHBoxLayout;
+    auto* add_loaded_tiles = new QToolButton{this};
+    add_loaded_tiles->setObjectName(QStringLiteral("AddLoadedTilesToPalette"));
+    add_loaded_tiles->setText(QStringLiteral("Add Loaded Tiles"));
+    add_loaded_tiles->setAccessibleName(QStringLiteral("Add all loaded TileSet tiles to the active palette"));
+    palette_controls->addWidget(add_loaded_tiles);
+    auto* remove_palette_tile = new QToolButton{this};
+    remove_palette_tile->setObjectName(QStringLiteral("RemoveTileFromPalette"));
+    remove_palette_tile->setText(QStringLiteral("Remove Palette Tile"));
+    remove_palette_tile->setAccessibleName(QStringLiteral("Remove selected tile from the active palette"));
+    palette_controls->addWidget(remove_palette_tile);
+    palette_controls->addStretch(1);
+    layout->addLayout(palette_controls);
+
+    auto* brush_inspector = new QGroupBox{QStringLiteral("Brush Inspector"), this};
+    brush_inspector->setObjectName(QStringLiteral("TileBrushInspector"));
+    brush_inspector->setAccessibleName(QStringLiteral("Tile Brush Inspector"));
+    brush_inspector->setCheckable(true);
+    brush_inspector->setChecked(false);
+    auto* brush_form = new QFormLayout{brush_inspector};
+    brush_tint_ = new QLineEdit{QStringLiteral("#FFFFFFFF"), brush_inspector};
+    brush_tint_->setObjectName(QStringLiteral("TileBrushTint"));
+    brush_tint_->setAccessibleName(QStringLiteral("Brush tint in hexadecimal RGBA"));
+    brush_form->addRow(QStringLiteral("Tint"), brush_tint_);
+    const auto add_double = [brush_inspector, brush_form](const QString& label,
+                                const QString& name, double minimum, double maximum, double value) {
+        auto* field = new QDoubleSpinBox{brush_inspector};
+        field->setObjectName(name);
+        field->setRange(minimum, maximum);
+        field->setDecimals(3);
+        field->setValue(value);
+        brush_form->addRow(label, field);
+        return field;
+    };
+    brush_offset_x_ = add_double(QStringLiteral("Offset X"), QStringLiteral("TileBrushOffsetX"), -1024.0, 1024.0, 0.0);
+    brush_offset_y_ = add_double(QStringLiteral("Offset Y"), QStringLiteral("TileBrushOffsetY"), -1024.0, 1024.0, 0.0);
+    brush_rotation_degrees_ = add_double(QStringLiteral("Rotation"), QStringLiteral("TileBrushRotationDegrees"), -36000.0, 36000.0, 0.0);
+    brush_scale_x_ = add_double(QStringLiteral("Scale X"), QStringLiteral("TileBrushScaleX"), -1000.0, 1000.0, 1.0);
+    brush_scale_y_ = add_double(QStringLiteral("Scale Y"), QStringLiteral("TileBrushScaleY"), -1000.0, 1000.0, 1.0);
+    brush_elevation_ = new QSpinBox{brush_inspector};
+    brush_elevation_->setObjectName(QStringLiteral("TileBrushElevation"));
+    brush_elevation_->setRange(-1'000'000, 1'000'000);
+    brush_form->addRow(QStringLiteral("Elevation"), brush_elevation_);
+    brush_lock_color_ = new QCheckBox{QStringLiteral("Lock color"), brush_inspector};
+    brush_lock_color_->setObjectName(QStringLiteral("TileBrushLockColor"));
+    brush_form->addRow(QString{}, brush_lock_color_);
+    brush_lock_transform_ = new QCheckBox{QStringLiteral("Lock transform"), brush_inspector};
+    brush_lock_transform_->setObjectName(QStringLiteral("TileBrushLockTransform"));
+    brush_form->addRow(QString{}, brush_lock_transform_);
+    auto* apply_selection = new QPushButton{QStringLiteral("Apply to Grid Selection"), brush_inspector};
+    apply_selection->setObjectName(QStringLiteral("ApplyBrushInspectorToSelection"));
+    apply_selection->setAccessibleName(QStringLiteral("Apply Brush Inspector values to selected Tilemap cells"));
+    brush_form->addRow(QString{}, apply_selection);
+    layout->addWidget(brush_inspector);
+
     auto* splitter = new QSplitter{Qt::Horizontal, this};
     tiles_ = new QListWidget{splitter};
     tiles_->setObjectName(QStringLiteral("TileList"));
@@ -370,6 +569,9 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     tiles_->setIconSize(QSize{40, 40});
     tiles_->setResizeMode(QListView::Adjust);
     tiles_->setMinimumWidth(150);
+    tiles_->setAcceptDrops(true);
+    tiles_->viewport()->setAcceptDrops(true);
+    tiles_->viewport()->installEventFilter(this);
     canvas_ = new TileCanvas{service_, splitter};
     splitter->addWidget(tiles_);
     splitter->addWidget(canvas_);
@@ -388,10 +590,18 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     connect(zoom_, &QSlider::valueChanged, this, [this](int value) { canvas_->set_zoom(value / 100.0); });
     connect(tiles_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* current) {
         const auto id = current ? dragonpixel::core::uuid::parse(current->data(Qt::UserRole).toString().toStdString()) : std::nullopt;
-        if (id)
+        const auto set_id = current ? dragonpixel::core::uuid::parse(
+            current->data(Qt::UserRole + 1).toString().toStdString()) : std::nullopt;
+        if (id && set_id)
         {
+            const QSignalBlocker flip_x_blocker{flip_x_};
+            const QSignalBlocker flip_y_blocker{flip_y_};
+            flip_x_->setChecked(current->data(Qt::UserRole + 2).toBool());
+            flip_y_->setChecked(current->data(Qt::UserRole + 3).toBool());
+            brush_rotation_ = current->data(Qt::UserRole + 4).toUInt() % 4U;
+            rotate_->setText(QStringLiteral("Rotate %1 deg").arg(brush_rotation_ * 90U));
             canvas_->set_selected_brush(TileDocumentService::Brush{
-                *id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_});
+                *id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_, *set_id});
         }
         else
         {
@@ -400,11 +610,12 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         emit authoringStateChanged();
     });
     connect(canvas_, &TileCanvas::brushPicked, this,
-        [this](const QString& id, bool flip_x, bool flip_y, int rotation) {
+        [this](const QString& set, const QString& id, bool flip_x, bool flip_y, int rotation) {
         const auto tile_id = dragonpixel::core::uuid::parse(id.toStdString());
-        if (tile_id) select_brush(TileDocumentService::Brush{
+        const auto tile_set_id = dragonpixel::core::uuid::parse(set.toStdString());
+        if (tile_id && tile_set_id) select_brush(TileDocumentService::Brush{
             *tile_id, flip_x, flip_y,
-            static_cast<unsigned>(std::clamp(rotation, 0, 3))});
+            static_cast<unsigned>(std::clamp(rotation, 0, 3)), *tile_set_id});
     });
     connect(canvas_, &TileCanvas::selectionChanged, this, [this](int x, int y) {
         status_->setText(QStringLiteral("Selected cell (%1, %2)%3")
@@ -420,6 +631,50 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
         }
     });
     connect(service_, &TileDocumentService::diagnostic, status_, &QLabel::setText);
+    connect(apply_selection, &QPushButton::clicked, this, [this] {
+        const auto selected = canvas_->selection();
+        const auto brush = active_brush();
+        if (selected && brush)
+            static_cast<void>(service_->edit_selection(active_layer(), selected->left(), selected->top(),
+                selected->right(), selected->bottom(), *brush));
+    });
+    connect(brush_tint_, &QLineEdit::editingFinished, this, &TilePaletteWidget::update_brush);
+    for (auto* field : {brush_offset_x_, brush_offset_y_, brush_rotation_degrees_,
+             brush_scale_x_, brush_scale_y_})
+        connect(field, &QDoubleSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
+    connect(brush_elevation_, &QSpinBox::valueChanged, this, &TilePaletteWidget::update_brush);
+    connect(brush_lock_color_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
+    connect(brush_lock_transform_, &QCheckBox::toggled, this, &TilePaletteWidget::update_brush);
+
+    connect(add_loaded_tiles, &QToolButton::clicked, this, [this] {
+        if (service_->palette() == nullptr) return;
+        int next = static_cast<int>(service_->palette()->cells.size());
+        for (const auto& set : service_->tilesets())
+            for (const auto& tile : set.tiles)
+            {
+                const auto exists = std::any_of(service_->palette()->cells.begin(), service_->palette()->cells.end(),
+                    [&](const auto& cell) {
+                        return cell.tile.tile_set_id == set.asset_id && cell.tile.tile_id == tile.tile_id;
+                    });
+                if (!exists)
+                {
+                    static_cast<void>(service_->add_palette_cell(next % 16, next / 16,
+                        TileDocumentService::Brush{tile.tile_id, false, false, 0U, set.asset_id}));
+                    ++next;
+                }
+            }
+    });
+    connect(remove_palette_tile, &QToolButton::clicked, this, [this] {
+        const auto brush = active_brush();
+        const auto* palette = service_->palette();
+        if (!brush || palette == nullptr) return;
+        const auto cell = std::find_if(palette->cells.begin(), palette->cells.end(), [&](const auto& candidate) {
+            return candidate.tile.tile_set_id == brush->tile_set_id
+                && candidate.tile.tile_id == brush->tile_id;
+        });
+        if (cell != palette->cells.end())
+            static_cast<void>(service_->remove_palette_cell(cell->u, cell->v));
+    });
 
     connect(flip_x_, &QToolButton::toggled, this, [this] { update_brush(); });
     connect(flip_y_, &QToolButton::toggled, this, [this] { update_brush(); });
@@ -488,15 +743,105 @@ TilePaletteWidget::TilePaletteWidget(TileDocumentService* service, QWidget* pare
     });
 }
 
+bool TilePaletteWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != tiles_->viewport()) return QWidget::eventFilter(watched, event);
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)
+    {
+        auto* drag = static_cast<QDragMoveEvent*>(event);
+        if (drag->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        {
+            drag->acceptProposedAction();
+            return true;
+        }
+    }
+    if (event->type() != QEvent::Drop) return QWidget::eventFilter(watched, event);
+    auto* drop = static_cast<QDropEvent*>(event);
+    if (!drop->mimeData()->hasFormat(QStringLiteral("application/x-dragonpixel-project-item")))
+        return QWidget::eventFilter(watched, event);
+    const auto payload = QJsonDocument::fromJson(drop->mimeData()->data(
+        QStringLiteral("application/x-dragonpixel-project-item"))).object();
+    if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+        || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+        || service_->palette() == nullptr)
+    {
+        status_->setText(QStringLiteral("Open a durable Tile Palette before adding dropped assets."));
+        return true;
+    }
+    std::vector<const dragonpixel::tiles::tile_set_document*> owners;
+    for (const auto& item : payload.value(QStringLiteral("items")).toArray())
+    {
+        const auto object = item.toObject();
+        const auto asset_id = dragonpixel::core::uuid::parse(
+            object.value(QStringLiteral("assetId")).toString().toStdString());
+        const auto asset_type = object.value(QStringLiteral("assetType")).toString().toLower();
+        if (!asset_id) continue;
+        for (const auto& set : service_->tilesets())
+        {
+            const auto matches_set = asset_type.contains(QStringLiteral("tileset"))
+                && set.asset_id == *asset_id;
+            const auto matches_image = (asset_type.contains(QStringLiteral("sprite"))
+                    || asset_type.contains(QStringLiteral("image"))
+                    || asset_type.contains(QStringLiteral("texture")))
+                && std::find(set.texture_asset_ids.begin(), set.texture_asset_ids.end(), *asset_id)
+                    != set.texture_asset_ids.end();
+            if ((matches_set || matches_image)
+                && std::find(owners.begin(), owners.end(), &set) == owners.end()) owners.push_back(&set);
+        }
+    }
+    if (owners.empty())
+    {
+        status_->setText(QStringLiteral(
+            "Drop a loaded image or TileSet here. Activate a different TileSet or palette in Project Explorer first."));
+        return true;
+    }
+    int next = static_cast<int>(service_->palette()->cells.size());
+    for (const auto* owner : owners)
+        for (const auto& tile : owner->tiles)
+        {
+            const auto exists = std::any_of(service_->palette()->cells.begin(), service_->palette()->cells.end(),
+                [&](const auto& cell) {
+                    return cell.tile.tile_set_id == owner->asset_id && cell.tile.tile_id == tile.tile_id;
+                });
+            if (!exists && service_->add_palette_cell(next % 16, next / 16,
+                    TileDocumentService::Brush{tile.tile_id, false, false, 0U, owner->asset_id})) ++next;
+        }
+    drop->acceptProposedAction();
+    return true;
+}
+
 bool TilePaletteWidget::load_documents(
     const QString& tilemap_path,
     const QString& tileset_path,
-    const QString& texture_path)
+    const QString& texture_path,
+    const QString& palette_path)
 {
-    texture_path_ = texture_path;
+    return load_documents(tilemap_path, QStringList{tileset_path},
+        QStringList{texture_path}, palette_path);
+}
+
+bool TilePaletteWidget::load_documents(
+    const QString& tilemap_path,
+    const QStringList& tileset_paths,
+    const QStringList& texture_paths,
+    const QString& palette_path)
+{
+    texture_path_ = texture_paths.isEmpty() ? QString{} : texture_paths.constFirst();
     atlas_ = texture_path_.isEmpty() ? QImage{} : QImage{texture_path_};
+    atlases_.clear();
+    for (qsizetype index = 0; index < tileset_paths.size(); ++index)
+    {
+        QFile set_file{tileset_paths.at(index)};
+        if (!set_file.open(QIODevice::ReadOnly)) continue;
+        const auto parsed = dragonpixel::tiles::read_tile_set(set_file.readAll().toStdString());
+        if (!parsed.succeeded()) continue;
+        const auto texture = index < texture_paths.size() && !texture_paths.at(index).isEmpty()
+            ? QImage{texture_paths.at(index)} : QImage{};
+        atlases_.insert(QString::fromStdString(parsed.document->asset_id.to_string()), texture);
+    }
     canvas_->set_atlas(atlas_);
-    const auto loaded = service_->load(tilemap_path, tileset_path);
+    canvas_->set_atlases(atlases_);
+    const auto loaded = service_->load(tilemap_path, tileset_paths, palette_path);
     if (loaded) rebuild();
     return loaded;
 }
@@ -517,9 +862,20 @@ std::optional<TileDocumentService::Brush> TilePaletteWidget::active_brush() cons
     if (item == nullptr) return std::nullopt;
     const auto tile_id = dragonpixel::core::uuid::parse(
         item->data(Qt::UserRole).toString().toStdString());
-    if (!tile_id) return std::nullopt;
+    const auto tile_set_id = dragonpixel::core::uuid::parse(
+        item->data(Qt::UserRole + 1).toString().toStdString());
+    if (!tile_id || !tile_set_id) return std::nullopt;
+    auto tint = QColor{brush_tint_->text().trimmed()};
+    if (!tint.isValid()) tint = Qt::white;
     return TileDocumentService::Brush{
-        *tile_id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_ % 4U};
+        *tile_id, flip_x_->isChecked(), flip_y_->isChecked(), brush_rotation_ % 4U,
+        *tile_set_id,
+        {tint.redF(), tint.greenF(), tint.blueF(), tint.alphaF()},
+        {brush_offset_x_->value(), brush_offset_y_->value()},
+        brush_rotation_degrees_->value(),
+        {brush_scale_x_->value(), brush_scale_y_->value()},
+        brush_elevation_->value(), brush_lock_color_->isChecked(),
+        brush_lock_transform_->isChecked()};
 }
 
 void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
@@ -528,7 +884,10 @@ void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
     const QSignalBlocker tile_blocker{tiles_};
     for (int row = 0; row < tiles_->count(); ++row)
     {
-        if (tiles_->item(row)->data(Qt::UserRole).toString() == id)
+        if (tiles_->item(row)->data(Qt::UserRole).toString() == id
+            && (brush.tile_set_id.is_nil()
+                || tiles_->item(row)->data(Qt::UserRole + 1).toString()
+                    == QString::fromStdString(brush.tile_set_id.to_string())))
         {
             tiles_->setCurrentRow(row);
             break;
@@ -540,6 +899,17 @@ void TilePaletteWidget::select_brush(const TileDocumentService::Brush& brush)
     flip_y_->setChecked(brush.flip_y);
     brush_rotation_ = brush.rotation_quarter_turns % 4U;
     rotate_->setText(QStringLiteral("Rotate %1 deg").arg(brush_rotation_ * 90U));
+    brush_tint_->setText(QColor::fromRgbF(brush.tint.red, brush.tint.green,
+        brush.tint.blue, brush.tint.alpha)
+        .name(QColor::HexArgb));
+    brush_offset_x_->setValue(brush.offset.x);
+    brush_offset_y_->setValue(brush.offset.y);
+    brush_rotation_degrees_->setValue(brush.rotation_degrees);
+    brush_scale_x_->setValue(brush.scale.x);
+    brush_scale_y_->setValue(brush.scale.y);
+    brush_elevation_->setValue(brush.elevation);
+    brush_lock_color_->setChecked(brush.lock_color);
+    brush_lock_transform_->setChecked(brush.lock_transform);
     update_brush();
 }
 
@@ -572,8 +942,21 @@ void TilePaletteWidget::rebuild()
     rebuilding_ = true;
     const auto selected_layer_id = layers_->currentData().toString();
     const auto selected_tile = tiles_->currentItem() ? tiles_->currentItem()->data(Qt::UserRole).toString() : QString{};
+    const auto selected_set = tiles_->currentItem()
+        ? tiles_->currentItem()->data(Qt::UserRole + 1).toString() : QString{};
     const QSignalBlocker layer_blocker{layers_};
     const QSignalBlocker tile_blocker{tiles_};
+    const QSignalBlocker palette_blocker{palettes_};
+    palettes_->clear();
+    if (const auto* palette = service_->palette())
+    {
+        palettes_->addItem(QString::fromStdString(palette->name),
+            QString::fromStdString(palette->asset_id.to_string()));
+    }
+    else
+    {
+        palettes_->addItem(QStringLiteral("TileSet preview (not a palette)"));
+    }
     layers_->clear();
     for (const auto& layer : map->layers)
     {
@@ -585,10 +968,13 @@ void TilePaletteWidget::rebuild()
     layers_->setCurrentIndex(restored_layer >= 0 ? restored_layer : 0);
     canvas_->set_layer(layers_->currentIndex());
     tiles_->clear();
-    for (const auto& tile : set->tiles)
-    {
+    const auto append_tile = [&](const dragonpixel::tiles::tile_set_document& owner,
+                                 const dragonpixel::tiles::tile_definition& tile,
+                                 bool flip_x, bool flip_y, unsigned rotation) {
+        const auto owner_id = QString::fromStdString(owner.asset_id.to_string());
         QPixmap preview;
-        const auto image = tile_image(atlas_, tile, false, false, 0U);
+        const auto image = tile_image(atlases_.value(owner_id, atlas_), tile,
+            flip_x, flip_y, rotation);
         if (!image.isNull())
         {
             preview = QPixmap::fromImage(image).scaled(
@@ -601,16 +987,44 @@ void TilePaletteWidget::rebuild()
         }
         auto* item = new QListWidgetItem{QIcon{preview}, QString::fromStdString(tile.name), tiles_};
         item->setData(Qt::UserRole, QString::fromStdString(tile.tile_id.to_string()));
+        item->setData(Qt::UserRole + 1, owner_id);
+        item->setData(Qt::UserRole + 2, flip_x);
+        item->setData(Qt::UserRole + 3, flip_y);
+        item->setData(Qt::UserRole + 4, rotation);
         item->setToolTip(QStringLiteral("%1\n%2")
             .arg(QString::fromStdString(tile.name), QString::fromStdString(tile.tile_id.to_string())));
-        if (item->data(Qt::UserRole).toString() == selected_tile) tiles_->setCurrentItem(item);
+        if (item->data(Qt::UserRole).toString() == selected_tile
+            && owner_id == selected_set) tiles_->setCurrentItem(item);
+    };
+    if (const auto* palette = service_->palette())
+    {
+        auto cells = palette->cells;
+        std::sort(cells.begin(), cells.end(), [](const auto& left, const auto& right) {
+            return std::tie(left.v, left.u) < std::tie(right.v, right.u);
+        });
+        for (const auto& cell : cells)
+        {
+            const auto owner = std::find_if(service_->tilesets().begin(), service_->tilesets().end(),
+                [&](const auto& candidate) { return candidate.asset_id == cell.tile.tile_set_id; });
+            if (owner == service_->tilesets().end()) continue;
+            const auto tile = std::find_if(owner->tiles.begin(), owner->tiles.end(),
+                [&](const auto& candidate) { return candidate.tile_id == cell.tile.tile_id; });
+            if (tile != owner->tiles.end())
+                append_tile(*owner, *tile, cell.flip_x, cell.flip_y, cell.rotation_quarter_turns);
+        }
+    }
+    else
+    {
+        for (const auto& owner : service_->tilesets())
+            for (const auto& tile : owner.tiles) append_tile(owner, tile, false, false, 0U);
     }
     if (tiles_->currentItem() == nullptr && tiles_->count() > 0) tiles_->setCurrentRow(0);
     rebuilding_ = false;
     update_brush();
     update_layer_controls();
-    status_->setText(QStringLiteral("%1 | %2 layers | %3 tiles | Atlas %4%5")
-        .arg(QString::fromStdString(map->name)).arg(map->layers.size()).arg(set->tiles.size())
+    status_->setText(QStringLiteral("%1 | %2 targets | %3 palette cells | %4 TileSet(s) | Atlas %5%6")
+        .arg(QString::fromStdString(map->name)).arg(map->layers.size()).arg(tiles_->count())
+        .arg(service_->tilesets().size())
         .arg(atlas_.isNull() ? QStringLiteral("unavailable") : QStringLiteral("ready"))
         .arg(service_->is_dirty() ? QStringLiteral(" | Unsaved") : QString{}));
     canvas_->update();
