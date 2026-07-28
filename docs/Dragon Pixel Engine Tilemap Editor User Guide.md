@@ -74,7 +74,7 @@ The Tile Palette toolbar provides:
 | Select | S | 7 | Select a grid rectangle for property or structural editing. |
 | Move | M | 8 | Move the selected rectangle without losing cell properties. |
 
-Choose the shortcut profile in the toolbar. The selection is per-user, non-authoritative editor state. **Reset Keys** returns to the familiar-letter profile. Escape cancels an active stroke, Delete removes the current grid selection, and arrow keys move it one cell.
+Choose the shortcut profile in the toolbar. The selection is per-user, non-authoritative editor state. Choose **Edit Keys...** to create a Custom profile for all eight tools; empty or duplicate bindings are rejected before they are saved. **Reset Keys** clears the custom bindings and returns to the familiar-letter profile. Escape cancels an active stroke, Delete removes the current grid selection, and arrow keys move it one cell.
 
 Scene View painting is enabled only in 2D authoring mode with a valid target, layer, palette brush, and stopped runtime. Play and 3D modes cannot mutate authored Tilemap data.
 
@@ -84,8 +84,11 @@ Scene View painting is enabled only in 2D authoring mode with a valid target, la
 - **Random Selection:** chooses among selected tiles from stable map/layer/cell/type seeds. Repainting the same inputs produces the same output.
 - **Group Stamp:** preserves selected palette offsets with a configurable gap and cell limit.
 - **GameObject:** places linked prefab instances or deep duplicates of selected scene roots.
+- **Custom Extension:** asks the selected Custom Tile's declared project-local worker module for a bounded command proposal.
 
 GameObject Brush placements become children of the active Tilemap2D target and receive stable map, layer, cell, and source metadata. Erase acts only on matching placement metadata; unrelated scene objects are never deleted by proximity or name.
+
+Custom Extension requests carry an immutable map/layer/cell/layout context and stable seed to the disposable Preview worker. The editor rejects stale, malformed, over-limit, unknown-TileSet, or unknown-tile commands, and applies an accepted proposal as one Tile workspace Undo transaction. A missing, incompatible, timed-out, or failed extension leaves authored data unchanged and disables only that custom behavior.
 
 The Brush Inspector edits tint, local offset, arbitrary rotation, scale, elevation, color lock, and transform lock. Flip X, Flip Y, and quarter-turn rotation remain available in the toolbar.
 
@@ -100,6 +103,10 @@ Use **Select** to define a rectangular region. The selected cells can be:
 - shifted transactionally by inserting or deleting the selected row or column span.
 
 Each accepted operation is one Tile workspace Undo item. Invalid or over-limit operations leave the document unchanged.
+
+## Safely re-slice a TileSet
+
+Select a TileSet, expand **Tile Definition Editor**, and choose **Re-slice TileSet...**. Automatic, Cell Size, and Cell Count modes share the TileSet's offset, padding, empty-cell, pivot, and collision controls. The preview reuses stable IDs and complete typed definitions for unchanged sprite regions. It refuses to remove definitions referenced by a loaded Tilemap, palette, Rule Tile, or Rule Override; unreferenced removals require confirmation. An accepted re-slice is undoable and is not published until normal Save or Save All succeeds atomically.
 
 ## Tile Definition Editor
 
@@ -142,6 +149,12 @@ The Grid and Layer Renderer panel supports:
 
 Projection, inverse picking, neighbors, line traversal, and collision footprints come from one portable native grid owner shared by editor and runtime lowering.
 
+## Tilemap collision
+
+Tile definitions may use **None**, **Grid**, or **Sprite Outline** collider modes. Grid collision uses the selected layout's exact cell footprint. Sprite Outline uses the authored outline after pivot, anchor, local offset, flips, scale, arbitrary rotation, and grid projection; simple concave outlines are deterministically triangulated into neutral convex polygons instead of being replaced by an axis-aligned box.
+
+`TilemapCollider2D` exposes material/filter settings and an opt-in composite mode. Composite lowering joins only safe contiguous, untransformed rectangular Grid cells; transformed, outlined, animated, or non-rectangular cells remain separate neutral shapes. Runtime Box2D handles are transient and never enter saved Tilemap data.
+
 ## Saving, Undo, and recovery
 
 - **Save** atomically publishes the scene and every dirty affected TileSet, palette, and Tilemap.
@@ -157,10 +170,10 @@ Opening a file never upgrades it merely because a newer reader exists. Unknown o
 
 Runtime snapshot v5 carries resolved grid projection, multiple TileSets/textures, typed tile results, per-cell properties, animation data, renderer settings, picking data, and neutral collision intent. Snapshot v4 remains explicitly readable.
 
-MonoGame and KNI have separate adapter implementations. KNI remains experimental; local focused evidence does not establish production KNI or complete cross-platform support. Hosted Windows, Ubuntu, and macOS Release/ASan gates and the unchanged frame/input thresholds remain authoritative.
+MonoGame and KNI have separate adapter implementations. KNI remains experimental. The current branch passes the complete local Windows matrix at **63/63 in 570.78 seconds Release** and **63/63 in 895.30 seconds MSVC AddressSanitizer**, and its 189-record production bundle hash-verifies with a passing packaged MonoGame smoke test. These local results do not establish production KNI or complete cross-platform support; hosted Windows, Ubuntu, and macOS Release/ASan gates and the unchanged frame/input thresholds remain authoritative.
 
 ## Current draft limitations
 
-PR #6 remains a draft while final aggregate and hosted evidence is incomplete. The current implementation deliberately does not provide Unity branding, icons, serialized formats, C# TileBase/GridBrush APIs, render-pipeline-specific fields, XML Tiled import, object-layer import, image-collection TileSets, reimport/merge, plugin installation/update, a marketplace, or trusted in-editor native code.
+PR #6 remains a draft because the required six hosted Windows, Ubuntu, and macOS Release/ASan jobs are not all green. The current implementation deliberately does not provide Unity branding, icons, serialized formats, C# TileBase/GridBrush APIs, render-pipeline-specific fields, XML Tiled import, object-layer import, image-collection TileSets, reimport/merge, plugin installation/update, a marketplace, or trusted in-editor native code.
 
-Sprite-outline and non-rectangular composite collision acceptance remains bounded by the engine-owned neutral physics contract and must not be represented as complete Box2D polygon/composite evidence until its named final matrix is recorded. Native brush proposals are validated in the disposable host, but project-authored custom brush UI remains disabled unless an accepted editor command bridge is present. These limits preserve authored data and keep unsupported behavior visible.
+The custom extension workflow is project-local, explicit-build, worker-only functionality; it is not the general plugin installation lifecycle governed by POC P. Composite collision intentionally handles only shapes that can be merged without changing their authored geometry. Unsupported cases remain separate or diagnosable rather than being silently approximated. These limits preserve authored data and keep unsupported behavior visible.
