@@ -1,8 +1,6 @@
 #include <dragonpixel/tiles/tile_evaluator.h>
 
 #include <algorithm>
-#include <array>
-#include <bit>
 #include <cmath>
 #include <limits>
 
@@ -14,6 +12,13 @@ void mix(std::uint64_t& value, std::uint8_t byte) noexcept
 {
     value ^= byte;
     value *= 1099511628211ULL;
+}
+
+void mix_integer(std::uint64_t& value, int integer) noexcept
+{
+    const auto bits = static_cast<std::uint32_t>(integer);
+    for (unsigned shift = 0; shift < 32U; shift += 8U)
+        mix(value, static_cast<std::uint8_t>((bits >> shift) & 0xffU));
 }
 
 double unit_random(std::uint64_t seed) noexcept
@@ -129,8 +134,8 @@ std::uint64_t stable_tile_seed(core::uuid map_id, core::uuid layer_id,
     std::uint64_t result = 1469598103934665603ULL;
     for (const auto byte : map_id.bytes()) mix(result, byte);
     for (const auto byte : layer_id.bytes()) mix(result, byte);
-    for (const auto byte : std::bit_cast<std::array<std::uint8_t, sizeof(cell.x)>>(cell.x)) mix(result, byte);
-    for (const auto byte : std::bit_cast<std::array<std::uint8_t, sizeof(cell.y)>>(cell.y)) mix(result, byte);
+    mix_integer(result, cell.x);
+    mix_integer(result, cell.y);
     for (const auto byte : type_seed) mix(result, static_cast<std::uint8_t>(byte));
     return result;
 }
@@ -186,7 +191,7 @@ tile_evaluation evaluate_tile(const tile_definition& definition, tile_reference 
             });
             if (!matched) continue;
             result.matched_rule = true;
-            result.rotation_quarter_turns = variant.rotation;
+            result.rotation_quarter_turns = variant.rotation % 4U;
             result.topology_rotation_steps = variant.rotation;
             result.flip_x = variant.flip_x;
             result.flip_y = variant.flip_y;
