@@ -914,6 +914,32 @@ constexpr int project_sort_role = Qt::UserRole + 1000;
     const QString& path,
     const QString& identifier)
 {
+    const auto natural_key = [](const QString& value) {
+        const auto folded = value.toCaseFolded();
+        QString result;
+        result.reserve(folded.size() + 16);
+        for (qsizetype index = 0; index < folded.size();)
+        {
+            if (!folded.at(index).isDigit())
+            {
+                result.append(folded.at(index));
+                ++index;
+                continue;
+            }
+            auto end = index;
+            while (end < folded.size() && folded.at(end).isDigit()) ++end;
+            const auto digits = folded.sliced(index, end - index);
+            auto significant = digits;
+            while (significant.size() > 1 && significant.front() == QLatin1Char('0'))
+                significant.removeFirst();
+            result.append(QLatin1Char('\x01'));
+            result.append(QStringLiteral("%1").arg(significant.size(), 8, 10, QLatin1Char('0')));
+            result.append(significant);
+            result.append(QStringLiteral("%1").arg(digits.size(), 8, 10, QLatin1Char('0')));
+            index = end;
+        }
+        return result;
+    };
     int group = 2;
     if (kind == ProjectItemKind::manifest)
     {
@@ -925,7 +951,54 @@ constexpr int project_sort_role = Qt::UserRole + 1000;
     }
     return QStringLiteral("%1|%2|%3|%4|%5")
         .arg(group)
-        .arg(name.toCaseFolded(), name, path, identifier);
+        .arg(natural_key(name), name, path, identifier);
+}
+
+[[nodiscard]] QIcon project_item_icon(ProjectItemKind kind, const QString& asset_type)
+{
+    auto standard = QStyle::SP_FileIcon;
+    auto theme = QStringLiteral("text-x-generic");
+    switch (kind)
+    {
+    case ProjectItemKind::project:
+        standard = QStyle::SP_DirHomeIcon;
+        theme = QStringLiteral("folder-development");
+        break;
+    case ProjectItemKind::folder:
+        standard = QStyle::SP_DirIcon;
+        theme = QStringLiteral("folder");
+        break;
+    case ProjectItemKind::scene:
+        standard = QStyle::SP_FileDialogDetailedView;
+        theme = QStringLiteral("applications-graphics");
+        break;
+    case ProjectItemKind::prefab:
+        standard = QStyle::SP_DirLinkIcon;
+        theme = QStringLiteral("package-x-generic");
+        break;
+    case ProjectItemKind::component_source:
+        standard = QStyle::SP_FileIcon;
+        theme = QStringLiteral("text-x-script");
+        break;
+    case ProjectItemKind::component_manifest:
+    case ProjectItemKind::manifest:
+        standard = QStyle::SP_FileDialogInfoView;
+        theme = QStringLiteral("application-json");
+        break;
+    case ProjectItemKind::asset:
+        if (asset_type.contains(QStringLiteral("sprite"), Qt::CaseInsensitive)
+            || asset_type.contains(QStringLiteral("texture"), Qt::CaseInsensitive))
+        {
+            theme = QStringLiteral("image-x-generic");
+        }
+        else if (asset_type.contains(QStringLiteral("audio"), Qt::CaseInsensitive))
+        {
+            theme = QStringLiteral("audio-x-generic");
+        }
+        break;
+    }
+    const auto fallback = QApplication::style()->standardIcon(standard);
+    return QIcon::fromTheme(theme, fallback);
 }
 
 struct ProjectRowPresentation final
@@ -1041,6 +1114,7 @@ struct ProjectRowPresentation final
         items.push_back(item);
     }
     auto* name_item = items.constFirst();
+    name_item->setIcon(project_item_icon(row.kind, row.asset_type));
     name_item->setAccessibleText(
         QStringLiteral("%1, %2, %3")
             .arg(row.name, row.kind_type, status_display_name(row.status)));
