@@ -15,6 +15,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPalette>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStyle>
 #include <QDoubleSpinBox>
@@ -144,6 +145,16 @@ bool ProjectFolderProxyModel::filterAcceptsRow(
     return kind == ProjectItemKind::project || kind == ProjectItemKind::folder;
 }
 
+bool ProjectFolderProxyModel::filterAcceptsColumn(
+    int source_column,
+    const QModelIndex&) const
+{
+    // The folder pane is navigation, not an alternate metadata table. Keep
+    // its public model structurally single-column so a source-model reset can
+    // never expose identifiers, paths, or diagnostic fields in the tree.
+    return source_column == static_cast<int>(ProjectColumn::name);
+}
+
 void ProjectFilterProxyModel::set_search_text(QString text)
 {
     text = text.trimmed();
@@ -230,6 +241,17 @@ bool ProjectFilterProxyModel::filterAcceptsRow(
     return accepts_source_row(source_row, source_parent);
 }
 
+bool ProjectFilterProxyModel::filterAcceptsColumn(
+    int source_column,
+    const QModelIndex&) const
+{
+    // Project Window content presents the immediate folder contents by name
+    // and kind. Rich index diagnostics remain available through roles,
+    // tooltips, the details pane, and the authoritative source model.
+    return source_column == static_cast<int>(ProjectColumn::name)
+        || source_column == static_cast<int>(ProjectColumn::kind_type);
+}
+
 bool ProjectFilterProxyModel::accepts_source_row(
     int source_row,
     const QModelIndex& source_parent) const
@@ -301,18 +323,62 @@ bool ProjectFilterProxyModel::row_matches_text(const QModelIndex& source_index) 
     {
         return false;
     }
-    for (auto column = 0; column < model->columnCount(source_index.parent()); ++column)
+
+    const auto terms = search_text_.split(
+        QRegularExpression{QStringLiteral("\\s+")}, Qt::SkipEmptyParts);
+    QStringList type_terms;
+    QStringList status_terms;
+    QStringList text_terms;
+    for (const auto& term : terms)
     {
-        if (source_index.siblingAtColumn(column).data(Qt::DisplayRole).toString().contains(
-                search_text_,
-                Qt::CaseInsensitive))
+        if (term.startsWith(QStringLiteral("t:"), Qt::CaseInsensitive)
+            && term.size() > 2)
         {
-            return true;
+            type_terms.push_back(term.sliced(2));
+        }
+        else if (term.startsWith(QStringLiteral("s:"), Qt::CaseInsensitive)
+            && term.size() > 2)
+        {
+            status_terms.push_back(term.sliced(2));
+        }
+        else
+        {
+            text_terms.push_back(term);
         }
     }
+
+    const auto type_tokens = source_index.data(EditorRoles::project_type_filter)
+                                 .toString()
+                                 .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (!type_terms.isEmpty()
+        && std::none_of(type_terms.cbegin(), type_terms.cend(), [&](const auto& type) {
+               return type_tokens.contains(type, Qt::CaseInsensitive);
+           }))
+    {
+        return false;
+    }
+    if (!status_terms.isEmpty()
+        && std::none_of(status_terms.cbegin(), status_terms.cend(), [&](const auto& status) {
+               return source_index.data(EditorRoles::project_status_filter).toString().compare(
+                          status, Qt::CaseInsensitive) == 0;
+           }))
+    {
+        return false;
+    }
+
     const auto diagnostics = source_index.data(EditorRoles::project_diagnostics).toStringList();
-    return std::any_of(diagnostics.cbegin(), diagnostics.cend(), [&](const auto& diagnostic) {
-        return diagnostic.contains(search_text_, Qt::CaseInsensitive);
+    return std::all_of(text_terms.cbegin(), text_terms.cend(), [&](const auto& term) {
+        for (auto column = 0; column < model->columnCount(source_index.parent()); ++column)
+        {
+            if (source_index.siblingAtColumn(column).data(Qt::DisplayRole).toString().contains(
+                    term, Qt::CaseInsensitive))
+            {
+                return true;
+            }
+        }
+        return std::any_of(diagnostics.cbegin(), diagnostics.cend(), [&](const auto& diagnostic) {
+            return diagnostic.contains(term, Qt::CaseInsensitive);
+        });
     });
 }
 
@@ -1842,8 +1908,14 @@ namespace
         }),
         rows.end());
     std::sort(rows.begin(), rows.end());
-    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
-    return rows;
+    QList<int> unique_rows;
+    unique_rows.reserve(rows.size());
+    for (const auto row : rows)
+    {
+        if (unique_rows.isEmpty() || unique_rows.back() != row)
+            unique_rows.push_back(row);
+    }
+    return unique_rows;
 }
 
 [[nodiscard]] QString quote_csv_field(QString value)
