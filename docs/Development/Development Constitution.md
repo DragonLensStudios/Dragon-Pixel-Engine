@@ -40,6 +40,10 @@ Dragon Pixel Engine uses GitFlow.
 
 No feature is considered finished until it has a reviewed pull request into `develop`.
 
+Multiple independent feature branches may be active and reviewed concurrently. Each owns one cohesive scope, starts from the then-current `develop`, records an owner and affected boundaries, and normally targets `develop`. Parallel work does not waive aggregate review after another PR merges.
+
+A genuinely dependent feature may be stacked on one unmerged `feature/*` branch only when both plans and PRs declare the dependency, overlap, ownership, merge order, retarget procedure, and required post-parent verification. The child cannot merge first. After the parent merges, the child is updated and retargeted to current `develop`, its aggregate diff is reviewed, and affected evidence is rerun. Shared history is not force-pushed without explicit contributor coordination.
+
 ## Feature Lifecycle
 
 Each feature moves through:

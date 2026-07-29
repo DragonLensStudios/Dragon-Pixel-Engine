@@ -1,8 +1,8 @@
 # Dragon Pixel Engine LLM Prompt Source
 
 > **Document role:** Prompt and generated-result provenance  
-> **Design revision:** `DPE-ARCH-0015`
-> **Result revision:** `RESULT-DPE-ARCH-0015`
+> **Design revision:** `DPE-ARCH-0016`
+> **Result revision:** `RESULT-DPE-ARCH-0016`
 > **Last reviewed:** 2026-07-28
 > **Design paths:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md` and `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`  
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine LLM Prompt Source.md`  
@@ -567,6 +567,21 @@ The user approved expanding active draft PR #6 into a complete Dragon Pixel-owne
 - Expand the isolated Tiled JSON converter to multiple atlas TileSets, orthogonal/isometric/staggered/hexagonal layouts, animation, representable Wang/terrain rules, palette publication, and an explicit isometric-Z-as-Y interpretation. Continue rejecting XML, compressed/encoded, object/image-collection, reimport, and unrepresentable semantics before publication.
 - Require focused/full Windows Release and AddressSanitizer evidence plus the hosted Windows/Ubuntu/macOS Release/sanitizer matrix without changing thresholds. The work cannot promote POC K/O/P, an ADR, a slice, KNI, or a platform from partial evidence.
 
+## Project View and Team GitFlow Request and Result
+
+### Request accepted 2026-07-29
+
+The user confirmed Tilemap PR #6 was merged and selected the next feature: make the Project View cleaner and more Unity-familiar, handle folders correctly, and make asset drag/drop into the Scene dependable. The user is adding a team member and also requested a less painful GitFlow process where multiple contributors can work on bounded tasks, accumulate manually reviewed PRs, and use explicit stacked reviews when one feature genuinely depends on another.
+
+### Result `RESULT-DPE-ARCH-0016`
+
+- Keep the detached project index as the Project View read owner and `AssetService` as the only asset/folder mutation owner. Add Back, Forward, Up, clickable breadcrumbs, deterministic folder-first content, stable selection/expansion restoration, list/tile presentation, and accessible keyboard behavior without making the view a general filesystem authority.
+- Make OS import and Project-to-Project asset/folder moves resolve the visible destination and work without an open Scene. Preserve the version-1 project drag envelope, stable asset IDs, containment/collision checks, operation recovery, and diagnostic rejection of stale, cross-project, recursive, or incompatible drops.
+- Route sprite/image, prefab, Tilemap, and other supported Project-to-Scene/Hierarchy drops through the existing validated scene and prefab commands. Project organization and scene attachment remain separate operations.
+- Allow multiple independent feature PRs to be open concurrently against `develop`. Permit a feature PR to target one parent feature branch only for an explicitly documented dependency; require the child to wait, update/retarget to current `develop`, review the new aggregate diff, and rerun affected checks after the parent merges.
+- Extend CI triggers and policy tests for documented feature-to-feature PRs while retaining manual review, one cohesive feature per branch, no child-before-parent merge, and no uncoordinated force-push of shared history.
+- Do not change durable authoring formats, runtime snapshots, public ABI, managed contracts, worker protocols, or drag format version. Windows Release/MSVC AddressSanitizer and Ubuntu Release evidence are required for review handoff; macOS may remain explicitly deferred but cannot be reported as passing.
+
 ## Research Manifest
 
 Research used primary vendor/project documentation and source on 2026-07-24:
@@ -605,8 +620,8 @@ Additional primary specifications for the selected durable boundaries are JSON-R
 
 ### Result identity
 
-- **Result:** `RESULT-DPE-ARCH-0015`
-- **Design:** `DPE-ARCH-0015`
+- **Result:** `RESULT-DPE-ARCH-0016`
+- **Design:** `DPE-ARCH-0016`
 - **Disposition:** Accepted the complete 2D Tilemap Editor expansion on active draft PR #6: versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, framework-neutral renderer/collision behavior, worker-only native tile extensions, and expanded Tiled JSON conversion. Existing command/asset/recovery ownership, support thresholds, POC/ADR gates, worker isolation, original presentation, and experimental KNI status remain unchanged.
 
 ### Implementation evidence result
@@ -642,7 +657,9 @@ DPE-ARCH-0013 Windows implementation replaces the Game view's hard-coded binding
 
 The 2026-07-26 Inspector/input-settings follow-up remains within DPE-ARCH-0012/0013. It adds embedded high-contrast checked/mixed Inspector indicators; an explicit **Edit > Project Settings > Input...** route; control-map enabled state, action rename, and full binding path/scale/dead-zone editing; and generated/sample C# movers with editable Horizontal Action, Vertical Action, and Speed fields matching `Input Motion 2D`. C# creation schedules an isolated component build automatically, and the sample no longer writes movement values every frame. A new exact-source .NET test compiles and executes the canonical `MyMover` with custom action names and proves GUID/lifecycle/Transform/reset behavior. Ten focused Release aliases pass 10/10 in 133.55 seconds and their MSVC AddressSanitizer counterparts pass 10/10 in 157.17 seconds; final UI reruns pass in 87.61/108.35 seconds. The writable project builds with zero warnings/errors, the packaged MonoGame self-test passes, and all 183 bundle records verify. Physical-gamepad, aggregate Qt input-to-paint, current Ubuntu/macOS, and remaining POC J gates stay open.
 
-DPE-ARCH-0015 is an accepted implementation contract, not completed evidence. At selection time, draft PR #6 already passes its recorded Windows static-orthogonal Tilemap workflow and atomic save correction, but TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, non-orthogonal layouts, typed tiles/brushes, extension ABI, and broader Tiled conversion have not yet been implemented or verified. The active mirrored plan owns incremental results. No pre-existing Windows, hosted-platform, POC, ADR, slice, release, or KNI claim is promoted by accepting the expansion.
+DPE-ARCH-0015 was implemented and merged through reviewed PR #6 at `fa59b227e3057af603c569f1913b652d22b50c5a` on 2026-07-29. Its plan records complete local Windows Release and MSVC AddressSanitizer evidence, passing hosted Ubuntu Release and AddressSanitizer evidence, hosted Windows framebuffer limitations, and explicitly deferred macOS stabilization. That merge does not close POC K/O/P/J, an ADR, a slice, a platform support gate, a release, or KNI production support.
+
+DPE-ARCH-0016 is the active accepted implementation contract. At selection time, the existing two-pane Project Browser, stable project index, `AssetService` operations, and versioned drag paths are useful foundations, but the interactive navigation, no-Scene Project move path, retained folder state, team stack policy, and feature-target CI behavior have not yet been implemented or verified. The active mirrored plan owns incremental evidence; accepting the contract promotes no POC, ADR, slice, platform, release, or KNI claim.
 
 Current manual Windows QA opens a writable disposable sample under `out/dev`, uses the typed Inspector and indexed Project Explorer with thumbnails/import/dependency/structural status, creates a preset as one undoable transaction, runs isolated Simulate, displays actual MonoGame and KNI preview/play output, and exercises pause and stop. DPE-ARCH-0011 additionally requires Project Explorer component-source visibility and a contained detached Rider handoff from Inspector/Project actions; its focused implementation evidence is recorded in the active plan. This useful Windows workflow evidence does not complete the full 2D/3D designer, linked nested-prefab, source-authoring cross-platform, or accessibility acceptance matrices.
 
@@ -784,3 +801,4 @@ The authoritative design document contains the exact ownership rules, module tab
 | `RESULT-DPE-ARCH-0013` | `DPE-ARCH-0013` | 2026-07-26 | Accepted project-owned configurable input maps, named control maps, persistent rebinding, Qt keyboard/mouse capture, SDL 3 standard-gamepad support, and shared device-neutral movement actions for `InputMotion2D` and `MyMover` |
 | `RESULT-DPE-ARCH-0014` | `DPE-ARCH-0014` | 2026-07-27 | Accepted the Project Hub and minimal templates/clean scenes, project-v4/template-v1 implementation, asset-v3 and recoverable two-pane Project Browser operations, immutable imported-image bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors |
 | `RESULT-DPE-ARCH-0015` | `DPE-ARCH-0015` | 2026-07-28 | Accepted the complete 2D Tilemap Editor expansion with versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, runtime rendering/collision, isolated native extensions, broader Tiled JSON conversion, and unchanged evidence gates |
+| `RESULT-DPE-ARCH-0016` | `DPE-ARCH-0016` | 2026-07-29 | Accepted a service-owned Unity-familiar Project View, stable folder navigation and drag/drop, scene-independent Project moves, concurrent independent feature PRs, explicit dependent-stack review rules, and CI coverage without changing durable formats or evidence gates |

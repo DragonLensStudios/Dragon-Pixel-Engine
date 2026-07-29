@@ -2,8 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Last reviewed:** 2026-07-27
-> **Design revision:** `DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-29
+> **Design revision:** `DPE-ARCH-0016`
 
 ## Context
 
@@ -115,3 +115,7 @@ Current evidence (2026-07-25): Windows and Ubuntu now execute typed command vali
 The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices remain 36/36. Windows exercises nested/list/dictionary/polymorphic paths, component actions, tile strokes/documents, generated-component workflows, candidate project-open isolation, SHA-bound multi-file rollback/startup recovery, and injected prefab Apply failure through command-backed paths. Manual Qt QA against only the disposable writable `out/dev/Slice1Sample` copy confirmed typed Inspector editing and a GameObject preset as one transaction followed by Undo; it also confirmed real adapter preview/play controls and isolated simulation.
 
 This is not acceptance evidence for the whole decision. `EditorWindow` still contains substantial orchestration and workflow behavior instead of being composition-only, and the complete Project/Scene/Selection/Command/Metadata/Asset/RuntimeSession/Diagnostics/Workspace service split is unfinished. Hierarchy multi-drag/reorder, deletion-reference repair UX, Inspector entity/asset choosers and component ordering, all dirty prompt cases, complete automation equivalence, broader accessibility/device flows, and a current macOS POC H run remain open. This ADR therefore remains `Proposed`.
+
+## DPE-ARCH-0016 Project mutation refinement
+
+Project-to-Project organization is independent of Scene availability: stable asset and folder drops validate the project/revision/destination and propose only `AssetService` operations. Hierarchy-to-Project prefab creation still requires a valid Scene and routes through the existing prefab/scene transaction. Project-to-Scene, Hierarchy, and Inspector drops continue through their existing command owners. Navigation, expansion, view mode, and selection restoration are non-authoritative UI state and do not enter Undo history. Failure or rejection leaves project files, scene state, stable selection, dirty state, and history unchanged. This refinement adds no parallel writer or undo coordinator and does not promote ADR-0008.

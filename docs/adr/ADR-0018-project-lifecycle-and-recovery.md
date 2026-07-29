@@ -1,8 +1,8 @@
 # ADR-0018: Project Lifecycle and Recovery
 
 > **Status:** Proposed
-> **Last reviewed:** 2026-07-27
-> **Design revision:** `DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-29
+> **Design revision:** `DPE-ARCH-0016`
 
 ## Context
 
@@ -42,3 +42,7 @@ POC M must prove built-in 2D and 3D template validation, dry-run creation, conta
 Current partial Windows evidence (2026-07-25): the project index validates the originally selected manifest and project-root leaf before any recovery write, returns a canonical manifest/root pair, preserves the active session if candidate validation fails, and revalidates source snapshots. Portable relative paths use `/` grammar and reject absolute, drive, UNC, backslash, dot/dot-dot, reserved-name, invalid-character, and trailing-dot/space aliases. A global NFC/case-fold registry covers declared roots, indexed documents, and asset sources; `startupScene` must be contained by a declared scene root. Safe ancestor canonicalization accommodates platform aliases while linked manifest/root leaves remain rejected. The current strict Release matrix passes 45/45; focused project-index coverage reports 22 passed cases and one filesystem-dependent link-fixture skip.
 
 This is foundation evidence, not POC M acceptance. The current implementation does not pin directory/file handles throughout enumeration and open, detect every hard-link alias, preserve all metadata during replacement, or close link-swap/enumeration races. Windows passes the current 45/45 strict Release and 45/45 MSVC AddressSanitizer matrices, but template creation, project-v4 upgrades, discovery/recent/settings, SDK checks, archive/restore, complete failure injection, and both other platforms remain open. This ADR remains `Proposed` until POC M passes its three-platform Release and native-sanitizer evidence and the lifecycle/recovery behavior is reviewed.
+
+## DPE-ARCH-0016 Project View lifecycle refinement
+
+Project View navigation derives only from the validated current project candidate. Logical folder history, expansion, splitter, and list/tile mode are per-user state; a missing or invalid remembered folder falls back to its nearest valid ancestor or declared Assets root without creating directories or rewriting the project. Project-only organization may operate while no Scene is open, but it still requires a valid project session and `AssetService` transaction. This refinement changes no project format, creation/upgrade/archive ownership, or POC M gate, and ADR-0018 remains `Proposed`.

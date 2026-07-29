@@ -4,6 +4,18 @@
 
 ## Scope
 
+## Ownership and Review Topology
+
+- **Owner:**
+- **Base commit:**
+- **Target branch:** `develop`
+- **Parent feature / PR:** None
+- **Dependency reason:** None
+- **Known overlapping owners/files:** None
+- **Post-parent update, retarget, and verification:** Not applicable
+
+Independent PRs target `develop`. A dependent PR may temporarily target one parent `feature/*` branch only when both plans and PR bodies record the dependency, overlap, merge order, and post-parent retarget/retest steps.
+
 ## Non-Goals
 
 ## Architecture and Contract Impact
@@ -49,5 +61,6 @@ List exact commands and results.
 - [ ] Tests were added or updated with behavior
 - [ ] Valid tests or thresholds were not weakened
 - [ ] Support and milestone claims remain evidence-backed
-- [ ] This PR targets `develop`
+- [ ] This PR targets `develop`, or is an explicitly documented dependent draft targeting its parent feature branch
+- [ ] Owner, dependency/stack, overlap, and post-parent retarget fields above are accurate
 - [ ] This PR is ready for review but has not been merged

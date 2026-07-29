@@ -3,10 +3,10 @@
 > **Plan status:** In progress
 > **Disposition:** Active master delivery plan
 > **Accepted architecture at creation:** `DPE-ARCH-0008`
-> **Governing architecture:** `DPE-ARCH-0015`
+> **Governing architecture:** `DPE-ARCH-0016`
 > **Current milestone:** Milestone 1 — Close Slice 1
 > **Started:** 2026-07-25
-> **Last updated:** 2026-07-28
+> **Last updated:** 2026-07-29
 > **Repository:** `C:\Projects\Github\Engines\Dragon Pixel Engine`
 > **External mirror:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine`
 
@@ -323,3 +323,7 @@ Scope acceptance alone does not promote an ADR.
 - [ ] Record final commands, logs, artifact hashes, blockers, and handoff.
 - [ ] Verify every mirrored Markdown pair is byte-identical UTF-8/no-BOM with LF endings.
 - [ ] Mark this plan complete only after every required acceptance statement has direct evidence.
+
+## DPE-ARCH-0016 current feature handoff
+
+On 2026-07-29, human review merged Tilemap PR #6 and CI/GitFlow PR #4 into `develop`; neither merge promotes a POC, ADR, slice, release, platform, or KNI support claim. The user selected `feature/project-view-workflow` as the next bounded feature, directly from merged `develop` commit `fa59b227e3057af603c569f1913b652d22b50c5a`. The active mirrored Project View/team GitFlow plan owns service-backed folder/content navigation, scene-independent Project organization, validated Scene/Hierarchy drops, concurrent independent feature PRs, explicit dependent stacks, and Windows/Ubuntu review evidence while macOS remains explicitly deferred but visible.

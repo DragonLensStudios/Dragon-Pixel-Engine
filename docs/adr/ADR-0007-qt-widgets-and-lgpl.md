@@ -2,8 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Last reviewed:** 2026-07-27
-> **Design revision:** `DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-29
+> **Design revision:** `DPE-ARCH-0016`
 
 ## Context
 
@@ -53,3 +53,7 @@ Current evidence (2026-07-25): the Qt shell, stable docks, model-backed Hierarch
 The current macOS POC H matrix, complete drag/drop/gizmo and designer workflow coverage, full keyboard/accessibility/high-DPI/high-contrast review, distribution materials, and pre-release legal review remain open. The prior macOS registered editor tests predate this expanded POC H suite. The ADR therefore remains `Proposed`.
 
 Primary sources verified 2026-07-24: [Qt supported platforms](https://doc.qt.io/qt-6/supported-platforms.html), [`QDockWidget`](https://doc.qt.io/qt-6/qdockwidget.html), [Qt model/view programming](https://doc.qt.io/qt-6/model-view-programming.html), [Qt Widgets accessibility](https://doc.qt.io/qt-6/accessible-qwidget.html), [Qt Test overview](https://doc.qt.io/qt-6/qtest-overview.html), and [Qt LGPL obligations](https://www.qt.io/development/open-source-lgpl-obligations).
+
+## DPE-ARCH-0016 Project View refinement
+
+Project View retains Qt model/view and service ownership while adding stable logical-folder navigation, Back/Forward/Up controls, clickable breadcrumb segments, synchronized list/tile roots, deterministic folder-first presentation, and restoration of valid expansion/selection/view state after index replacement. Per-user navigation and presentation state is non-authoritative. Public Qt coverage must exercise keyboard/focus/accessibility, refresh restoration, accepted/rejected drop feedback, and both list/tile paths. Functional familiarity does not permit copied Unity artwork, branding, or exact proprietary presentation. The existing POC H, platform, distribution, accessibility, and LGPL gates remain open.

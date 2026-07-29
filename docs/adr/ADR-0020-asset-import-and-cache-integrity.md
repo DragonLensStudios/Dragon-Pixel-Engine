@@ -1,8 +1,8 @@
 # ADR-0020: Asset Import and Cache Integrity
 
 > **Status:** Proposed
-> **Design revision:** `DPE-ARCH-0015`
-> **Last reviewed:** 2026-07-27
+> **Design revision:** `DPE-ARCH-0016`
+> **Last reviewed:** 2026-07-29
 
 ## Context
 
@@ -55,3 +55,7 @@ Focused generated-Tilemap evidence (2026-07-27): `feature/tilemap-authoring-work
 - XML, encoded/compressed layers, object/image-collection layers, reimport, and unrepresentable rule/terrain semantics remain fail-before-publication cases. This expanded implementation evidence cannot close POC O without cache reconstruction/reimport and the complete three-platform matrix.
 
 Focused DPE-ARCH-0015 evidence (2026-07-28): the expanded isolated Tiled JSON worker and editor publication path accept multiple inline/external atlas TileSets, orthogonal/isometric/staggered/hexagonal maps, tile animation, conservatively representable terrain/Wang rules, optional Isometric Z-as-Y conversion, and automatic palette handoff. Every staged texture, TileSet, palette, Tilemap, identity, dependency, decoded image, and native document is validated before the existing atomic AssetService commit; unsupported input and scene-only attachment failure retain the documented no-partial-output or retained-valid-asset behavior. The complete local Windows matrices pass 63/63 in 570.78 seconds Release and 63/63 in 895.30 seconds under MSVC AddressSanitizer, and the 189-record production bundle includes/hash-verifies the importer with a passing packaged MonoGame smoke. Reimport/cache reconstruction, the rejected input classes above, and the complete hosted three-platform POC O matrix remain open, so this ADR remains `Proposed`.
+
+## DPE-ARCH-0016 Project View operation refinement
+
+Project View remains a proposal surface over `AssetService`. OS drops import into the validated visible folder; stable asset and folder drags propose contained moves and do not depend on an open Scene. Destination resolution, project/source revision, containment, case/collision, recursive-folder, stable-ID, staging, recovery, and diagnostic rules remain unchanged. The view never moves bytes directly, and a rejected or failed drop cannot partially update the index or authoritative files. This refinement adds Project View usability and regressions but does not implement reimport/cache reconstruction or close POC O; ADR-0020 remains `Proposed`.

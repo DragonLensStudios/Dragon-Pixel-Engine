@@ -1,12 +1,12 @@
 # Dragon Pixel Engine Tilemap Authoring Workspace Plan
 
-> **Status:** Ready for review locally; required hosted platform gates remain open
-> **Disposition:** Reopened on existing draft PR #6; not merged
+> **Status:** Reviewed and merged through PR #6
+> **Disposition:** Complete for feature lifecycle; remaining product/platform gates tracked separately
 > **Branch:** `feature/tilemap-authoring-workspace`
 > **Target:** `develop`
 > **Owner:** Codex implementation; human review and merge
 > **Started:** 2026-07-27
-> **Updated:** 2026-07-28
+> **Updated:** 2026-07-29
 > **Governing architecture:** `DPE-ARCH-0015`
 > **Base commit:** `8aac0e7fbc1affcbaadb26421dce6585df017a4d`
 
@@ -384,5 +384,7 @@ Each behavioral increment begins with a failing regression when practical, runs 
 | 2026-07-29 | Ubuntu rerun and PR review handoff complete | Ubuntu Release attempt 2 in hosted run `30383427936` passes **62/62 in 156.85 seconds**; generated JUnit evidence validates 62 cases with zero failures and zero errors. Together with Ubuntu ASan **62/62 in 218.22 seconds**, this closes the repairable Linux CI-host issue without a timeout, threshold, or test change. The one first-attempt MonoGame forced-crash failure is retained as intermittent evidence rather than erased. PR #6 now contains the exact local Windows and hosted Ubuntu evidence, retains the hosted-Windows OpenGL framebuffer limitation and deferred macOS gates, is marked ready for human review, and remains unmerged. Feature development on this branch is stopped. The CI/GitFlow integration and public-repository-readiness features must wait until PR #6 is reviewed and merged. |
 
 ## Handoff Notes
+
+Human review merged PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) into `develop` as `fa59b227e3057af603c569f1913b652d22b50c5a` on 2026-07-29. This supersedes the pre-merge wording retained below as historical handoff evidence. Hosted Windows framebuffer limitations, deferred macOS stabilization, ADR-0006 handle-pinning limits, complete POC K/O/P/J acceptance, and KNI production support remain open. No cross-platform, POC, ADR, slice, release, or KNI production status is promoted by the merge. The next active work is the separate DPE-ARCH-0016 Project View/team GitFlow workflow.
 
 PR [#6](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/6) contains the DPE-ARCH-0015 implementation, is marked ready for human review, and remains unmerged. The selected Tilemap behavior—including safe re-slicing, arbitrary validated shortcuts, exact Sprite Outline and safe Grid composite collision lowering, and the worker-only Custom Extension Brush bridge—is implemented with green complete local Windows Release/MSVC AddressSanitizer, hosted Ubuntu Release/ASan, production bundle, packaged MonoGame smoke, sparse-document scale, and focused recovery evidence. Hosted Windows compiles successfully but its GitHub runner lacks the required OpenGL framebuffer capability for 13 retained real-device/editor tests; macOS stabilization is deferred by explicit user direction. ADR-0006 handle-pinning limits, complete POC K/O/P/J acceptance, and KNI production support remain open. No cross-platform, POC, ADR, slice, release, or KNI production status is promoted. Feature development on this branch is stopped pending human review and merge; do not begin the CI/GitFlow integration or public-repository-readiness sequence before that boundary is complete.

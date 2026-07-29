@@ -2,8 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Last reviewed:** 2026-07-27
-> **Design revision:** `DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-29
+> **Design revision:** `DPE-ARCH-0016`
 
 ## Context
 
@@ -70,6 +70,10 @@ Current Windows and historical Ubuntu evidence (2026-07-25): native `s2.linked_p
 The current Windows strict Release and MSVC AddressSanitizer matrices both pass **45/45 tests**; ASan completes in **368.80 seconds**. Ubuntu's latest pre-DPE-ARCH-0008 Release and Clang AddressSanitizer matrices passed **36/36**; no current POC F matrix exists for Ubuntu or macOS.
 
 The gate remains incomplete. Nested-level Apply does not yet cascade child source hashes/revisions through containing prefab sources; Create from Selection requires a locally owned subtree; Apply rejects instance-added entities until durable source-ID allocation is implemented; not every override form has a dedicated case; and partial Unpack, the complete three-level public Qt/accessibility scenario, and platform-specific failure recovery remain unproven. This ADR remains `Proposed`.
+
+## DPE-ARCH-0016 Project View drag refinement
+
+The Project View presents prefab assets and Hierarchy-to-Project creation through the existing version-1 drag envelope. Prefab instantiation into Scene/Hierarchy remains linked and command-backed; creating a prefab from a locally owned Hierarchy root remains Scene-dependent and uses the established atomic prefab/scene owner. Project-only asset/folder organization does not require a Scene and cannot accidentally enter the prefab path. Stale, cross-project, linked-source, ambiguous, or incompatible drops remain fail-before-mutation cases. No prefab format or mapping contract changes, and ADR-0013 remains `Proposed`.
 
 ## Related decisions
 
