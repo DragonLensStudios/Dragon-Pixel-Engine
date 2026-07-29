@@ -2321,6 +2321,113 @@ private slots:
             std::optional<dragonpixel::core::uuid>{*group_id});
     }
 
+    void project_navigation_and_no_scene_moves_are_functional()
+    {
+        QTemporaryDir temporary;
+        QVERIFY(temporary.isValid());
+        const auto sample_root = QFileInfo{QString::fromUtf8(DPE_DEFAULT_SAMPLE_PROJECT)}.absolutePath();
+        const auto project_root = temporary.filePath(QStringLiteral("ProjectViewProject"));
+        QVERIFY(copy_directory_tree(sample_root, project_root));
+        const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
+
+        AssetService assets;
+        QVERIFY(assets.create_folder(manifest, QStringLiteral("Assets/Folder2")).succeeded);
+        QVERIFY(assets.create_folder(manifest, QStringLiteral("Assets/Folder2/Nested")).succeeded);
+        QVERIFY(assets.create_folder(manifest, QStringLiteral("Assets/Folder10")).succeeded);
+        const auto external_png = temporary.filePath(QStringLiteral("project-view-source.png"));
+        QImage image{4, 4, QImage::Format_RGBA8888};
+        image.fill(QColor{80, 150, 220, 255});
+        QVERIFY(image.save(external_png, "PNG"));
+        const auto imported = assets.import_files({
+            manifest, {external_png}, QStringLiteral("Assets"),
+            AssetImportOwnership::copy_into_project});
+        QVERIFY(imported.succeeded);
+        QCOMPARE(imported.asset_ids.size(), 1);
+
+        EditorWindow window{manifest};
+        window.set_unsaved_prompt([](const QString&) {
+            return EditorWindow::UnsavedDecision::discard;
+        });
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto* back = window.findChild<QToolButton*>(QStringLiteral("ProjectNavigateBack"));
+        auto* forward = window.findChild<QToolButton*>(QStringLiteral("ProjectNavigateForward"));
+        auto* up = window.findChild<QToolButton*>(QStringLiteral("ProjectNavigateUp"));
+        auto* folders = window.findChild<QTreeView*>(QStringLiteral("ProjectFolderTree"));
+        QVERIFY(back != nullptr && forward != nullptr && up != nullptr && folders != nullptr);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets"));
+
+        auto folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
+            QStringLiteral("Assets/Folder2"));
+        auto folder_proxy = window.project_folder_filter_->mapFromSource(folder_source);
+        QVERIFY(folder_proxy.isValid());
+        folders->setCurrentIndex(folder_proxy);
+        QCoreApplication::processEvents();
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+        QVERIFY(back->isEnabled());
+        QVERIFY(up->isEnabled());
+
+        QTest::mouseClick(up, Qt::LeftButton);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets"));
+        QTest::mouseClick(back, Qt::LeftButton);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+        QVERIFY(forward->isEnabled());
+        QTest::mouseClick(forward, Qt::LeftButton);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets"));
+
+        folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
+            QStringLiteral("Assets/Folder2/Nested"));
+        folder_proxy = window.project_folder_filter_->mapFromSource(folder_source);
+        QVERIFY(folder_proxy.isValid());
+        folders->setCurrentIndex(folder_proxy);
+        QCoreApplication::processEvents();
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2/Nested"));
+        auto* parent_segment = window.findChild<QToolButton*>(QStringLiteral("ProjectBreadcrumbSegment1"));
+        QVERIFY(parent_segment != nullptr);
+        QCOMPARE(parent_segment->text(), QStringLiteral("Folder2"));
+        QTest::mouseClick(parent_segment, Qt::LeftButton);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+
+        folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
+            QStringLiteral("Assets/Folder2"));
+        folder_proxy = window.project_folder_filter_->mapFromSource(folder_source);
+        folders->setExpanded(folder_proxy, true);
+        window.rebuild_assets();
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+        folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
+            QStringLiteral("Assets/Folder2"));
+        folder_proxy = window.project_folder_filter_->mapFromSource(folder_source);
+        QVERIFY(folder_proxy.isValid());
+        QVERIFY(folders->isExpanded(folder_proxy));
+
+        const auto asset_source = find_role(
+            window.project_model_, EditorRoles::asset_id, imported.asset_ids.front());
+        const auto destination = find_role(window.project_model_, EditorRoles::project_logical_path,
+            QStringLiteral("Assets/Folder10"));
+        QVERIFY(asset_source.isValid() && destination.isValid());
+        std::unique_ptr<QMimeData> asset_mime{window.project_model_->mimeData({asset_source})};
+        window.scene_.reset();
+        QVERIFY(window.handle_project_browser_drop(asset_mime.get(), destination));
+        const auto refreshed = ProjectIndexService{}.build_candidate(manifest);
+        QVERIFY(refreshed.succeeded());
+        const auto moved = refreshed.candidate->find_by_id(imported.asset_ids.front());
+        QVERIFY(moved != nullptr);
+        QCOMPARE(QFileInfo{moved->resolved_source_path}.absolutePath(),
+            QDir::cleanPath(QDir{project_root}.filePath(QStringLiteral("Assets/Folder10"))));
+
+        const auto refreshed_folder_source = find_role(window.project_model_,
+            EditorRoles::project_logical_path, QStringLiteral("Assets/Folder2"));
+        const auto refreshed_destination = find_role(window.project_model_,
+            EditorRoles::project_logical_path, QStringLiteral("Assets/Folder10"));
+        QVERIFY(refreshed_folder_source.isValid() && refreshed_destination.isValid());
+        std::unique_ptr<QMimeData> folder_mime{
+            window.project_model_->mimeData({refreshed_folder_source})};
+        QVERIFY(window.handle_project_browser_drop(folder_mime.get(), refreshed_destination));
+        QVERIFY(QFileInfo{QDir{project_root}.filePath(
+            QStringLiteral("Assets/Folder10/Folder2/Nested"))}.isDir());
+    }
+
     void project_and_hierarchy_domain_drops_preserve_ids_and_create_linked_prefabs()
     {
         QTemporaryDir temporary;
