@@ -340,6 +340,13 @@ private slots:
         model.rebuild(result);
         ProjectFilterProxyModel proxy;
         proxy.setSourceModel(&model);
+        QCOMPARE(proxy.columnCount(), 2);
+        QCOMPARE(proxy.headerData(0, Qt::Horizontal).toString(), QStringLiteral("Name"));
+        QCOMPARE(proxy.headerData(1, Qt::Horizontal).toString(), QStringLiteral("Kind / Type"));
+        ProjectFolderProxyModel folder_proxy;
+        folder_proxy.setSourceModel(&model);
+        QCOMPARE(folder_proxy.columnCount(), 1);
+        QCOMPARE(folder_proxy.headerData(0, Qt::Horizontal).toString(), QStringLiteral("Name"));
         QCOMPARE(entry_count(proxy), 6);
 
         proxy.set_type_filter(QStringLiteral(" SCENE "));
@@ -363,6 +370,21 @@ private slots:
             proxy, QStringLiteral("Components/Gameplay.dpecomponents")).isValid());
 
         proxy.clear_type_filter();
+        proxy.set_search_text(QStringLiteral("main scene"));
+        QCOMPARE(entry_count(proxy), 1);
+        QVERIFY(find_logical_path(proxy, QStringLiteral("Scenes/Main.dpescene")).isValid());
+        proxy.set_search_text(QStringLiteral("dragon scene"));
+        QCOMPARE(entry_count(proxy), 0);
+        proxy.set_search_text(QStringLiteral("t:scene t:prefab"));
+        QCOMPARE(entry_count(proxy), 2);
+        QVERIFY(find_logical_path(proxy, QStringLiteral("Scenes/Main.dpescene")).isValid());
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Assets/Prefabs/Actor.dpeprefab")).isValid());
+        proxy.set_search_text(QStringLiteral("t:asset s:error"));
+        QCOMPARE(entry_count(proxy), 1);
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Assets/Dragon.sprite.dpeasset")).isValid());
+        proxy.clear_search_text();
         proxy.set_status_filter(QStringLiteral("ERROR"));
         QCOMPARE(proxy.status_filter(), QStringLiteral("error"));
         QCOMPARE(entry_count(proxy), 1);

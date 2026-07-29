@@ -39,7 +39,10 @@
 #include <QSettings>
 #include <QSet>
 #include <QSignalSpy>
+#include <QSlider>
 #include <QSpinBox>
+#include <QStackedWidget>
+#include <QStandardPaths>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -1767,7 +1770,7 @@ private slots:
         auto* undo = window.findChild<QAction*>(QStringLiteral("UndoAction"));
         QVERIFY(hierarchy != nullptr && inspector != nullptr && project != nullptr);
         QVERIFY(project_type != nullptr && project_status != nullptr && console != nullptr && undo != nullptr);
-        QVERIFY(window.findChild<QPushButton*>(QStringLiteral("RefreshProjectAction")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(QStringLiteral("RefreshAssetsAction")) != nullptr);
         QVERIFY(window.findChild<QPushButton*>(QStringLiteral("ClearConsoleAction")) != nullptr);
         QVERIFY(window.findChild<QPushButton*>(QStringLiteral("CopyConsoleAction")) != nullptr);
         QVERIFY(window.findChild<QPushButton*>(QStringLiteral("ExportConsoleAction")) != nullptr);
@@ -2330,6 +2333,16 @@ private slots:
         QVERIFY(copy_directory_tree(sample_root, project_root));
         const auto manifest = QDir{project_root}.filePath(QStringLiteral("DragonPixelProject.json"));
 
+        const auto settings_path = QDir{QStandardPaths::writableLocation(
+            QStandardPaths::AppConfigLocation)}.filePath(QStringLiteral("editor-state.ini"));
+        QSettings project_view_settings{settings_path, QSettings::IniFormat};
+        const auto had_previous_favorites = project_view_settings.contains(
+            QStringLiteral("projectView/favorites"));
+        const auto previous_favorites = project_view_settings.value(
+            QStringLiteral("projectView/favorites"));
+        project_view_settings.remove(QStringLiteral("projectView/favorites"));
+        project_view_settings.sync();
+
         AssetService assets;
         QVERIFY(assets.create_folder(manifest, QStringLiteral("Assets/Folder2")).succeeded);
         QVERIFY(assets.create_folder(manifest, QStringLiteral("Assets/Folder2/Nested")).succeeded);
@@ -2355,8 +2368,129 @@ private slots:
         auto* forward = window.findChild<QToolButton*>(QStringLiteral("ProjectNavigateForward"));
         auto* up = window.findChild<QToolButton*>(QStringLiteral("ProjectNavigateUp"));
         auto* folders = window.findChild<QTreeView*>(QStringLiteral("ProjectFolderTree"));
-        QVERIFY(back != nullptr && forward != nullptr && up != nullptr && folders != nullptr);
+        auto* content = window.findChild<QTreeView*>(QStringLiteral("ProjectExplorerView"));
+        auto* create_button = window.findChild<QToolButton*>(QStringLiteral("ProjectCreateMenuButton"));
+        auto* create_menu = window.findChild<QMenu*>(QStringLiteral("ProjectCreateMenu"));
+        auto* favorites = window.findChild<QListView*>(QStringLiteral("ProjectFavoritesView"));
+        auto* search = window.findChild<QLineEdit*>(QStringLiteral("ProjectSearch"));
+        auto* save_search = window.findChild<QToolButton*>(
+            QStringLiteral("ProjectSaveSearchButton"));
+        auto* icon_size = window.findChild<QSlider*>(QStringLiteral("ProjectIconSizeSlider"));
+        auto* bottom_bar = window.findChild<QWidget*>(QStringLiteral("ProjectBottomBar"));
+        auto* project_panel = window.findChild<QWidget*>(QStringLiteral("ProjectExplorerPanel"));
+        auto* lock = window.findChild<QToolButton*>(QStringLiteral("ProjectLockButton"));
+        auto* one_column = window.findChild<QAction*>(QStringLiteral("ProjectOneColumnAction"));
+        auto* two_columns = window.findChild<QAction*>(QStringLiteral("ProjectTwoColumnAction"));
+        QVERIFY(back != nullptr && forward != nullptr && up != nullptr
+            && folders != nullptr && content != nullptr
+            && create_button != nullptr && create_menu != nullptr
+            && favorites != nullptr && search != nullptr && save_search != nullptr
+            && icon_size != nullptr && bottom_bar != nullptr && project_panel != nullptr
+            && lock != nullptr && one_column != nullptr && two_columns != nullptr);
+        QCOMPARE(create_button->menu(), create_menu);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectToolbarCreateFolderAction")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectToolbarCreateSceneAction")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectToolbarCreateTileSetAction")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectToolbarCreateTilemapAction")) != nullptr);
+        QVERIFY(window.findChild<QToolButton*>(
+            QStringLiteral("ProjectSaveSearchButton")) != nullptr);
+        QVERIFY(window.findChild<QToolButton*>(
+            QStringLiteral("ProjectLayoutMenuButton")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectFocusSearchShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectFrameSelectedShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectSelectAllShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectDuplicateShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectDeleteShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectDeleteWithoutDialogShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectRenameShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectActivateShortcut")) != nullptr);
+        QVERIFY(window.findChild<QAction*>(
+            QStringLiteral("ProjectParentShortcut")) != nullptr);
+        QVERIFY(favorites->model()->rowCount() >= 3);
+        QCOMPARE(favorites->model()->index(0, 0).data().toString(), QStringLiteral("All Assets"));
+        QVERIFY(folders->isHeaderHidden());
+        QCOMPARE(folders->model()->columnCount(), 1);
+        QCOMPARE(content->model()->columnCount(), 2);
+        QCOMPARE(content->model()->headerData(0, Qt::Horizontal).toString(), QStringLiteral("Name"));
+        QCOMPARE(content->model()->headerData(1, Qt::Horizontal).toString(), QStringLiteral("Kind / Type"));
+        QVERIFY(!content->rootIsDecorated());
+        QVERIFY(!content->itemsExpandable());
+        QVERIFY(!content->expandsOnDoubleClick());
+        const auto initial_icon_size = icon_size->value();
+        const auto initial_two_columns = two_columns->isChecked();
+        const auto initial_lock = lock->isChecked();
+        const auto qa_output_directory = qEnvironmentVariable("DPE_PROJECT_VIEW_QA_DIR");
+        const auto capture_project_view = [&](const QString& name) {
+            if (qa_output_directory.isEmpty()) return;
+            QVERIFY2(QDir{}.mkpath(qa_output_directory),
+                qPrintable(QStringLiteral("Could not create Project View QA directory: %1")
+                    .arg(qa_output_directory)));
+            const auto path = QDir{qa_output_directory}.filePath(name);
+            QVERIFY2(project_panel->grab().save(path, "PNG"),
+                qPrintable(QStringLiteral("Could not save Project View QA capture: %1").arg(path)));
+        };
+        icon_size->setValue(64);
+        QCOMPARE(window.project_content_stack_->currentIndex(), 1);
+        QCOMPARE(window.project_thumbnail_view_->iconSize(), QSize(64, 64));
+        window.set_project_two_column(true);
+        QCoreApplication::processEvents();
+        capture_project_view(QStringLiteral("project-view-two-column-icons.png"));
+        search->setText(QStringLiteral("folder2 nested"));
+        QCOMPARE(window.project_content_stack_->currentIndex(), 0);
+        QVERIFY(content->rootIsDecorated());
+        QVERIFY(content->itemsExpandable());
+        search->clear();
+        QCOMPARE(window.project_content_stack_->currentIndex(), 1);
+        QVERIFY(!content->isExpanded(content->model()->index(0, 0, content->rootIndex())));
+        icon_size->setValue(0);
+        QCOMPARE(window.project_content_stack_->currentIndex(), 0);
+        QCoreApplication::processEvents();
+        capture_project_view(QStringLiteral("project-view-two-column-list.png"));
+        one_column->trigger();
+        QVERIFY(!window.project_content_stack_->isVisible());
+        QVERIFY(!bottom_bar->isVisible());
+        QVERIFY(one_column->isChecked());
+        QCoreApplication::processEvents();
+        capture_project_view(QStringLiteral("project-view-one-column.png"));
+        two_columns->trigger();
+        QVERIFY(window.project_content_stack_->isVisible());
+        QVERIFY(bottom_bar->isVisible());
+        QVERIFY(two_columns->isChecked());
+        lock->setChecked(true);
+        QVERIFY(lock->isChecked());
+        QVERIFY(window.project_browser_locked_);
+        lock->setChecked(false);
+        QVERIFY(!window.project_browser_locked_);
+        icon_size->setValue(initial_icon_size);
+        window.set_project_two_column(initial_two_columns);
+        lock->setChecked(initial_lock);
         QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets"));
+
+        folders->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(folders, Qt::Key_F, Qt::ControlModifier);
+        QTRY_VERIFY(search->hasFocus());
+        search->setText(QStringLiteral("folder2 nested"));
+        const auto favorite_count_before_save = favorites->model()->rowCount();
+        QTest::mouseClick(save_search, Qt::LeftButton);
+        QCOMPARE(favorites->model()->rowCount(), favorite_count_before_save + 1);
+        const auto saved_search = favorites->model()->index(favorites->model()->rowCount() - 1, 0);
+        QCOMPARE(saved_search.data().toString(), QStringLiteral("Search: folder2 nested"));
+        search->clear();
+        window.activate_project_favorite(saved_search);
+        QCOMPARE(search->text(), QStringLiteral("folder2 nested"));
+        search->clear();
 
         auto folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
             QStringLiteral("Assets/Folder2"));
@@ -2383,6 +2517,12 @@ private slots:
         folders->setCurrentIndex(folder_proxy);
         QCoreApplication::processEvents();
         QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2/Nested"));
+        folders->setFocus(Qt::OtherFocusReason);
+        QTest::keyClick(folders, Qt::Key_Backspace);
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+        folders->setCurrentIndex(folder_proxy);
+        QCoreApplication::processEvents();
+        QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2/Nested"));
         auto* parent_segment = window.findChild<QToolButton*>(QStringLiteral("ProjectBreadcrumbSegment1"));
         QVERIFY(parent_segment != nullptr);
         QCOMPARE(parent_segment->text(), QStringLiteral("Folder2"));
@@ -2395,6 +2535,8 @@ private slots:
         folders->setExpanded(folder_proxy, true);
         window.rebuild_assets();
         QCOMPARE(window.current_project_folder_relative(), QStringLiteral("Assets/Folder2"));
+        QCOMPARE(folders->model()->columnCount(), 1);
+        QCOMPARE(content->model()->columnCount(), 2);
         folder_source = find_role(window.project_model_, EditorRoles::project_logical_path,
             QStringLiteral("Assets/Folder2"));
         folder_proxy = window.project_folder_filter_->mapFromSource(folder_source);
@@ -2426,6 +2568,12 @@ private slots:
         QVERIFY(window.handle_project_browser_drop(folder_mime.get(), refreshed_destination));
         QVERIFY(QFileInfo{QDir{project_root}.filePath(
             QStringLiteral("Assets/Folder10/Folder2/Nested"))}.isDir());
+        if (had_previous_favorites)
+            project_view_settings.setValue(
+                QStringLiteral("projectView/favorites"), previous_favorites);
+        else
+            project_view_settings.remove(QStringLiteral("projectView/favorites"));
+        project_view_settings.sync();
     }
 
     void project_and_hierarchy_domain_drops_preserve_ids_and_create_linked_prefabs()
