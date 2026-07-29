@@ -372,6 +372,28 @@ bool custom_roots_isolation_and_cache_integrity()
             QStringLiteral("Generated C# mover action/speed metadata did not match Input Motion 2D.")))
         return false;
 
+    auto manifest_document = QJsonDocument::fromJson(read_bytes(native.manifest_path));
+    auto manifest_root = manifest_document.object();
+    auto components = manifest_root.value(QStringLiteral("components")).toArray();
+    auto declared_extension = false;
+    for (auto index = 0; index < components.size(); ++index)
+    {
+        auto component = components.at(index).toObject();
+        if (component.value(QStringLiteral("typeId")).toString() != native.type_id) continue;
+        component.insert(QStringLiteral("tileExtension"), QJsonObject{
+            {QStringLiteral("pluginId"), QStringLiteral("example.weather-tile")},
+            {QStringLiteral("capabilities"), QJsonArray{
+                QStringLiteral("evaluate-tiles"), QStringLiteral("propose-brush")}},
+        });
+        components.replace(index, component);
+        declared_extension = true;
+    }
+    manifest_root.insert(QStringLiteral("components"), components);
+    if (!require(declared_extension
+            && write_bytes(native.manifest_path,
+                QJsonDocument{manifest_root}.toJson(QJsonDocument::Indented)),
+            QStringLiteral("Could not declare the native tile-extension fixture."))) return false;
+
     const auto contracts_copy = QDir{project.path()}.filePath(
         QStringLiteral("Tool Inputs With Spaces/DragonPixel.Contracts.dll"));
     QByteArray contracts_original;
@@ -399,12 +421,20 @@ bool custom_roots_isolation_and_cache_integrity()
             && QFileInfo::exists(managed_artifact) && QFileInfo::exists(native_artifact),
             QStringLiteral("Runtime manifest references missing build artifacts."))) return false;
     const auto runtime_root = QJsonDocument::fromJson(read_bytes(built.runtime_manifest_path)).object();
-    if (!require(runtime_root.value(QStringLiteral("generatorIdentity")).toString()
-                == QStringLiteral("dpe-component-generator-v2")
+    const auto runtime_native = runtime_root.value(QStringLiteral("nativeModules"))
+                                    .toArray().at(0).toObject();
+    const auto runtime_extension = runtime_native.value(QStringLiteral("tileExtension")).toObject();
+    if (!require(runtime_root.value(QStringLiteral("formatVersion")).toInt() == 2
+            && runtime_root.value(QStringLiteral("generatorIdentity")).toString()
+                == QStringLiteral("dpe-component-generator-v3")
             && runtime_root.value(QStringLiteral("contractsSha256")).toString().size() == 64
             && runtime_root.value(QStringLiteral("managedModules")).toArray().at(0)
-                   .toObject().value(QStringLiteral("sha256")).toString().size() == 64,
-            QStringLiteral("Runtime manifest omitted generator/contracts/artifact identities."))) return false;
+                   .toObject().value(QStringLiteral("sha256")).toString().size() == 64
+            && runtime_extension.value(QStringLiteral("pluginId")).toString()
+                == QStringLiteral("example.weather-tile")
+            && runtime_extension.value(QStringLiteral("capabilities")).toArray().size() == 2,
+            QStringLiteral("Runtime manifest omitted generator/contracts/artifact/tile-extension identities.")))
+        return false;
 
     const auto reused = ComponentModuleService::build(project.path(), {declared}, contracts_copy);
     if (!require(reused.succeeded && reused.reused_cache && reused.build_hash == built.build_hash,

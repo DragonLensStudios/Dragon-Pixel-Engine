@@ -222,6 +222,21 @@ void WorkerClient::pick(const QPoint& frame_position)
     });
 }
 
+void WorkerClient::propose_tile_brush(quint64 request_token, QJsonObject parameters)
+{
+    if (request_token == 0 || session_kind_ != QStringLiteral("preview")
+        || !runtime_ready_ || !tile_brush_proposals_available_)
+    {
+        emit tile_brush_proposal_failed(
+            request_token,
+            QStringLiteral("DPE-TILE-EXT-WORKER-UNAVAILABLE"),
+            QStringLiteral("The disposable preview worker is not ready for Tile brush proposals."));
+        return;
+    }
+    parameters.insert(QStringLiteral("requestToken"), static_cast<qint64>(request_token));
+    send_request(QStringLiteral("proposeTileBrush"), parameters);
+}
+
 void WorkerClient::pause()
 {
     desired_paused_ = true;
@@ -260,6 +275,9 @@ void WorkerClient::stop_and_discard()
     desired_running_ = false;
     desired_paused_ = false;
     shutting_down_ = true;
+    fail_pending_tile_brush_proposals(
+        QStringLiteral("DPE-TILE-EXT-WORKER-STOPPED"),
+        QStringLiteral("The preview worker stopped before completing the Tile brush proposal."));
     if (session_kind_ == QStringLiteral("preview") && preview_simulation_enabled_)
     {
         preview_simulation_enabled_ = false;
@@ -309,9 +327,13 @@ void WorkerClient::launch()
     runtime_backend_.clear();
     runtime_device_.clear();
     runtime_identity_refresh_requested_ = false;
+    tile_brush_proposals_available_ = false;
     capability_token_.clear();
     process_id_ = 0;
     incoming_.clear();
+    fail_pending_tile_brush_proposals(
+        QStringLiteral("DPE-TILE-EXT-WORKER-RESTARTED"),
+        QStringLiteral("The preview worker restarted before completing the Tile brush proposal."));
     pending_.clear();
     runtime_ready_ = false;
     const auto nonce = QString::number(QRandomGenerator::global()->generate64(), 16);
@@ -363,6 +385,9 @@ void WorkerClient::launch()
             int exit_code,
             QProcess::ExitStatus status) {
             runtime_ready_ = false;
+            fail_pending_tile_brush_proposals(
+                QStringLiteral("DPE-TILE-EXT-WORKER-EXITED"),
+                QStringLiteral("The disposable worker exited before completing the Tile brush proposal."));
             emit status_message(QStringLiteral("Worker exited (%1, %2)")
                 .arg(exit_code)
                 .arg(status == QProcess::CrashExit ? QStringLiteral("crash") : QStringLiteral("normal")));
@@ -555,6 +580,16 @@ void WorkerClient::neutralize_cached_input_actions()
     };
 }
 
+void WorkerClient::fail_pending_tile_brush_proposals(
+    const QString& error_code,
+    const QString& error_message)
+{
+    const auto tokens = pending_tile_brush_tokens_.values();
+    pending_tile_brush_tokens_.clear();
+    for (const auto token : tokens)
+        emit tile_brush_proposal_failed(token, error_code, error_message);
+}
+
 void WorkerClient::send_request(const QString& method, const QJsonObject& parameters)
 {
     if (socket_ == nullptr || socket_->state() != QLocalSocket::ConnectedState)
@@ -580,6 +615,25 @@ void WorkerClient::send_request(const QString& method, const QJsonObject& parame
     qToLittleEndian<std::uint32_t>(static_cast<std::uint32_t>(payload.size()), framed.data());
     std::memcpy(framed.data() + sizeof(std::uint32_t), payload.constData(), static_cast<std::size_t>(payload.size()));
     pending_[id] = method;
+    if (method == QStringLiteral("proposeTileBrush"))
+    {
+        const auto token = static_cast<quint64>(
+            parameters.value(QStringLiteral("requestToken")).toInteger());
+        pending_tile_brush_tokens_.insert(id, token);
+        QTimer::singleShot(2000, this, [this, id] {
+            const auto token = pending_tile_brush_tokens_.take(id);
+            if (token == 0) return;
+            pending_.remove(id);
+            emit tile_brush_proposal_failed(
+                token,
+                QStringLiteral("DPE-TILE-EXT-PROPOSAL-TIMEOUT"),
+                QStringLiteral("The Tile brush extension exceeded the 2-second editor budget."));
+            emit status_message(QStringLiteral(
+                "Tile brush extension timed out; restarting the disposable preview worker."));
+            if (process_ != nullptr && process_->state() != QProcess::NotRunning)
+                process_->kill();
+        });
+    }
     socket_->write(framed);
     socket_->flush();
 }
@@ -614,6 +668,7 @@ void WorkerClient::consume_messages()
 void WorkerClient::handle_response(const QJsonObject& response)
 {
     const auto id = response.value(QStringLiteral("id")).toInt();
+    const auto proposal_token = pending_tile_brush_tokens_.take(id);
     const auto method = pending_.take(id);
     if (!desired_running_ || shutting_down_)
     {
@@ -629,6 +684,15 @@ void WorkerClient::handle_response(const QJsonObject& response)
         const auto message = QStringLiteral("Worker error for %1: %2")
             .arg(method, QString::fromUtf8(QJsonDocument(
                 response.value(QStringLiteral("error")).toObject()).toJson(QJsonDocument::Compact)));
+        if (method == QStringLiteral("proposeTileBrush"))
+        {
+            emit tile_brush_proposal_failed(
+                proposal_token,
+                QStringLiteral("DPE-TILE-EXT-WORKER-REJECTED"),
+                message);
+            emit status_message(message);
+            return;
+        }
         if (method == QStringLiteral("runtimeInput"))
         {
             recover_from_runtime_input_error(message);
@@ -686,6 +750,8 @@ void WorkerClient::handle_response(const QJsonObject& response)
             return;
         }
         process_id_ = result.value(QStringLiteral("processId")).toInteger();
+        tile_brush_proposals_available_ = session_kind_ == QStringLiteral("preview")
+            && result.value(QStringLiteral("tileBrushProposals")).toBool();
         negotiated_protocol_version_ = 2;
         negotiated_adapter_ = negotiated_adapter;
         emit status_message(QStringLiteral("%1 %2 %3 worker connected as PID %4 (%5)")
@@ -812,6 +878,40 @@ void WorkerClient::handle_response(const QJsonObject& response)
         emit pick_ready(
             result.value(QStringLiteral("entityId")).toString(),
             frame_revision);
+    }
+    else if (method == QStringLiteral("proposeTileBrush"))
+    {
+        const auto returned_token = static_cast<quint64>(
+            result.value(QStringLiteral("requestToken")).toInteger());
+        if (proposal_token == 0 || returned_token != proposal_token)
+        {
+            emit tile_brush_proposal_failed(
+                proposal_token,
+                QStringLiteral("DPE-TILE-EXT-PROPOSAL-CORRELATION"),
+                QStringLiteral("The worker returned an uncorrelated Tile brush proposal."));
+            return;
+        }
+        if (!result.value(QStringLiteral("succeeded")).toBool())
+        {
+            emit tile_brush_proposal_failed(
+                proposal_token,
+                result.value(QStringLiteral("errorCode")).toString(
+                    QStringLiteral("DPE-TILE-EXT-PROPOSAL-FAILED")),
+                result.value(QStringLiteral("errorMessage")).toString(
+                    QStringLiteral("The Tile brush extension rejected the request.")));
+            return;
+        }
+        const auto commands = result.value(QStringLiteral("commands")).toArray();
+        if (commands.size() != result.value(QStringLiteral("commandCount")).toInt()
+            || commands.size() > 4096)
+        {
+            emit tile_brush_proposal_failed(
+                proposal_token,
+                QStringLiteral("DPE-TILE-EXT-MALFORMED-PROPOSAL"),
+                QStringLiteral("The worker returned an invalid Tile brush command count."));
+            return;
+        }
+        emit tile_brush_proposal_ready(proposal_token, commands);
     }
     else if (method == QStringLiteral("diagnostics"))
     {

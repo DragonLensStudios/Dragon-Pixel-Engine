@@ -1,8 +1,8 @@
 # ADR-0022: Version 1 Compatibility Policy
 
 > **Status:** Proposed
-> **Design revision:** `DPE-ARCH-0009`
-> **Last reviewed:** 2026-07-25
+> **Design revision:** `DPE-ARCH-0015`
+> **Last reviewed:** 2026-07-28
 
 ## Context
 
@@ -26,6 +26,8 @@ Dragon Pixel Engine has several public boundaries with different compatibility m
 - Before the first release candidate, all public pre-1.0 format, metadata, ABI/protocol, plugin, and package fixtures are cataloged. A `1.0.0` release candidate must either upgrade each declared supported fixture or preserve it without mutation and emit a documented incompatibility diagnostic.
 - A deprecated public capability remains functional for the rest of major version 1 unless a security-critical exception is approved. Deprecation documentation names the replacement, migration, diagnostic, and earliest removal version. Removal or emergency incompatibility requires a reviewed ADR, version change, compatibility or migration path, release note/security advisory, and regression fixtures.
 - KNI remains an experimental adapter and is excluded from a production-support claim until its complete .NET 10 and three-platform conformance matrix passes. Experimental status must be visible in manifests, UI, documentation, and independently reported evidence.
+- TileSet v2, TilePalette v1, Tilemap v2, and snapshot v5 follow the same explicit document/contract rule: v1/v4 fixtures remain readable, open alone performs no rewrite, the first successful v2 mutation uses atomic migration, and newer or custom typed data remains opaque when its implementation is unavailable.
+- `dpe_tile_extension_plugin_v1` is a separate size-tagged C ABI loaded only in workers. Compatible additions are append-only and capability-negotiated; incompatible layout, ownership, or semantic changes require a new ABI major and retained fixtures. A matching version never grants trust or project-write authority.
 
 ## Consequences and tradeoffs
 
@@ -48,3 +50,5 @@ Dragon Pixel Engine has several public boundaries with different compatibility m
 **POC R** supplies the clean-install, minimum-version, update, interruption, and rollback compatibility evidence for signed release manifests. MonoGame and KNI results remain independent, and POC S cannot promote KNI from experimental without the complete KNI conformance matrix.
 
 POCs R and S are unimplemented as of 2026-07-25. This ADR remains `Proposed`, and no `1.0.0` compatibility claim may be made until its evidence is reviewed with every earlier slice gate.
+
+Focused Tilemap compatibility evidence (2026-07-28): golden readers preserve TileSet/Tilemap v1 without open-time rewrite and deterministically emit v2 only after an explicit successful mutation/save; TilePalette v1 and snapshot v5 have deterministic round trips; snapshot v4 remains explicitly accepted; opaque newer/custom records survive missing implementations; safe re-slicing preserves stable IDs and blocks referenced removals; and the tile-extension/physics ABI additions are size tagged with retained prior-minor paths. The complete local Windows matrices pass 63/63 in 570.78 seconds Release and 63/63 in 895.30 seconds under MSVC AddressSanitizer. This is focused pre-1.0 implementation evidence, not the frozen cross-platform compatibility corpus required by POC S, and this ADR remains `Proposed`.

@@ -66,9 +66,15 @@ public sealed class NativeApiSession
         {
             var acquire = (delegate* unmanaged[Cdecl]<ulong, uint, uint, DpePhysicsApiV1*, nuint, DpeStatus>)_api.AcquirePhysicsApi;
             DpePhysicsApiV1 physicsApi = default;
-            var status = acquire(runtime.Value, 1, 0, &physicsApi, (nuint)sizeof(DpePhysicsApiV1));
+            var status = acquire(runtime.Value, 1, 1, &physicsApi, (nuint)sizeof(DpePhysicsApiV1));
+            if (status == DpeStatus.AbiVersionUnsupported)
+            {
+                status = acquire(runtime.Value, 1, 0, &physicsApi, (nuint)sizeof(DpePhysicsApiV1));
+            }
             ThrowIfFailed(status, "acquire physics API");
-            if (physicsApi.StructSize < sizeof(DpePhysicsApiV1) || physicsApi.AbiMajor != 1)
+            var minorZeroSize = (uint)Marshal.OffsetOf<DpePhysicsApiV1>(
+                nameof(DpePhysicsApiV1.RebuildV2));
+            if (physicsApi.StructSize < minorZeroSize || physicsApi.AbiMajor != 1)
             {
                 throw new InvalidOperationException("Native physics API returned an incompatible function table.");
             }

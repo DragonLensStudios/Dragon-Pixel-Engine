@@ -244,6 +244,11 @@ jobs:
             [[ "$(uname -m)" == 'arm64' ]] || { echo "Expected macOS arm64 runner, got $(uname -m)" >&2; exit 1; }
           fi
           cmake --preset "$configure" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+          if [[ '${{ runner.os }}' == 'Linux' && '${{ matrix.configuration }}' == 'asan' ]]; then
+            asan_hosts="$RUNNER_TEMP/dragon-pixel-linux-asan-hosts.json"
+            ctest --test-dir "$GITHUB_WORKSPACE/out/build/$configure" -C Release --show-only=json-v1 > "$asan_hosts"
+            python3 scripts/ci/validate_ci.py linux-asan-hosts "$asan_hosts"
+          fi
           cmake --build --preset "$build"
           if [[ '${{ runner.os }}' == 'macOS' ]]; then
             "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION

@@ -28,6 +28,7 @@ enum class entity_preset
     cube,
     camera,
     light,
+    tilemap,
 };
 
 struct create_preset_command final
@@ -79,6 +80,7 @@ struct duplicate_subtree_command final
     std::optional<std::size_t> sibling_index{};
     std::optional<std::string> duplicate_root_name{};
     bool use_source_parent{true};
+    std::vector<component_record> duplicate_root_component_overrides;
 };
 
 struct set_entity_enabled_command final

@@ -30,6 +30,8 @@ internal static class Program
             var falling2D = Id("71000000-0000-4000-8000-000000000002");
             var ground3D = Id("71000000-0000-4000-8000-000000000003");
             var falling3D = Id("71000000-0000-4000-8000-000000000004");
+            var polygonGround2D = Id("71000000-0000-4000-8000-000000000005");
+            var polygonFalling2D = Id("71000000-0000-4000-8000-000000000006");
             world.Rebuild([
                 Body(ground2D, NativePhysicsDimension.TwoD, PhysicsBodyMode.Static, new PhysicsVector3(0, -1, 3),
                     new NativePhysicsCollider { Size = new PhysicsVector3(20, 1, 1) }),
@@ -39,6 +41,19 @@ internal static class Program
                 Body(ground3D, NativePhysicsDimension.ThreeD, PhysicsBodyMode.Static, new PhysicsVector3(0, -1, 0),
                     new NativePhysicsCollider { Size = new PhysicsVector3(20, 1, 20) }),
                 Body(falling3D, NativePhysicsDimension.ThreeD, PhysicsBodyMode.Dynamic, new PhysicsVector3(0, 4, 0),
+                    new NativePhysicsCollider { Shape = NativePhysicsShape.CircleOrSphere, Size = new PhysicsVector3(0.5, 0.5, 0.5) }),
+                Body(polygonGround2D, NativePhysicsDimension.TwoD, PhysicsBodyMode.Static, new PhysicsVector3(30, 0, 0),
+                    new NativePhysicsCollider
+                    {
+                        Shape = NativePhysicsShape.Polygon2D,
+                        Vertices = [
+                            new PhysicsVector2(-3, -0.5),
+                            new PhysicsVector2(3, -0.5),
+                            new PhysicsVector2(2, 0.5),
+                            new PhysicsVector2(-2, 0.5),
+                        ],
+                    }),
+                Body(polygonFalling2D, NativePhysicsDimension.TwoD, PhysicsBodyMode.Dynamic, new PhysicsVector3(30, 4, 0),
                     new NativePhysicsCollider { Shape = NativePhysicsShape.CircleOrSphere, Size = new PhysicsVector3(0.5, 0.5, 0.5) }),
             ]);
 
@@ -53,9 +68,12 @@ internal static class Program
             var transforms = world.CopyTransforms();
             var transform2D = transforms.Single(value => value.EntityId == falling2D);
             var transform3D = transforms.Single(value => value.EntityId == falling3D);
+            var polygonTransform2D = transforms.Single(value => value.EntityId == polygonFalling2D);
             Assert(transform2D.Position.Y is > -0.1 and < 0.2, "Managed Box2D body did not rest.");
             Assert(Math.Abs(transform2D.Position.Z - 7) < 0.0001, "Managed 2D mapping lost authoring Z.");
             Assert(transform3D.Position.Y is > -0.1 and < 0.2, "Managed Jolt body did not rest in Y-up space.");
+            Assert(polygonTransform2D.Position.Y is > 0.8 and < 1.2,
+                "Managed physics minor-1 polygon collider did not retain its exact top surface.");
             Assert(world.Raycast2D(new PhysicsVector2(0, 8), new PhysicsVector2(0, -1), 20).Hit,
                 "Managed 2D raycast missed.");
             var hit3D = world.Raycast3D(new PhysicsVector3(0, 8, 0), new PhysicsVector3(0, -1, 0), 20);

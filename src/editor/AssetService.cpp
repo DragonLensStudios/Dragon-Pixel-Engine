@@ -585,9 +585,222 @@ AssetOperationResult AssetService::publish_tile_import(
             request.base_name);
         return result;
     }
+    if (!request.tilesets.isEmpty() || !request.textures.isEmpty())
+    {
+        if (request.tilesets.isEmpty() || request.textures.isEmpty()
+            || request.tilesets.size() != request.textures.size()
+            || request.tilemap_bytes.isEmpty() || request.tilemap_bytes.size() > max_document_bytes
+            || request.palette_bytes.size() > max_document_bytes)
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILE-MULTI-CONTRACT"),
+                QStringLiteral("A multi-TileSet publication requires matching non-empty TileSet and texture batches."));
+            return result;
+        }
+        const auto tilemap_id = canonical_uuid(request.tilemap_asset_id);
+        const auto publishes_palette = !request.palette_asset_id.isEmpty()
+            || !request.palette_bytes.isEmpty();
+        const auto palette_id = canonical_uuid(request.palette_asset_id);
+        const auto parsed_map = dragonpixel::tiles::read_tilemap(
+            std::string_view{request.tilemap_bytes.constData(),
+                static_cast<std::size_t>(request.tilemap_bytes.size())});
+        const auto parsed_palette = publishes_palette
+            ? dragonpixel::tiles::read_tile_palette(
+                std::string_view{request.palette_bytes.constData(),
+                    static_cast<std::size_t>(request.palette_bytes.size())})
+            : dragonpixel::tiles::document_result<dragonpixel::tiles::tile_palette_document>{};
+        if (tilemap_id.isEmpty() || !parsed_map.succeeded()
+            || QString::fromStdString(parsed_map.document->asset_id.to_string()) != tilemap_id
+            || (publishes_palette && (palette_id.isEmpty() || !parsed_palette.succeeded()
+                || QString::fromStdString(parsed_palette.document->asset_id.to_string()) != palette_id))
+            || !std::isfinite(request.pixels_per_unit) || request.pixels_per_unit <= 0.0)
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILE-MULTI-DOCUMENT"),
+                QStringLiteral("The staged multi-TileSet documents do not match the assigned publication contract."));
+            return result;
+        }
+
+        QStringList all_ids{tilemap_id};
+        if (publishes_palette) all_ids.push_back(palette_id);
+        QStringList set_ids;
+        QStringList texture_ids;
+        std::vector<dragonpixel::tiles::tile_set_document> parsed_sets;
+        QVector<QImage> parsed_textures;
+        parsed_sets.reserve(static_cast<std::size_t>(request.tilesets.size()));
+        parsed_textures.reserve(request.textures.size());
+        for (qsizetype index = 0; index < request.tilesets.size(); ++index)
+        {
+            const auto set_id = canonical_uuid(request.tilesets[index].asset_id);
+            const auto texture_id = canonical_uuid(request.textures[index].asset_id);
+            const auto parsed_set = dragonpixel::tiles::read_tile_set(
+                std::string_view{request.tilesets[index].bytes.constData(),
+                    static_cast<std::size_t>(request.tilesets[index].bytes.size())});
+            const auto texture = QImage::fromData(request.textures[index].bytes, "PNG");
+            if (set_id.isEmpty() || texture_id.isEmpty() || !parsed_set.succeeded() || texture.isNull()
+                || request.tilesets[index].bytes.isEmpty()
+                || request.tilesets[index].bytes.size() > max_document_bytes
+                || request.textures[index].bytes.isEmpty()
+                || request.textures[index].bytes.size() > max_texture_bytes
+                || QString::fromStdString(parsed_set.document->asset_id.to_string()) != set_id
+                || QString::fromStdString(parsed_set.document->texture_asset_id.to_string()) != texture_id
+                || std::abs(parsed_set.document->pixels_per_unit - request.pixels_per_unit) > 0.000001
+                || all_ids.contains(set_id) || all_ids.contains(texture_id) || set_id == texture_id)
+            {
+                diagnostic(result, QStringLiteral("DPE-ASSET-TILE-MULTI-UNIT"),
+                    QStringLiteral("A staged TileSet/texture unit is invalid, duplicated, or incompatible."));
+                return result;
+            }
+            all_ids << set_id << texture_id;
+            set_ids.push_back(set_id);
+            texture_ids.push_back(texture_id);
+            parsed_sets.push_back(*parsed_set.document);
+            parsed_textures.push_back(texture);
+        }
+        QStringList map_dependencies;
+        for (const auto& dependency : parsed_map.document->tile_set_dependencies)
+            map_dependencies.push_back(QString::fromStdString(dependency.to_string()));
+        auto expected_dependencies = set_ids;
+        std::sort(map_dependencies.begin(), map_dependencies.end());
+        std::sort(expected_dependencies.begin(), expected_dependencies.end());
+        if (map_dependencies != expected_dependencies || (publishes_palette
+                && parsed_palette.document->tile_set_dependencies
+                    != parsed_map.document->tile_set_dependencies))
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILE-MULTI-DEPENDENCIES"),
+                QStringLiteral("Tilemap, Tile Palette, and staged TileSet dependencies do not agree."));
+            return result;
+        }
+        for (qsizetype index = 0; index < request.tilesets.size(); ++index)
+        {
+            const auto& set = parsed_sets[static_cast<std::size_t>(index)];
+            if (set.texture_asset_ids.size() != 1U
+                || QString::fromStdString(set.texture_asset_ids.front().to_string()) != texture_ids[index])
+            {
+                diagnostic(result, QStringLiteral("DPE-ASSET-TILE-MULTI-TEXTURES"),
+                    QStringLiteral("Each imported Tiled TileSet must reference its assigned atlas texture."));
+                return result;
+            }
+            for (const auto& tile : set.tiles)
+            {
+                const auto right = static_cast<long long>(tile.source.x) + tile.source.width;
+                const auto bottom = static_cast<long long>(tile.source.y) + tile.source.height;
+                if (tile.source.x < 0 || tile.source.y < 0 || tile.source.width <= 0
+                    || tile.source.height <= 0 || right > parsed_textures[index].width()
+                    || bottom > parsed_textures[index].height())
+                {
+                    diagnostic(result, QStringLiteral("DPE-ASSET-TILE-ATLAS"),
+                        QStringLiteral("A TileSet source rectangle falls outside its staged atlas PNG."));
+                    return result;
+                }
+            }
+        }
+
+        const auto assets = resolve_asset_folder(*project, QStringLiteral("Assets"), result);
+        if (!assets) return result;
+        QStringList destinations;
+        QVector<PendingFile> pending;
+        QJsonArray map_revisions;
+        for (qsizetype index = 0; index < request.tilesets.size(); ++index)
+        {
+            const auto suffix = request.tilesets[index].name_suffix.isEmpty()
+                ? QString::number(index + 1) : request.tilesets[index].name_suffix;
+            const auto stem = request.base_name + QStringLiteral("-") + suffix;
+            if (!safe_tile_import_name(stem))
+            {
+                diagnostic(result, QStringLiteral("DPE-ASSET-TILE-NAME"),
+                    QStringLiteral("A generated TileSet suffix is not portable."), suffix);
+                return result;
+            }
+            const auto texture_relative = QStringLiteral("Textures/%1.png").arg(stem);
+            const auto set_relative = QStringLiteral("Tiles/%1.dpetileset").arg(stem);
+            const auto texture_path = QDir{*assets}.filePath(texture_relative);
+            const auto set_path = QDir{*assets}.filePath(set_relative);
+            const auto texture_metadata = QDir{*assets}.filePath(stem + QStringLiteral(".texture.dpeasset"));
+            const auto set_metadata = QDir{*assets}.filePath(stem + QStringLiteral(".tileset.dpeasset"));
+            destinations << texture_path << set_path << texture_metadata << set_metadata;
+            const auto texture_hash = sha256(request.textures[index].bytes);
+            const QJsonArray set_revisions{QJsonObject{
+                {QStringLiteral("assetId"), texture_ids[index]},
+                {QStringLiteral("sourceHash"), texture_hash}}};
+            map_revisions.push_back(QJsonObject{
+                {QStringLiteral("assetId"), set_ids[index]},
+                {QStringLiteral("sourceHash"), sha256(request.tilesets[index].bytes)}});
+            const auto texture_document = tile_asset_document(texture_ids[index],
+                QStringLiteral("sprite"), texture_relative, QStringLiteral("copied"),
+                request.textures[index].bytes, {}, {}, request.source_map_hash,
+                request.pixels_per_unit);
+            const auto set_document = tile_asset_document(set_ids[index],
+                QStringLiteral("tileset"), set_relative, QStringLiteral("generated"),
+                request.tilesets[index].bytes, {texture_ids[index]}, set_revisions,
+                request.source_map_hash, request.pixels_per_unit);
+            pending << PendingFile{texture_path, request.textures[index].bytes}
+                    << PendingFile{set_path, request.tilesets[index].bytes}
+                    << PendingFile{texture_metadata, json_bytes(texture_document)}
+                    << PendingFile{set_metadata, json_bytes(set_document)};
+        }
+        const auto map_relative = QStringLiteral("Tiles/%1.dpetilemap").arg(request.base_name);
+        const auto map_path = QDir{*assets}.filePath(map_relative);
+        const auto map_metadata = QDir{*assets}.filePath(request.base_name + QStringLiteral(".tilemap.dpeasset"));
+        destinations << map_path << map_metadata;
+        const auto map_document = tile_asset_document(tilemap_id, QStringLiteral("tilemap"),
+            map_relative, QStringLiteral("generated"), request.tilemap_bytes, set_ids,
+            map_revisions, request.source_map_hash, request.pixels_per_unit);
+        pending << PendingFile{map_path, request.tilemap_bytes}
+                << PendingFile{map_metadata, json_bytes(map_document)};
+        if (publishes_palette)
+        {
+            const auto relative = QStringLiteral("Tiles/%1.dpetilepalette").arg(request.base_name);
+            const auto path = QDir{*assets}.filePath(relative);
+            const auto metadata = QDir{*assets}.filePath(
+                request.base_name + QStringLiteral(".tilepalette.dpeasset"));
+            const auto document = tile_asset_document(palette_id, QStringLiteral("tilepalette"),
+                relative, QStringLiteral("generated"), request.palette_bytes, set_ids,
+                map_revisions, request.source_map_hash, request.pixels_per_unit);
+            destinations << path << metadata;
+            pending << PendingFile{path, request.palette_bytes}
+                    << PendingFile{metadata, json_bytes(document)};
+        }
+        for (const auto& path : destinations)
+        {
+            if (collision_exists(path))
+            {
+                diagnostic(result, QStringLiteral("DPE-ASSET-TILE-COLLISION"),
+                    QStringLiteral("A tile import destination already exists."), path);
+                return result;
+            }
+        }
+        result.asset_ids = texture_ids + set_ids;
+        result.asset_ids.push_back(tilemap_id);
+        if (publishes_palette) result.asset_ids.push_back(palette_id);
+        result.affected_paths = destinations;
+        for (const auto& path : destinations)
+            if (path.endsWith(QStringLiteral(".dpeasset"), Qt::CaseInsensitive))
+                result.metadata_paths.push_back(path);
+        if (!commit_files(project->project_root, result.operation_id, pending, {}, result))
+        {
+            result.asset_ids.clear();
+            result.metadata_paths.clear();
+            result.affected_paths.clear();
+            return result;
+        }
+        if (!ProjectIndexService{}.build_candidate(request.project_manifest_path).succeeded())
+        {
+            for (const auto& path : destinations) QFile::remove(path);
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILE-VALIDATION"),
+                QStringLiteral("Published tile assets failed project-index validation and were removed."));
+            result.asset_ids.clear();
+            result.metadata_paths.clear();
+            result.affected_paths.clear();
+            return result;
+        }
+        result.succeeded = true;
+        return result;
+    }
     const auto tilemap_id = canonical_uuid(request.tilemap_asset_id);
     const auto tileset_id = canonical_uuid(request.tileset_asset_id);
     const auto texture_id = canonical_uuid(request.texture_asset_id);
+    const auto publishes_palette = !request.palette_asset_id.isEmpty()
+        || !request.palette_bytes.isEmpty();
+    const auto palette_id = canonical_uuid(request.palette_asset_id);
     if (tilemap_id.isEmpty() || tileset_id.isEmpty() || texture_id.isEmpty()
         || tilemap_id == tileset_id || tilemap_id == texture_id || tileset_id == texture_id)
     {
@@ -595,10 +808,18 @@ AssetOperationResult AssetService::publish_tile_import(
             QStringLiteral("Tile import asset identifiers must be three distinct canonical UUIDs."));
         return result;
     }
+    if (publishes_palette && (palette_id.isEmpty() || request.palette_bytes.isEmpty()
+        || palette_id == tilemap_id || palette_id == tileset_id || palette_id == texture_id))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILE-PALETTE-ID"),
+            QStringLiteral("A staged Tile Palette requires a fourth distinct canonical UUID and document."));
+        return result;
+    }
     if (request.tilemap_bytes.isEmpty() || request.tileset_bytes.isEmpty()
         || request.texture_bytes.isEmpty()
         || request.tilemap_bytes.size() > max_document_bytes
         || request.tileset_bytes.size() > max_document_bytes
+        || request.palette_bytes.size() > max_document_bytes
         || request.texture_bytes.size() > max_texture_bytes)
     {
         diagnostic(result, QStringLiteral("DPE-ASSET-TILE-SIZE"),
@@ -611,8 +832,14 @@ AssetOperationResult AssetService::publish_tile_import(
     const auto parsed_set = dragonpixel::tiles::read_tile_set(
         std::string_view{request.tileset_bytes.constData(),
             static_cast<std::size_t>(request.tileset_bytes.size())});
+    const auto parsed_palette = publishes_palette
+        ? dragonpixel::tiles::read_tile_palette(
+            std::string_view{request.palette_bytes.constData(),
+                static_cast<std::size_t>(request.palette_bytes.size())})
+        : dragonpixel::tiles::document_result<dragonpixel::tiles::tile_palette_document>{};
     const auto texture = QImage::fromData(request.texture_bytes, "PNG");
-    if (!parsed_map.succeeded() || !parsed_set.succeeded() || texture.isNull())
+    if (!parsed_map.succeeded() || !parsed_set.succeeded()
+        || (publishes_palette && !parsed_palette.succeeded()) || texture.isNull())
     {
         diagnostic(result, QStringLiteral("DPE-ASSET-TILE-DOCUMENT"),
             QStringLiteral("The staged tile documents or atlas PNG failed editor validation."));
@@ -631,6 +858,17 @@ AssetOperationResult AssetService::publish_tile_import(
         diagnostic(result, QStringLiteral("DPE-ASSET-TILE-CONTRACT"),
             QStringLiteral("The staged tile documents do not match the assigned asset contract."));
         return result;
+    }
+    if (publishes_palette)
+    {
+        const auto& palette = *parsed_palette.document;
+        if (QString::fromStdString(palette.asset_id.to_string()) != palette_id
+            || palette.tile_set_dependencies != map.tile_set_dependencies)
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILE-PALETTE-CONTRACT"),
+                QStringLiteral("The staged Tile Palette does not match the assigned asset contract."));
+            return result;
+        }
     }
     for (const auto& tile : set.tiles)
     {
@@ -657,14 +895,23 @@ AssetOperationResult AssetService::publish_tile_import(
         QStringLiteral("Tiles/%1.dpetileset").arg(request.base_name));
     const auto tilemap_path = QDir{*assets}.filePath(
         QStringLiteral("Tiles/%1.dpetilemap").arg(request.base_name));
+    const auto palette_path = QDir{*assets}.filePath(
+        QStringLiteral("Tiles/%1.dpetilepalette").arg(request.base_name));
     const auto texture_metadata = QDir{*assets}.filePath(
         request.base_name + QStringLiteral(".texture.dpeasset"));
     const auto tileset_metadata = QDir{*assets}.filePath(
         request.base_name + QStringLiteral(".tileset.dpeasset"));
     const auto tilemap_metadata = QDir{*assets}.filePath(
         request.base_name + QStringLiteral(".tilemap.dpeasset"));
-    const QStringList destinations{texture_path, tileset_path, tilemap_path,
+    const auto palette_metadata = QDir{*assets}.filePath(
+        request.base_name + QStringLiteral(".tilepalette.dpeasset"));
+    QStringList destinations{texture_path, tileset_path, tilemap_path,
         texture_metadata, tileset_metadata, tilemap_metadata};
+    if (publishes_palette)
+    {
+        destinations.insert(3, palette_path);
+        destinations.push_back(palette_metadata);
+    }
     for (const auto& path : destinations)
     {
         if (collision_exists(path))
@@ -695,7 +942,11 @@ AssetOperationResult AssetService::publish_tile_import(
         QStringLiteral("tilemap"), QStringLiteral("Tiles/%1.dpetilemap").arg(request.base_name),
         QStringLiteral("generated"), request.tilemap_bytes, {tileset_id},
         tilemap_revisions, request.source_map_hash, request.pixels_per_unit);
-    const QVector<PendingFile> pending{
+    const auto palette_document = tile_asset_document(palette_id,
+        QStringLiteral("tilepalette"), QStringLiteral("Tiles/%1.dpetilepalette").arg(request.base_name),
+        QStringLiteral("generated"), request.palette_bytes, {tileset_id},
+        tilemap_revisions, request.source_map_hash, request.pixels_per_unit);
+    QVector<PendingFile> pending{
         {texture_path, request.texture_bytes},
         {tileset_path, request.tileset_bytes},
         {tilemap_path, request.tilemap_bytes},
@@ -705,6 +956,13 @@ AssetOperationResult AssetService::publish_tile_import(
     };
     result.asset_ids = {texture_id, tileset_id, tilemap_id};
     result.metadata_paths = {texture_metadata, tileset_metadata, tilemap_metadata};
+    if (publishes_palette)
+    {
+        pending.insert(3, {palette_path, request.palette_bytes});
+        pending.push_back({palette_metadata, json_bytes(palette_document)});
+        result.asset_ids.push_back(palette_id);
+        result.metadata_paths.push_back(palette_metadata);
+    }
     result.affected_paths = destinations;
     if (!commit_files(project->project_root, result.operation_id, pending, {}, result))
     {
@@ -722,6 +980,242 @@ AssetOperationResult AssetService::publish_tile_import(
         }
         diagnostic(result, QStringLiteral("DPE-ASSET-TILE-VALIDATION"),
             QStringLiteral("Published tile assets failed project-index validation and were removed."));
+        result.asset_ids.clear();
+        result.metadata_paths.clear();
+        result.affected_paths.clear();
+        return result;
+    }
+    result.succeeded = true;
+    return result;
+}
+
+AssetOperationResult AssetService::create_tilemap(
+    const TilemapCreationRequest& request) const
+{
+    constexpr qsizetype max_tileset_bytes = 64 * 1024 * 1024;
+    AssetOperationResult result;
+    result.operation_id = next_id();
+    const auto project = load_project(request.project_manifest_path, result);
+    if (!project)
+    {
+        return result;
+    }
+    if (!safe_tile_import_name(request.name))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-NAME"),
+            QStringLiteral("Tilemap names must be portable and contain at most 128 characters."),
+            request.name);
+        return result;
+    }
+    const auto tileset_id = canonical_uuid(request.tileset_asset_id);
+    const auto* tileset_entry = asset_entry(*project, tileset_id);
+    if (tileset_id.isEmpty() || tileset_entry == nullptr
+        || !tileset_entry->structurally_valid
+        || !tileset_entry->asset_type.contains(QStringLiteral("tileset"), Qt::CaseInsensitive))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET"),
+            QStringLiteral("Create Tilemap requires one structurally valid indexed TileSet."),
+            request.tileset_asset_id);
+        return result;
+    }
+    QByteArray tileset_bytes;
+    QString read_error;
+    if (!read_regular_file(tileset_entry->resolved_source_path, tileset_bytes, read_error)
+        || tileset_bytes.isEmpty() || tileset_bytes.size() > max_tileset_bytes)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET-READ"),
+            read_error.isEmpty()
+                ? QStringLiteral("The selected TileSet is empty or exceeds its validation limit.")
+                : read_error,
+            tileset_entry->resolved_source_path);
+        return result;
+    }
+    const auto parsed_set = dragonpixel::tiles::read_tile_set(
+        std::string_view{tileset_bytes.constData(),
+            static_cast<std::size_t>(tileset_bytes.size())});
+    if (!parsed_set.succeeded()
+        || QString::fromStdString(parsed_set.document->asset_id.to_string()) != tileset_id)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-TILESET-DOCUMENT"),
+            QStringLiteral("The selected TileSet document is invalid or does not match its asset identity."),
+            tileset_entry->resolved_source_path);
+        return result;
+    }
+
+    const auto tilemap_id = canonical_uuid(next_id());
+    const auto layer_id = canonical_uuid(next_id());
+    const auto palette_id = request.create_palette ? canonical_uuid(next_id()) : QString{};
+    if (tilemap_id.isEmpty() || layer_id.isEmpty() || tilemap_id == layer_id
+        || (request.create_palette && (palette_id.isEmpty()
+            || palette_id == tilemap_id || palette_id == layer_id))
+        || project->candidate.find_by_id(tilemap_id) != nullptr)
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-IDS"),
+            QStringLiteral("The Tilemap operation did not produce distinct canonical identities."));
+        return result;
+    }
+    dragonpixel::tiles::tile_layer initial_layer;
+    initial_layer.layer_id = *dragonpixel::core::uuid::parse(layer_id.toStdString());
+    initial_layer.name = "Layer 1";
+
+    dragonpixel::tiles::tilemap_document map;
+    map.asset_id = *dragonpixel::core::uuid::parse(tilemap_id.toStdString());
+    map.name = request.name.toStdString();
+    map.tile_set_dependencies = {parsed_set.document->asset_id};
+    map.layers = {std::move(initial_layer)};
+    if (request.grid_layout == QStringLiteral("hex-point-top"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::hex_point_top;
+    else if (request.grid_layout == QStringLiteral("hex-flat-top"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::hex_flat_top;
+    else if (request.grid_layout == QStringLiteral("isometric"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::isometric;
+    else if (request.grid_layout == QStringLiteral("isometric-z-as-y"))
+        map.grid.layout = dragonpixel::tiles::grid_layout::isometric_z_as_y;
+    else if (request.grid_layout != QStringLiteral("rectangular"))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-LAYOUT"),
+            QStringLiteral("The selected Tilemap grid layout is unsupported."), request.grid_layout);
+        return result;
+    }
+    const auto map_bytes = QByteArray::fromStdString(
+        dragonpixel::tiles::write_tilemap(map));
+    dragonpixel::tiles::tile_palette_document palette;
+    QByteArray palette_bytes;
+    if (request.create_palette)
+    {
+        palette.asset_id = *dragonpixel::core::uuid::parse(palette_id.toStdString());
+        palette.name = (request.name + QStringLiteral(" Palette")).toStdString();
+        palette.tile_set_dependencies = {parsed_set.document->asset_id};
+        const auto columns = std::max(1, static_cast<int>(
+            std::ceil(std::sqrt(static_cast<double>(parsed_set.document->tiles.size())))));
+        for (std::size_t index = 0; index < parsed_set.document->tiles.size(); ++index)
+        {
+            const auto& tile = parsed_set.document->tiles[index];
+            dragonpixel::tiles::tile_palette_cell palette_cell{};
+            palette_cell.u = static_cast<int>(index) % columns;
+            palette_cell.v = static_cast<int>(index) / columns;
+            palette_cell.tile = {parsed_set.document->asset_id, tile.tile_id};
+            palette.cells.push_back(std::move(palette_cell));
+        }
+        palette_bytes = QByteArray::fromStdString(
+            dragonpixel::tiles::write_tile_palette(palette));
+    }
+    const auto parsed_map = dragonpixel::tiles::read_tilemap(
+        std::string_view{map_bytes.constData(), static_cast<std::size_t>(map_bytes.size())});
+    const auto parsed_palette = request.create_palette
+        ? dragonpixel::tiles::read_tile_palette(
+            std::string_view{palette_bytes.constData(), static_cast<std::size_t>(palette_bytes.size())})
+        : dragonpixel::tiles::document_result<dragonpixel::tiles::tile_palette_document>{};
+    if (!parsed_map.succeeded() || (request.create_palette && !parsed_palette.succeeded()))
+    {
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-DOCUMENT"),
+            QStringLiteral("The generated empty Tilemap failed native validation."));
+        return result;
+    }
+
+    const auto assets = resolve_asset_folder(*project, QStringLiteral("Assets"), result);
+    if (!assets)
+    {
+        return result;
+    }
+    const auto tilemap_path = QDir{*assets}.filePath(
+        QStringLiteral("Tiles/%1.dpetilemap").arg(request.name));
+    const auto metadata_path = QDir{*assets}.filePath(
+        request.name + QStringLiteral(".tilemap.dpeasset"));
+    const auto palette_path = QDir{*assets}.filePath(
+        QStringLiteral("Tiles/%1 Palette.dpetilepalette").arg(request.name));
+    const auto palette_metadata_path = QDir{*assets}.filePath(
+        request.name + QStringLiteral(" Palette.tilepalette.dpeasset"));
+    QStringList destinations{tilemap_path, metadata_path};
+    if (request.create_palette)
+    {
+        destinations += {palette_path, palette_metadata_path};
+    }
+    for (const auto& path : destinations)
+    {
+        if (collision_exists(path))
+        {
+            diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-COLLISION"),
+                QStringLiteral("A Tilemap destination already exists."), path);
+            return result;
+        }
+    }
+
+    const auto map_hash = sha256(map_bytes);
+    const auto tileset_hash = sha256(tileset_bytes);
+    const auto source = QStringLiteral("Tiles/%1.dpetilemap").arg(request.name);
+    const QJsonObject metadata{
+        {QStringLiteral("$schema"), QStringLiteral("https://dragonpixel.dev/schemas/v3/asset-metadata.schema.json")},
+        {QStringLiteral("format"), QStringLiteral("dpe.asset")},
+        {QStringLiteral("formatVersion"), 3},
+        {QStringLiteral("engineVersion"), QStringLiteral("1.0.0")},
+        {QStringLiteral("assetId"), tilemap_id},
+        {QStringLiteral("assetType"), QStringLiteral("tilemap")},
+        {QStringLiteral("source"), source},
+        {QStringLiteral("sourceOwnership"), QStringLiteral("generated")},
+        {QStringLiteral("sourceHash"), map_hash},
+        {QStringLiteral("importHash"), map_hash},
+        {QStringLiteral("importer"), QJsonObject{
+            {QStringLiteral("id"), QStringLiteral("dragonpixel.tilemap-editor")},
+            {QStringLiteral("version"), 1}}},
+        {QStringLiteral("cacheKey"), QStringLiteral("sha256:") + map_hash},
+        {QStringLiteral("dependencies"), QJsonArray{tileset_id}},
+        {QStringLiteral("dependencyRevisions"), QJsonArray{QJsonObject{
+            {QStringLiteral("assetId"), tileset_id},
+            {QStringLiteral("sourceHash"), tileset_hash}}}},
+        {QStringLiteral("importSettings"), QJsonObject{
+            {QStringLiteral("gridLayout"), request.grid_layout}}},
+        {QStringLiteral("recoveryState"), QJsonObject{
+            {QStringLiteral("state"), QStringLiteral("ready")}}},
+        {QStringLiteral("importerDiagnostics"), QJsonArray{}},
+        {QStringLiteral("previewDiagnostics"), QJsonArray{}},
+    };
+    auto palette_metadata = metadata;
+    if (request.create_palette)
+    {
+        const auto palette_hash = sha256(palette_bytes);
+        palette_metadata.insert(QStringLiteral("assetId"), palette_id);
+        palette_metadata.insert(QStringLiteral("assetType"), QStringLiteral("tilepalette"));
+        palette_metadata.insert(QStringLiteral("source"),
+            QStringLiteral("Tiles/%1 Palette.dpetilepalette").arg(request.name));
+        palette_metadata.insert(QStringLiteral("sourceHash"), palette_hash);
+        palette_metadata.insert(QStringLiteral("importHash"), palette_hash);
+        palette_metadata.insert(QStringLiteral("cacheKey"), QStringLiteral("sha256:") + palette_hash);
+    }
+    QVector<PendingFile> pending{
+        {tilemap_path, map_bytes},
+        {metadata_path, json_bytes(metadata)},
+    };
+    result.asset_ids = {tilemap_id};
+    result.metadata_paths = {metadata_path};
+    result.affected_paths = destinations;
+    if (request.create_palette)
+    {
+        pending += QVector<PendingFile>{{palette_path, palette_bytes},
+            {palette_metadata_path, json_bytes(palette_metadata)}};
+        result.asset_ids.push_back(palette_id);
+        result.metadata_paths.push_back(palette_metadata_path);
+    }
+    if (!commit_files(project->project_root, result.operation_id, pending, {}, result))
+    {
+        result.asset_ids.clear();
+        result.metadata_paths.clear();
+        result.affected_paths.clear();
+        return result;
+    }
+    const auto validated = ProjectIndexService{}.build_candidate(request.project_manifest_path);
+    const auto* validated_map = validated.candidate
+        ? validated.candidate->find_by_id(tilemap_id) : nullptr;
+    const auto* validated_palette = validated.candidate && request.create_palette
+        ? validated.candidate->find_by_id(palette_id) : nullptr;
+    if (!validated.succeeded() || validated_map == nullptr
+        || validated_map->dependencies != QStringList{tileset_id}
+        || (request.create_palette && (validated_palette == nullptr
+            || validated_palette->dependencies != QStringList{tileset_id})))
+    {
+        for (const auto& path : destinations) QFile::remove(path);
+        diagnostic(result, QStringLiteral("DPE-ASSET-TILEMAP-VALIDATION"),
+            QStringLiteral("The created Tilemap failed project-index validation and was removed."));
         result.asset_ids.clear();
         result.metadata_paths.clear();
         result.affected_paths.clear();

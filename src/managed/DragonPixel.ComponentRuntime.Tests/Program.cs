@@ -16,6 +16,7 @@ const string LegacyNativeModuleId = "b4717394-89f3-46f8-8350-fb64eb560e28";
 const string UnlistedTypeId = "cbfef6b1-e265-4f8e-9f5c-53d0f4c366d7";
 const string DisabledUnlistedTypeId = "6294ab6c-5689-43f9-845b-b357a0a17b18";
 const string TestEntityId = "67dcfb82-f82a-4dd1-a962-21acc55db02c";
+const string TileExtensionId = "example.weather-tile";
 
 if (args.Length != 2 || !File.Exists(args[0]) || !File.Exists(args[1]))
 {
@@ -107,6 +108,44 @@ try
     try
     {
         Require(runtime.FactoryCount == 2, "Both strictly validated worker-only factories must load.");
+        Require(runtime.TileExtensionCount == 1,
+            "The explicitly declared worker-only tile extension must load.");
+        var tileContext = new TileExtensionContext(
+            4, -7, 2, 0, 1234, 0.5,
+            "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
+            "59737391-9417-45bf-a8af-cb6e24e7aa38",
+            "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6",
+            "a9ba355a-51e8-49e9-b581-c6174026c160",
+            "{}", "{}");
+        Require(ProjectComponentRuntime.StableTileSeed(
+                tileContext.MapId,
+                tileContext.LayerId,
+                tileContext.CellX,
+                tileContext.CellY,
+                TileExtensionId) == 2513585628307874901UL,
+            "Managed custom-tile seed generation diverged from the portable Tile owner.");
+        var tileResults = runtime.EvaluateTiles(TileExtensionId, [tileContext]);
+        Require(tileResults.Count == 1 && tileResults[0].Succeeded
+                && tileResults[0].ResultJson.Contains("\"tint\"", StringComparison.Ordinal),
+            "The tile extension did not return one validated evaluation result.");
+        var malformedResults = runtime.EvaluateTiles(TileExtensionId,
+            [tileContext with { PayloadJson = "{\"malformed\":true}" }]);
+        Require(malformedResults.Count == 1 && !malformedResults[0].Succeeded
+                && malformedResults[0].ErrorCode == "DPE-TILE-EXT-MALFORMED-RESULT",
+            "Malformed tile-extension evaluation output was not contained.");
+        var proposal = runtime.ProposeBrush(TileExtensionId, tileContext, "{}");
+        Require(proposal.Succeeded && proposal.CommandCount == 1
+                && proposal.ResultJson.Contains("\"x\":4", StringComparison.Ordinal)
+                && proposal.ResultJson.Contains("\"y\":-7", StringComparison.Ordinal)
+                && proposal.ResultJson.Contains(tileContext.TileSetId, StringComparison.Ordinal)
+                && proposal.ResultJson.Contains(tileContext.TileId, StringComparison.Ordinal),
+            "The tile extension did not return one bounded brush command proposal.");
+        var malformedProposal = runtime.ProposeBrush(
+            TileExtensionId, tileContext, "{\"malformed\":true}");
+        Require(!malformedProposal.Succeeded
+                && malformedProposal.ErrorCode == "DPE-TILE-EXT-MALFORMED-PROPOSAL",
+            "Malformed tile-extension brush proposals were not rejected.");
+        VerifyCustomTileExtensionSnapshot(root, runtime);
         Require(runtime.Diagnostics.Any(value => value.Contains(fixture.BuildHash, StringComparison.Ordinal)),
             "The validated buildHash was not retained in the runtime evidence.");
 
@@ -373,15 +412,124 @@ void VerifyRuntimeAssetSnapshot(string root)
         "A tampered runtime asset binding was not rejected before framework decode.");
 }
 
+void VerifyCustomTileExtensionSnapshot(string root, ProjectComponentRuntime runtime)
+{
+    const string mapId = "fd2f3574-8e6f-43d1-bc96-c6650ab49a54";
+    const string layerId = "59737391-9417-45bf-a8af-cb6e24e7aa38";
+    const string setId = "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6";
+    const string tileId = "a9ba355a-51e8-49e9-b581-c6174026c160";
+    const string textureId = "dd02cd2a-8a7e-4b27-9d26-06331093885a";
+    const string entityId = "4b78270f-fabc-47bc-9697-f9c322769a98";
+    var snapshot = new JsonObject
+    {
+        ["$schema"] = "https://dragonpixel.dev/schemas/v3/scene.schema.json",
+        ["format"] = "dpe.scene",
+        ["formatVersion"] = 3,
+        ["engineVersion"] = "1.0.0-test",
+        ["snapshotFormatVersion"] = 5,
+        ["sceneId"] = "27ed345d-b487-41c1-918b-fbf279be8e28",
+        ["name"] = "Custom Tile Extension",
+        ["snapshotRevision"] = 9,
+        ["physicsSettings"] = new JsonObject
+        {
+            ["fixedTimeStepSeconds"] = 1.0 / 60.0,
+            ["maxCatchUpTicks"] = 4,
+            ["box2DSolverSubsteps"] = 4,
+            ["joltCollisionSteps"] = 1,
+            ["gravity2D"] = new JsonObject { ["x"] = 0.0, ["y"] = -9.81 },
+            ["gravity3D"] = new JsonObject { ["x"] = 0.0, ["y"] = -9.81, ["z"] = 0.0 },
+        },
+        ["tileSets"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["assetId"] = setId,
+                ["pixelsPerUnit"] = 16.0,
+                ["textureAssetId"] = textureId,
+                ["cellSize"] = new JsonObject { ["x"] = 16, ["y"] = 16 },
+                ["tiles"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["tileId"] = tileId,
+                        ["kind"] = "custom",
+                        ["textureAssetId"] = textureId,
+                        ["source"] = new JsonObject
+                            { ["x"] = 0, ["y"] = 0, ["width"] = 16, ["height"] = 16 },
+                        ["custom"] = new JsonObject
+                            { ["typeId"] = TileExtensionId, ["typeVersion"] = 1,
+                              ["payload"] = new JsonObject() },
+                    },
+                },
+            },
+        },
+        ["tilemaps"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["assetId"] = mapId,
+                ["tileSetDependencies"] = new JsonArray(setId),
+                ["grid"] = new JsonObject
+                {
+                    ["layout"] = "rectangular",
+                    ["cellSize"] = new JsonObject { ["x"] = 1.0, ["y"] = 1.0 },
+                },
+                ["layers"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["layerId"] = layerId,
+                        ["name"] = "Ground",
+                        ["cells"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["x"] = 2, ["y"] = -3,
+                                ["tileSetId"] = setId, ["tileId"] = tileId,
+                                ["resolvedTileSetId"] = setId, ["resolvedTileId"] = tileId,
+                                ["placeholder"] = true,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        ["entities"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["id"] = entityId, ["name"] = "Tilemap", ["enabled"] = true,
+                ["components"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["typeId"] = BuiltinComponentIds.Tilemap2D,
+                        ["enabled"] = true,
+                        ["properties"] = new JsonObject { ["dpe.tilemap.asset"] = mapId },
+                    },
+                },
+            },
+        },
+    };
+    var path = Path.Combine(root, "custom-tile-extension-snapshot.json");
+    File.WriteAllText(path, snapshot.ToJsonString());
+    var parsed = SceneSnapshotParser.Parse(path, 0, runtime);
+    var cell = parsed.Scene.Entities.Single().Tilemap!.Layers.Single().Cells.Single();
+    Require(Math.Abs(cell.Color.R - 0.25f) < 0.0001f
+            && Math.Abs(cell.Color.G - 0.5f) < 0.0001f
+            && Math.Abs(cell.Color.B - 0.75f) < 0.0001f,
+        "Worker custom-tile evaluation did not replace the lossless placeholder tint.");
+}
+
 JsonObject CreateValidManifest(Fixture fixture) => new()
 {
     ["format"] = "dpe.runtime-modules",
-    ["formatVersion"] = 1,
+    ["formatVersion"] = 2,
     ["buildHash"] = fixture.BuildHash,
     ["platform"] = CurrentPlatform(),
     ["architecture"] = CurrentArchitecture(),
     ["configuration"] = "Release",
-    ["generatorIdentity"] = "dpe-component-generator-v2",
+    ["generatorIdentity"] = "dpe-component-generator-v3",
     ["contractsSha256"] = fixture.ContractsSha256,
     ["componentRoots"] = new JsonArray("Authoring Components"),
     ["toolIdentities"] = new JsonObject
@@ -418,6 +566,11 @@ JsonObject CreateValidManifest(Fixture fixture) => new()
                 ["typeId"] = NativeTypeId,
                 ["moduleId"] = NativeModuleId,
                 ["sourcePath"] = "Authoring Components/Cpp/NativeTestComponent.cpp",
+            },
+            ["tileExtension"] = new JsonObject
+            {
+                ["pluginId"] = TileExtensionId,
+                ["capabilities"] = new JsonArray("evaluate-tiles", "propose-brush"),
             },
         },
     },

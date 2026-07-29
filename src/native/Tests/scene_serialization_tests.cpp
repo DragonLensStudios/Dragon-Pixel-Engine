@@ -9,12 +9,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -224,7 +226,7 @@ const component_record* find_component(const dragonpixel::scene::entity& value, 
 void verify_scene_round_trip()
 {
     const auto registry = dragonpixel::metadata::registry::slice_one_defaults();
-    require(registry.size() == 16, "Default metadata registration did not retain every built-in component.");
+    require(registry.size() == 18, "Default metadata registration did not retain every built-in component.");
     const auto* transform_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::transform);
     require(transform_descriptor != nullptr && transform_descriptor->schema_version == 2,
         "Transform schema version was wrong.");
@@ -250,6 +252,21 @@ void verify_scene_round_trip()
         "Explicit default component descriptor values changed.");
     const auto* camera_descriptor = registry.find(dragonpixel::metadata::builtin_component_ids::camera);
     require(camera_descriptor != nullptr, "Camera metadata registration failed.");
+    const auto* tilemap_collider_descriptor =
+        registry.find(dragonpixel::metadata::builtin_component_ids::tilemap_collider_2d);
+    require(tilemap_collider_descriptor != nullptr
+            && tilemap_collider_descriptor->schema_version == 1
+            && tilemap_collider_descriptor->owner == dragonpixel::metadata::runtime_owner::native,
+        "TilemapCollider2D metadata registration failed.");
+    require(registry.find(dragonpixel::metadata::builtin_component_ids::polygon_collider_2d)
+            != nullptr,
+        "PolygonCollider2D metadata registration failed.");
+    require(std::any_of(tilemap_collider_descriptor->properties.begin(),
+            tilemap_collider_descriptor->properties.end(), [](const auto& property) {
+                return property.property_id == "dpe.tilemap.collider.composite"
+                    && property.default_json == "false";
+            }),
+        "TilemapCollider2D did not expose explicit composite control.");
     const auto primary_property = std::find_if(
         camera_descriptor->properties.begin(),
         camera_descriptor->properties.end(),
@@ -413,6 +430,7 @@ void verify_history_validation_and_presets()
     scene value{parse_uuid("30000000-0000-4000-8000-000000000001"), "History"};
     const auto empty_id = parse_uuid("30000000-0000-4000-8000-000000000011");
     const auto sprite_id = parse_uuid("30000000-0000-4000-8000-000000000012");
+    const auto tilemap_id = parse_uuid("30000000-0000-4000-8000-000000000013");
     const std::vector<command> create_presets{
         create_preset_command{empty_id, "Empty GameObject", entity_preset::empty},
         create_preset_command{
@@ -423,6 +441,14 @@ void verify_history_validation_and_presets()
             std::nullopt,
             std::string{"30000000-0000-4000-8000-000000000099"},
         },
+        create_preset_command{
+            tilemap_id,
+            "Tilemap GameObject",
+            entity_preset::tilemap,
+            std::nullopt,
+            std::nullopt,
+            std::string{"30000000-0000-4000-8000-000000000098"},
+        },
     };
 
     value.mark_savepoint();
@@ -431,25 +457,31 @@ void verify_history_validation_and_presets()
     require(preview.succeeded && value.entities().empty() && value.history_size() == 0,
         "Dry-run validation mutated authoritative scene state or history.");
     const auto committed = value.apply_transaction(create_presets, "Create two GameObjects");
-    require(committed.succeeded && committed.applied_count == 2
+    require(committed.succeeded && committed.applied_count == 3
             && value.history_size() == 1 && value.history_position() == 1 && value.is_dirty(),
         "Compound preset transaction was not recorded as one dirty history item.");
     const auto* empty = value.find_entity(empty_id);
     const auto* sprite = value.find_entity(sprite_id);
+    const auto* tilemap = value.find_entity(tilemap_id);
     const auto* sprite_component = sprite == nullptr ? nullptr
         : find_component(*sprite, dragonpixel::metadata::builtin_component_ids::sprite);
-    require(empty != nullptr && sprite != nullptr
+    const auto* tilemap_component = tilemap == nullptr ? nullptr
+        : find_component(*tilemap, dragonpixel::metadata::builtin_component_ids::tilemap_2d);
+    require(empty != nullptr && sprite != nullptr && tilemap != nullptr
             && find_component(*empty, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
             && find_component(*sprite, dragonpixel::metadata::builtin_component_ids::transform) != nullptr
-            && sprite_component != nullptr,
+            && sprite_component != nullptr && tilemap_component != nullptr,
         "GameObject presets did not include mandatory Transform and preset components.");
     require(sprite_component->properties.at("dpe.sprite.asset")
                 == "30000000-0000-4000-8000-000000000099",
         "The transactional Sprite preset did not preserve its requested primitive/asset binding.");
+    require(tilemap_component->properties.at("dpe.tilemap.asset")
+                == "30000000-0000-4000-8000-000000000098",
+        "The transactional Tilemap preset did not preserve its requested Tilemap binding.");
 
     require(value.undo().succeeded && value.entities().empty() && !value.is_dirty() && value.can_redo(),
         "Undo did not restore the initial clean savepoint for a compound transaction.");
-    require(value.redo().succeeded && value.entities().size() == 2 && value.is_dirty(),
+    require(value.redo().succeeded && value.entities().size() == 3 && value.is_dirty(),
         "Redo did not restore the complete compound transaction.");
     value.mark_savepoint();
     require(!value.is_dirty(), "Marking the current history position as saved did not clear dirty state.");
@@ -548,13 +580,12 @@ void verify_hierarchy_duplicate_and_delete()
             && value.find_entity(external_id)->sibling_order == 0,
         "Undo did not restore reparent and root ordering.");
 
-    const duplicate_subtree_command duplicate{
-        root_id,
-        {
-            entity_id_remap{root_id, duplicate_root_id},
-            entity_id_remap{child_id, duplicate_child_id},
-            entity_id_remap{grandchild_id, duplicate_grandchild_id},
-        },
+    duplicate_subtree_command duplicate{};
+    duplicate.root_entity_id = root_id;
+    duplicate.id_remaps = {
+        entity_id_remap{root_id, duplicate_root_id},
+        entity_id_remap{child_id, duplicate_child_id},
+        entity_id_remap{grandchild_id, duplicate_grandchild_id},
     };
     require(value.apply(command{duplicate}, "Duplicate hierarchy").succeeded,
         "Subtree duplication with deterministic caller-supplied IDs failed.");
@@ -1600,6 +1631,98 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         }
         return count;
     };
+    const auto transient_target_handle = CreateFileW(
+        scene_target.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    require(transient_target_handle != INVALID_HANDLE_VALUE,
+        "Could not arrange the transient Windows target-sharing fixture.");
+    std::jthread release_transient_target{[transient_target_handle, artifacts] {
+        const auto observation_deadline = std::chrono::steady_clock::now()
+            + std::chrono::seconds{2};
+        for (;;)
+        {
+            std::error_code observation_error;
+            auto entry = std::filesystem::recursive_directory_iterator{artifacts, observation_error};
+            const auto end = std::filesystem::recursive_directory_iterator{};
+            auto prepared_journal_exists = false;
+            while (!observation_error && entry != end)
+            {
+                if (entry->path().filename() == "journal.json")
+                {
+                    prepared_journal_exists = true;
+                    break;
+                }
+                entry.increment(observation_error);
+            }
+            if (prepared_journal_exists || std::chrono::steady_clock::now() >= observation_deadline)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{150});
+        static_cast<void>(CloseHandle(transient_target_handle));
+    }};
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_target_retry{
+        {scene_target, "scene-after-transient-target-retry\n"},
+        {tile_target, "tile-after-transient-target-retry\n"},
+    };
+    const auto transient_target_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_target_retry, transaction_root);
+    release_transient_target.join();
+    require(transient_target_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && read_file(scene_backup) == "scene-after\n"
+            && read_file(tile_backup) == "tile-after\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "A transient target sharing violation outlived the publication retry budget: "
+            + transient_target_result.error);
+
+    const auto persistent_target_handle = CreateFileW(
+        scene_target.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    require(persistent_target_handle != INVALID_HANDLE_VALUE,
+        "Could not arrange the persistent Windows target-sharing fixture.");
+    const std::vector<dragonpixel::serialization::utf8_transaction_write> persistent_target_retry{
+        {scene_target, "scene-must-not-survive-persistent-target-lock\n"},
+        {tile_target, "tile-must-not-survive-persistent-target-lock\n"},
+    };
+    const auto persistent_target_result = dragonpixel::serialization::save_utf8_transaction(
+        persistent_target_retry, transaction_root);
+    static_cast<void>(CloseHandle(persistent_target_handle));
+    require(!persistent_target_result.succeeded
+            && persistent_target_result.error.find("ReplaceFileW failed with error 32 (")
+                != std::string::npos
+            && persistent_target_result.error.find(") after 8 attempt(s); target=\"")
+                != std::string::npos
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Persistent target sharing did not fail cleanly with the prior documents intact: "
+            + persistent_target_result.error);
+    const auto released_target_result = dragonpixel::serialization::save_utf8_transaction(
+        transient_target_retry, transaction_root);
+    require(released_target_result.succeeded
+            && read_file(scene_target) == "scene-after-transient-target-retry\n"
+            && read_file(tile_target) == "tile-after-transient-target-retry\n"
+            && artifact_count() == 0
+            && temporary_artifact_count() == 0,
+        "Save did not recover after the persistent target handle was released: "
+            + released_target_result.error);
+
     const std::vector<dragonpixel::serialization::utf8_transaction_write> transient_journal_retry{
         {scene_target, "scene-after-transient-journal-retry\n"},
         {tile_target, "tile-after-transient-journal-retry\n"},
@@ -1611,8 +1734,8 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
     require(transient_journal_result.succeeded
             && read_file(scene_target) == "scene-after-transient-journal-retry\n"
             && read_file(tile_target) == "tile-after-transient-journal-retry\n"
-            && read_file(scene_backup) == "scene-after\n"
-            && read_file(tile_backup) == "tile-after\n"
+            && read_file(scene_backup) == "scene-after-transient-target-retry\n"
+            && read_file(tile_backup) == "tile-after-transient-target-retry\n"
             && artifact_count() == 0
             && temporary_artifact_count() == 0,
         "A transient committed-journal sharing violation did not retry to a clean commit: "
@@ -1707,7 +1830,7 @@ void verify_atomic_multi_document_save(const std::filesystem::path& root)
         "Could not publish the transaction journal: MoveFileExW failed with error 32 (";
     require(!persistent_journal_result.succeeded
             && persistent_journal_result.error.starts_with(persistent_error_prefix)
-            && persistent_journal_result.error.find(") after 7 attempt(s); target=\"") != std::string::npos
+            && persistent_journal_result.error.find(") after 8 attempt(s); target=\"") != std::string::npos
             && persistent_journal_result.error.find("; staged=\"") != std::string::npos
             && persistent_journal_result.error.ends_with("; backup=<none>.")
             && persistent_journal_result.error.find("system message unavailable") == std::string::npos

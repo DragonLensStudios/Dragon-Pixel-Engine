@@ -200,13 +200,20 @@ struct transform_flags final
     bool flip_x{};
     bool flip_y{};
     unsigned rotation{};
+    double rotation_degrees{};
 };
 
-transform_flags convert_flags(std::uint32_t gid)
+transform_flags convert_flags(std::uint32_t gid, tiles::grid_layout layout)
 {
     const auto horizontal = (gid & flip_horizontal) != 0;
     const auto vertical = (gid & flip_vertical) != 0;
     const auto diagonal = (gid & flip_diagonal) != 0;
+    if (layout == tiles::grid_layout::hex_point_top
+        || layout == tiles::grid_layout::hex_flat_top)
+    {
+        return {horizontal, vertical, 0U,
+            (diagonal ? 60.0 : 0.0) + ((gid & reserved_high_bit) != 0 ? 120.0 : 0.0)};
+    }
     if (!diagonal)
     {
         return {horizontal, vertical, 0U};
@@ -217,14 +224,59 @@ transform_flags convert_flags(std::uint32_t gid)
     return {true, false, 3U};
 }
 
+struct imported_tile_set final
+{
+    std::uint32_t first_gid{};
+    tiles::tile_set_document document;
+    std::filesystem::path source_texture;
+    std::string texture_bytes;
+};
+
+struct coordinate_conversion final
+{
+    tiles::grid_layout layout{tiles::grid_layout::rectangular};
+    std::string orientation{"orthogonal"};
+    char stagger_axis{'y'};
+    bool stagger_odd{true};
+};
+
+tiles::integer_point convert_coordinate(
+    int x, int y, const coordinate_conversion& conversion)
+{
+    if (conversion.orientation == "staggered")
+    {
+        const auto axis_value = conversion.stagger_axis == 'y' ? y : x;
+        const auto shifted = ((axis_value & 1) != 0) == conversion.stagger_odd;
+        const auto origin_shift = conversion.stagger_odd ? 0 : 1;
+        const auto horizontal = conversion.stagger_axis == 'y'
+            ? 2 * x + (shifted ? 1 : 0) - origin_shift : x;
+        const auto vertical = conversion.stagger_axis == 'y'
+            ? y : 2 * y + (shifted ? 1 : 0) - origin_shift;
+        return {(horizontal - vertical) / 2, (-horizontal - vertical) / 2};
+    }
+    if (conversion.layout == tiles::grid_layout::hex_point_top)
+    {
+        const auto shifted = ((y & 1) != 0) == conversion.stagger_odd;
+        const auto q = x - ((y + (shifted ? 1 : 0)) / 2);
+        return {q, -y};
+    }
+    if (conversion.layout == tiles::grid_layout::hex_flat_top)
+    {
+        const auto shifted = ((x & 1) != 0) == conversion.stagger_odd;
+        const auto r = y - ((x + (shifted ? 1 : 0)) / 2);
+        return {x, -r};
+    }
+    return {x, -y};
+}
+
 void add_cell(
     tiles::tile_layer& layer,
     std::set<std::pair<int, int>>& occupied,
     int tiled_x,
     int tiled_y,
     std::uint64_t encoded_gid,
-    std::uint32_t first_gid,
-    const std::vector<tiles::tile_definition>& definitions,
+    const coordinate_conversion& conversion,
+    const std::vector<imported_tile_set>& tile_sets,
     std::size_t& total_cells)
 {
     if (encoded_gid > std::numeric_limits<std::uint32_t>::max())
@@ -239,17 +291,13 @@ void add_cell(
             throw import_error{"DPE-TILED-GID", "An empty Tiled cell contains transformation flags."};
         return;
     }
-    if ((gid & reserved_high_bit) != 0U)
-    {
-        // Tiled requires this bit to be cleared even for non-hexagonal maps.
-        // It has no orthogonal meaning and is intentionally ignored.
-    }
-    if (plain_gid < first_gid)
-    {
-        throw import_error{"DPE-TILED-GID", "A Tiled global tile ID precedes the imported TileSet."};
-    }
-    const auto local_id = static_cast<std::size_t>(plain_gid - first_gid);
-    if (local_id >= definitions.size())
+    const auto owner = std::upper_bound(tile_sets.cbegin(), tile_sets.cend(), plain_gid,
+        [](std::uint32_t value, const auto& candidate) { return value < candidate.first_gid; });
+    if (owner == tile_sets.cbegin())
+        throw import_error{"DPE-TILED-GID", "A Tiled global tile ID precedes every imported TileSet."};
+    const auto& tile_set = *std::prev(owner);
+    const auto local_id = static_cast<std::size_t>(plain_gid - tile_set.first_gid);
+    if (local_id >= tile_set.document.tiles.size())
     {
         throw import_error{"DPE-TILED-GID", "A Tiled global tile ID does not resolve to the imported TileSet."};
     }
@@ -258,8 +306,9 @@ void add_cell(
     {
         throw import_error{"DPE-TILED-LIMIT", "A Tiled cell coordinate exceeds the supported range."};
     }
-    const auto x = tiled_x;
-    const auto y = -tiled_y;
+    const auto converted = convert_coordinate(tiled_x, tiled_y, conversion);
+    const auto x = converted.x;
+    const auto y = converted.y;
     if (!occupied.emplace(x, y).second)
     {
         throw import_error{"DPE-TILED-CELL-DUPLICATE", "Tiled chunks contain the same cell coordinate more than once."};
@@ -279,9 +328,16 @@ void add_cell(
         layer.chunks.push_back({chunk_x, chunk_y, {}});
         chunk = std::prev(layer.chunks.end());
     }
-    const auto flags = convert_flags(gid);
-    chunk->cells.push_back({index, definitions.at(local_id).tile_id,
-        flags.flip_x, flags.flip_y, flags.rotation});
+    const auto flags = convert_flags(gid, conversion.layout);
+    tiles::tile_cell cell;
+    cell.index = index;
+    cell.tile_id = tile_set.document.tiles.at(local_id).tile_id;
+    cell.tile_set_id = tile_set.document.asset_id;
+    cell.flip_x = flags.flip_x;
+    cell.flip_y = flags.flip_y;
+    cell.rotation_quarter_turns = flags.rotation;
+    cell.rotation_degrees = flags.rotation_degrees;
+    chunk->cells.push_back(std::move(cell));
     ++total_cells;
     if (total_cells > max_cells)
         throw import_error{"DPE-TILED-LIMIT", "The imported map exceeds the non-empty cell limit."};
@@ -295,8 +351,8 @@ void add_data_array(
     int origin_y,
     int width,
     int height,
-    std::uint32_t first_gid,
-    const std::vector<tiles::tile_definition>& definitions,
+    const coordinate_conversion& conversion,
+    const std::vector<imported_tile_set>& tile_sets,
     std::size_t& total_cells)
 {
     if (!data.is_array() || data.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height))
@@ -310,7 +366,7 @@ void add_data_array(
         const auto value = data.at(index).get<std::uint64_t>();
         const auto x = origin_x + static_cast<int>(index % static_cast<std::size_t>(width));
         const auto y = origin_y + static_cast<int>(index / static_cast<std::size_t>(width));
-        add_cell(layer, occupied, x, y, value, first_gid, definitions, total_cells);
+        add_cell(layer, occupied, x, y, value, conversion, tile_sets, total_cells);
     }
 }
 
@@ -323,11 +379,13 @@ void validate_output_directory(const std::filesystem::path& staging)
     const auto status = std::filesystem::symlink_status(staging, error);
     if (error || !std::filesystem::is_directory(status) || std::filesystem::is_symlink(status))
         throw import_error{"DPE-TILED-STAGING", "The importer staging path must be a non-link directory.", staging};
-    for (const auto& name : {"tilemap.dpetilemap", "tileset.dpetileset", "texture.png", "result.json"})
+    for (const auto& entry : std::filesystem::directory_iterator(staging, error))
     {
-        if (std::filesystem::exists(staging / name, error))
-            throw import_error{"DPE-TILED-STAGING-COLLISION", "The importer staging directory already contains an output.", staging / name};
+        if (error) break;
+        throw import_error{"DPE-TILED-STAGING-COLLISION",
+            "The importer staging directory already contains an output.", entry.path()};
     }
+    if (error) throw import_error{"DPE-TILED-STAGING", "The importer staging directory could not be inspected.", staging};
 }
 
 void write_file(const std::filesystem::path& path, std::string_view bytes)
@@ -368,14 +426,18 @@ json result_json(const import_request& request, const import_result& result)
     {
         outputs.push_back({{"role", "tilemap"}, {"path", result.tilemap_path.filename().generic_string()},
             {"assetId", request.tilemap_asset_id.to_string()}});
-        outputs.push_back({{"role", "tileset"}, {"path", result.tileset_path.filename().generic_string()},
-            {"assetId", request.tileset_asset_id.to_string()}});
-        outputs.push_back({{"role", "texture"}, {"path", result.texture_path.filename().generic_string()},
-            {"assetId", request.texture_asset_id.to_string()}});
+        for (std::size_t index = 0; index < result.tileset_paths.size(); ++index)
+            outputs.push_back({{"role", "tileset"}, {"index", index},
+                {"path", result.tileset_paths[index].filename().generic_string()},
+                {"assetId", result.tileset_asset_ids[index].to_string()}});
+        for (std::size_t index = 0; index < result.texture_paths.size(); ++index)
+            outputs.push_back({{"role", "texture"}, {"index", index},
+                {"path", result.texture_paths[index].filename().generic_string()},
+                {"assetId", result.texture_asset_ids[index].to_string()}});
     }
     return {
         {"format", "dpe.tile-import.result"},
-        {"formatVersion", 1},
+        {"formatVersion", 2},
         {"importer", "dragonpixel.tiled-json"},
         {"succeeded", result.succeeded},
         {"outputs", std::move(outputs)},
@@ -402,92 +464,238 @@ import_result import_tiled_json(const import_request& request)
             throw import_error{"DPE-TILED-SOURCE", "The selected Tiled map path could not be resolved.", request.source_map};
         const auto source_root = source_map.parent_path();
         const auto map = parse_json_file(source_map, max_map_bytes, "Tiled map");
-        if (!map.is_object() || map.value("orientation", std::string{}) != "orthogonal")
-            throw import_error{"DPE-TILED-ORIENTATION", "Only orthogonal Tiled JSON maps are supported.", source_map};
+        if (!map.is_object())
+            throw import_error{"DPE-TILED-TYPE", "The selected JSON document is not a Tiled map.", source_map};
+        const auto orientation = map.value("orientation", std::string{});
+        if (orientation != "orthogonal" && orientation != "isometric"
+            && orientation != "staggered" && orientation != "hexagonal")
+            throw import_error{"DPE-TILED-ORIENTATION",
+                "Only orthogonal, isometric, staggered, and hexagonal Tiled JSON maps are supported.", source_map};
         if (map.contains("type") && map.value("type", std::string{}) != "map")
             throw import_error{"DPE-TILED-TYPE", "The selected JSON document is not a Tiled map.", source_map};
         const auto map_tile_width = required_positive_int(map, "tilewidth", source_map);
         const auto map_tile_height = required_positive_int(map, "tileheight", source_map);
-        if (!map.contains("tilesets") || !map.at("tilesets").is_array() || map.at("tilesets").size() != 1U)
-            throw import_error{"DPE-TILED-TILESETS", "This importer requires exactly one atlas TileSet.", source_map};
-
-        const auto& map_tileset = map.at("tilesets").front();
-        if (!map_tileset.is_object() || !map_tileset.contains("firstgid")
-            || !map_tileset.at("firstgid").is_number_integer())
-            throw import_error{"DPE-TILED-TILESET", "The Tiled map TileSet requires a numeric firstgid.", source_map};
-        const auto first_gid_value = map_tileset.at("firstgid").get<long long>();
-        if (first_gid_value <= 0 || first_gid_value > static_cast<long long>(gid_mask))
-            throw import_error{"DPE-TILED-TILESET", "The Tiled TileSet firstgid is outside the supported range.", source_map};
-        const auto first_gid = static_cast<std::uint32_t>(first_gid_value);
-        auto tileset = map_tileset;
-        auto tileset_path = source_map;
-        if (map_tileset.contains("source"))
+        coordinate_conversion conversion;
+        conversion.orientation = orientation;
+        conversion.layout = orientation == "isometric" || orientation == "staggered"
+            ? (request.import_isometric_as_z_as_y ? tiles::grid_layout::isometric_z_as_y
+                                                  : tiles::grid_layout::isometric)
+            : tiles::grid_layout::rectangular;
+        if (orientation == "staggered" || orientation == "hexagonal")
         {
-            if (!map_tileset.at("source").is_string())
-                throw import_error{"DPE-TILED-TILESET", "The external TileSet source must be a relative string.", source_map};
-            tileset_path = contained_dependency(source_root, source_root,
-                map_tileset.at("source").get<std::string>(), "External TileSet");
-            tileset = parse_json_file(tileset_path, max_tileset_bytes, "Tiled TileSet");
+            const auto axis = map.value("staggeraxis", std::string{});
+            const auto index = map.value("staggerindex", std::string{});
+            if ((axis != "x" && axis != "y") || (index != "odd" && index != "even"))
+                throw import_error{"DPE-TILED-ORIENTATION",
+                    "Staggered and hexagonal maps require supported staggeraxis and staggerindex values.", source_map};
+            conversion.stagger_axis = axis.front();
+            conversion.stagger_odd = index == "odd";
+            if (orientation == "hexagonal")
+                conversion.layout = axis == "y" ? tiles::grid_layout::hex_point_top
+                                                  : tiles::grid_layout::hex_flat_top;
         }
-        if (!tileset.is_object())
-            throw import_error{"DPE-TILED-TILESET", "The Tiled TileSet is not an object.", tileset_path};
-        if (tileset.contains("type") && tileset.value("type", std::string{}) != "tileset")
-            throw import_error{"DPE-TILED-TILESET", "The external JSON document is not a Tiled TileSet.", tileset_path};
-        const auto tile_width = required_positive_int(tileset, "tilewidth", tileset_path);
-        const auto tile_height = required_positive_int(tileset, "tileheight", tileset_path);
-        if (tile_width != map_tile_width || tile_height != map_tile_height)
-            throw import_error{"DPE-TILED-TILE-SIZE", "The Tiled map and TileSet tile dimensions must match.", tileset_path};
-        const auto tile_count = required_positive_int(tileset, "tilecount", tileset_path);
-        const auto columns = required_positive_int(tileset, "columns", tileset_path);
-        if (tile_count > static_cast<int>(max_tiles) || columns > tile_count)
-            throw import_error{"DPE-TILED-LIMIT", "The Tiled TileSet exceeds the supported tile limit.", tileset_path};
-        const auto margin = optional_int(tileset, "margin", 0, tileset_path);
-        const auto spacing = optional_int(tileset, "spacing", 0, tileset_path);
-        if (margin < 0 || spacing < 0)
-            throw import_error{"DPE-TILED-TILESET", "TileSet margin and spacing must be non-negative.", tileset_path};
-        if (!tileset.contains("image") || !tileset.at("image").is_string())
-            throw import_error{"DPE-TILED-IMAGE", "Only a single atlas-image TileSet is supported.", tileset_path};
-        const auto texture_path = contained_dependency(source_root, tileset_path.parent_path(),
-            tileset.at("image").get<std::string>(), "TileSet image");
-        if (texture_path.extension().string() != ".png" && texture_path.extension().string() != ".PNG")
-            throw import_error{"DPE-TILED-IMAGE", "The TileSet atlas must be a PNG image.", texture_path};
-        const auto texture_bytes = read_file(texture_path, max_texture_bytes, "TileSet PNG");
+        if (!map.contains("tilesets") || !map.at("tilesets").is_array()
+            || map.at("tilesets").empty() || map.at("tilesets").size() > 256U)
+            throw import_error{"DPE-TILED-TILESETS", "The map requires between one and 256 atlas TileSets.", source_map};
 
-        tiles::tile_set_document output_set;
-        output_set.asset_id = request.tileset_asset_id;
-        output_set.name = optional_name(tileset, request.name + " Tiles");
-        output_set.texture_asset_id = request.texture_asset_id;
-        output_set.cell_size = {tile_width, tile_height};
-        output_set.margin = {margin, margin};
-        output_set.spacing = {spacing, spacing};
-        output_set.pixels_per_unit = request.pixels_per_unit;
-        std::map<int, std::string> explicit_names;
-        if (tileset.contains("tiles"))
+        std::vector<imported_tile_set> imported_sets;
+        imported_sets.reserve(map.at("tilesets").size());
+        std::size_t total_tile_count{};
+        for (std::size_t set_index = 0; set_index < map.at("tilesets").size(); ++set_index)
         {
-            if (!tileset.at("tiles").is_array())
-                throw import_error{"DPE-TILED-TILESET", "TileSet tile definitions must be an array.", tileset_path};
-            for (const auto& tile : tileset.at("tiles"))
+            const auto& map_tileset = map.at("tilesets").at(set_index);
+            if (!map_tileset.is_object() || !map_tileset.contains("firstgid")
+                || !map_tileset.at("firstgid").is_number_integer())
+                throw import_error{"DPE-TILED-TILESET", "Every Tiled map TileSet requires a numeric firstgid.", source_map};
+            const auto first_gid_value = map_tileset.at("firstgid").get<long long>();
+            if (first_gid_value <= 0 || first_gid_value > static_cast<long long>(gid_mask)
+                || (!imported_sets.empty() && first_gid_value <= imported_sets.back().first_gid))
+                throw import_error{"DPE-TILED-TILESET", "Tiled TileSet firstgid values must be positive and increasing.", source_map};
+            auto source_set = map_tileset;
+            auto tileset_path = source_map;
+            if (map_tileset.contains("source"))
             {
-                if (!tile.is_object() || !tile.contains("id") || !tile.at("id").is_number_integer())
-                    throw import_error{"DPE-TILED-TILESET", "Each Tiled tile definition requires an integer id.", tileset_path};
-                const auto id = tile.at("id").get<int>();
-                if (id < 0 || id >= tile_count || !explicit_names.emplace(id,
-                        optional_name(tile, output_set.name + " " + std::to_string(id))).second)
-                    throw import_error{"DPE-TILED-TILESET", "Tiled tile definition IDs must be unique and inside tilecount.", tileset_path};
+                if (!map_tileset.at("source").is_string())
+                    throw import_error{"DPE-TILED-TILESET", "An external TileSet source must be a relative string.", source_map};
+                tileset_path = contained_dependency(source_root, source_root,
+                    map_tileset.at("source").get<std::string>(), "External TileSet");
+                source_set = parse_json_file(tileset_path, max_tileset_bytes, "Tiled TileSet");
             }
-        }
-        output_set.tiles.reserve(static_cast<std::size_t>(tile_count));
-        for (int id = 0; id < tile_count; ++id)
-        {
-            const auto column = id % columns;
-            const auto row = id / columns;
-            const auto named = explicit_names.find(id);
-            output_set.tiles.push_back({
-                stable_uuid(request.tileset_asset_id, "tile:" + std::to_string(id)),
-                named == explicit_names.end() ? output_set.name + " " + std::to_string(id) : named->second,
-                {margin + column * (tile_width + spacing), margin + row * (tile_height + spacing), tile_width, tile_height},
-                std::nullopt,
-            });
+            if (!source_set.is_object() || (source_set.contains("type")
+                    && source_set.value("type", std::string{}) != "tileset"))
+                throw import_error{"DPE-TILED-TILESET", "A referenced JSON document is not a Tiled TileSet.", tileset_path};
+            const auto tile_width = required_positive_int(source_set, "tilewidth", tileset_path);
+            const auto tile_height = required_positive_int(source_set, "tileheight", tileset_path);
+            const auto tile_count = required_positive_int(source_set, "tilecount", tileset_path);
+            const auto columns = required_positive_int(source_set, "columns", tileset_path);
+            if (tile_count > static_cast<int>(max_tiles) || columns > tile_count
+                || total_tile_count + static_cast<std::size_t>(tile_count) > max_tiles)
+                throw import_error{"DPE-TILED-LIMIT", "The combined Tiled TileSets exceed the supported tile limit.", tileset_path};
+            const auto margin = optional_int(source_set, "margin", 0, tileset_path);
+            const auto spacing = optional_int(source_set, "spacing", 0, tileset_path);
+            if (margin < 0 || spacing < 0)
+                throw import_error{"DPE-TILED-TILESET", "TileSet margin and spacing must be non-negative.", tileset_path};
+            if (!source_set.contains("image") || !source_set.at("image").is_string())
+                throw import_error{"DPE-TILED-IMAGE", "Image-collection TileSets are not supported.", tileset_path};
+            const auto texture_path = contained_dependency(source_root, tileset_path.parent_path(),
+                source_set.at("image").get<std::string>(), "TileSet image");
+            if (texture_path.extension().string() != ".png" && texture_path.extension().string() != ".PNG")
+                throw import_error{"DPE-TILED-IMAGE", "Every TileSet atlas must be a PNG image.", texture_path};
+            const auto set_id = set_index == 0 ? request.tileset_asset_id
+                : stable_uuid(request.tileset_asset_id, "tileset:" + std::to_string(set_index));
+            const auto texture_id = set_index == 0 ? request.texture_asset_id
+                : stable_uuid(request.texture_asset_id, "texture:" + std::to_string(set_index));
+            imported_tile_set imported;
+            imported.first_gid = static_cast<std::uint32_t>(first_gid_value);
+            imported.source_texture = texture_path;
+            imported.texture_bytes = read_file(texture_path, max_texture_bytes, "TileSet PNG");
+            auto& output_set = imported.document;
+            output_set.asset_id = set_id;
+            output_set.name = optional_name(source_set, request.name + " Tiles " + std::to_string(set_index + 1));
+            output_set.texture_asset_id = texture_id;
+            output_set.texture_asset_ids = {texture_id};
+            output_set.cell_size = {tile_width, tile_height};
+            output_set.margin = {margin, margin};
+            output_set.spacing = {spacing, spacing};
+            output_set.pixels_per_unit = request.pixels_per_unit;
+            std::map<int, json> explicit_tiles;
+            if (source_set.contains("tiles"))
+            {
+                if (!source_set.at("tiles").is_array())
+                    throw import_error{"DPE-TILED-TILESET", "TileSet tile definitions must be an array.", tileset_path};
+                for (const auto& tile : source_set.at("tiles"))
+                {
+                    if (!tile.is_object() || !tile.contains("id") || !tile.at("id").is_number_integer())
+                        throw import_error{"DPE-TILED-TILESET", "Each Tiled tile definition requires an integer id.", tileset_path};
+                    const auto id = tile.at("id").get<int>();
+                    if (id < 0 || id >= tile_count || !explicit_tiles.emplace(id, tile).second)
+                        throw import_error{"DPE-TILED-TILESET", "Tiled tile IDs must be unique and inside tilecount.", tileset_path};
+                }
+            }
+            output_set.tiles.reserve(static_cast<std::size_t>(tile_count));
+            for (int id = 0; id < tile_count; ++id)
+            {
+                const auto column = id % columns;
+                const auto row = id / columns;
+                const auto explicit_tile = explicit_tiles.find(id);
+                tiles::tile_definition definition;
+                definition.tile_id = stable_uuid(set_id, "tile:" + std::to_string(id));
+                definition.name = explicit_tile == explicit_tiles.end()
+                    ? output_set.name + " " + std::to_string(id)
+                    : optional_name(explicit_tile->second, output_set.name + " " + std::to_string(id));
+                definition.source = {margin + column * (tile_width + spacing),
+                    margin + row * (tile_height + spacing), tile_width, tile_height};
+                definition.texture_asset_id = texture_id;
+                output_set.tiles.push_back(std::move(definition));
+            }
+            for (const auto& [id, tile] : explicit_tiles)
+            {
+                if (!tile.contains("animation")) continue;
+                if (!tile.at("animation").is_array() || tile.at("animation").empty())
+                    throw import_error{"DPE-TILED-ANIMATION", "Tiled animation frames must be a non-empty array.", tileset_path};
+                auto& definition = output_set.tiles.at(static_cast<std::size_t>(id));
+                definition.kind = tiles::tile_kind::animated;
+                for (const auto& frame : tile.at("animation"))
+                {
+                    if (!frame.is_object() || !frame.contains("tileid") || !frame.at("tileid").is_number_integer()
+                        || !frame.contains("duration") || !frame.at("duration").is_number_integer())
+                        throw import_error{"DPE-TILED-ANIMATION", "Every animation frame requires integer tileid and duration.", tileset_path};
+                    const auto frame_id = frame.at("tileid").get<int>();
+                    const auto duration = frame.at("duration").get<int>();
+                    if (frame_id < 0 || frame_id >= tile_count || duration <= 0)
+                        throw import_error{"DPE-TILED-ANIMATION", "Animation frame values are outside the supported range.", tileset_path};
+                    const auto& frame_tile = output_set.tiles.at(static_cast<std::size_t>(frame_id));
+                    definition.animation_frames.push_back({
+                        {texture_id, frame_tile.source, frame_tile.pivot},
+                        static_cast<double>(duration) / 1000.0});
+                }
+            }
+            const auto make_rule_tile = [&](int tile_id, const json& connectivity,
+                                            const std::filesystem::path& source_path) {
+                if (tile_id < 0 || tile_id >= tile_count || !connectivity.is_array()
+                    || connectivity.size() != 8U)
+                    throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                        "A Wang tile uses an unsupported tile id or connectivity shape.", source_path};
+                int color{};
+                for (const auto& value : connectivity)
+                {
+                    if (!value.is_number_integer() || value.get<int>() < 0)
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                            "Wang connectivity entries must be non-negative integers.", source_path};
+                    const auto current = value.get<int>();
+                    if (current != 0 && color != 0 && current != color)
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                            "Multi-color Wang transitions cannot be represented by the built-in Rule Tile.", source_path};
+                    if (current != 0) color = current;
+                }
+                auto& definition = output_set.tiles.at(static_cast<std::size_t>(tile_id));
+                if (definition.kind != tiles::tile_kind::basic)
+                    throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                        "One Tiled tile cannot be both animated and a terrain Rule Tile.", source_path};
+                definition.kind = tiles::tile_kind::rule;
+                tiles::tile_rule rule;
+                rule.topology = conversion.layout;
+                rule.output_kind = tiles::rule_output_kind::fixed;
+                rule.outputs.push_back({{set_id, definition.tile_id}, 1.0});
+                static constexpr std::array<tiles::integer_point, 8> offsets{{
+                    {0, 1}, {1, 1}, {1, 0}, {1, -1},
+                    {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}}};
+                for (std::size_t index = 0; index < connectivity.size(); ++index)
+                {
+                    if (connectivity.at(index).get<int>() != 0)
+                        rule.neighbors.push_back({offsets[index],
+                            tiles::rule_neighbor_condition::same_tile, std::nullopt});
+                }
+                definition.rules.push_back(std::move(rule));
+            };
+            if (source_set.contains("wangsets"))
+            {
+                if (!source_set.at("wangsets").is_array())
+                    throw import_error{"DPE-TILED-WANG-UNSUPPORTED", "Tiled wangsets must be an array.", tileset_path};
+                for (const auto& wang_set : source_set.at("wangsets"))
+                {
+                    if (!wang_set.is_object() || !wang_set.contains("wangtiles")
+                        || !wang_set.at("wangtiles").is_array())
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED", "A Wang set is malformed.", tileset_path};
+                    if (wang_set.at("wangtiles").size() != 1U)
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                            "Only single-tile, single-color Wang sets are representable by the built-in Rule Tile.", tileset_path};
+                    const auto& wang_tile = wang_set.at("wangtiles").front();
+                    if (!wang_tile.is_object() || !wang_tile.contains("tileid")
+                        || !wang_tile.at("tileid").is_number_integer() || !wang_tile.contains("wangid"))
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED", "A Wang tile is malformed.", tileset_path};
+                    make_rule_tile(wang_tile.at("tileid").get<int>(), wang_tile.at("wangid"), tileset_path);
+                }
+            }
+            if (source_set.contains("terrains"))
+            {
+                std::set<int> seen_terrains;
+                for (const auto& [id, tile] : explicit_tiles)
+                {
+                    if (!tile.contains("terrain")) continue;
+                    const auto& terrain = tile.at("terrain");
+                    if (!terrain.is_array() || terrain.size() != 4U)
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED", "Legacy terrain corners are malformed.", tileset_path};
+                    int terrain_id{-1};
+                    json connectivity = json::array({0, 0, 0, 0, 0, 0, 0, 0});
+                    for (std::size_t corner = 0; corner < terrain.size(); ++corner)
+                    {
+                        if (terrain.at(corner).is_null()) continue;
+                        if (!terrain.at(corner).is_number_integer() || terrain.at(corner).get<int>() < 0
+                            || (terrain_id >= 0 && terrain_id != terrain.at(corner).get<int>()))
+                            throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                                "Mixed legacy terrain transitions cannot be represented by the built-in Rule Tile.", tileset_path};
+                        terrain_id = terrain.at(corner).get<int>();
+                        connectivity[corner * 2U] = terrain_id + 1;
+                    }
+                    if (terrain_id >= 0 && !seen_terrains.insert(terrain_id).second)
+                        throw import_error{"DPE-TILED-WANG-UNSUPPORTED",
+                            "A legacy terrain maps to multiple tiles and cannot be represented losslessly.", tileset_path};
+                    if (terrain_id >= 0) make_rule_tile(id, connectivity, tileset_path);
+                }
+            }
+            total_tile_count += output_set.tiles.size();
+            imported_sets.push_back(std::move(imported));
         }
 
         if (!map.contains("layers") || !map.at("layers").is_array()
@@ -496,7 +704,31 @@ import_result import_tiled_json(const import_request& request)
         tiles::tilemap_document output_map;
         output_map.asset_id = request.tilemap_asset_id;
         output_map.name = request.name;
-        output_map.tile_set_dependencies.push_back(request.tileset_asset_id);
+        output_map.grid.layout = conversion.layout;
+        output_map.grid.cell_size = {
+            static_cast<double>(map_tile_width) / request.pixels_per_unit,
+            static_cast<double>(map_tile_height) / request.pixels_per_unit};
+        if (orientation == "hexagonal")
+        {
+            const auto side = required_positive_int(map, "hexsidelength", source_map);
+            if ((conversion.stagger_axis == 'y' && side > map_tile_height)
+                || (conversion.stagger_axis == 'x' && side > map_tile_width))
+                throw import_error{"DPE-TILED-ORIENTATION", "The hexadecimal side length exceeds the map tile size.", source_map};
+            if (conversion.stagger_axis == 'y')
+            {
+                const auto desired_step = static_cast<double>(map_tile_height + side)
+                    / (2.0 * request.pixels_per_unit);
+                output_map.grid.cell_gap.y = desired_step / 0.75 - output_map.grid.cell_size.y;
+            }
+            else
+            {
+                const auto desired_step = static_cast<double>(map_tile_width + side)
+                    / (2.0 * request.pixels_per_unit);
+                output_map.grid.cell_gap.x = desired_step / 0.75 - output_map.grid.cell_size.x;
+            }
+        }
+        for (const auto& imported : imported_sets)
+            output_map.tile_set_dependencies.push_back(imported.document.asset_id);
         std::set<int> layer_ids;
         std::size_t total_cells{};
         unsigned layer_order{};
@@ -532,7 +764,7 @@ import_result import_tiled_json(const import_request& request)
                     if (!chunk.contains("data"))
                         throw import_error{"DPE-TILED-LAYER-DATA", "Each Tiled chunk requires data.", source_map};
                     add_data_array(layer, occupied, chunk.at("data"), x, y, width, height,
-                        first_gid, output_set.tiles, total_cells);
+                        conversion, imported_sets, total_cells);
                 }
             }
             else
@@ -544,36 +776,55 @@ import_result import_tiled_json(const import_request& request)
                 if (!layer_value.contains("data"))
                     throw import_error{"DPE-TILED-LAYER-DATA", "Each Tiled tile layer requires data.", source_map};
                 add_data_array(layer, occupied, layer_value.at("data"), x, y, width, height,
-                    first_gid, output_set.tiles, total_cells);
+                    conversion, imported_sets, total_cells);
             }
             output_map.layers.push_back(std::move(layer));
         }
 
-        const auto set_encoding = tiles::write_tile_set(output_set);
         const auto map_encoding = tiles::write_tilemap(output_map);
-        const auto parsed_set = tiles::read_tile_set(set_encoding);
         const auto parsed_map = tiles::read_tilemap(map_encoding);
-        if (!parsed_set.succeeded() || !parsed_map.succeeded())
+        if (!parsed_map.succeeded())
             throw import_error{"DPE-TILED-NATIVE-VALIDATION",
-                "Generated Dragon Pixel tile documents failed validation: TileSet=" + parsed_set.error
-                    + "; Tilemap=" + parsed_map.error};
-        result.tileset_path = request.staging_directory / "tileset.dpetileset";
+                "Generated Dragon Pixel Tilemap failed validation: " + parsed_map.error};
         result.tilemap_path = request.staging_directory / "tilemap.dpetilemap";
-        result.texture_path = request.staging_directory / "texture.png";
+        std::vector<std::string> set_encodings;
+        set_encodings.reserve(imported_sets.size());
+        for (std::size_t index = 0; index < imported_sets.size(); ++index)
+        {
+            auto encoding = tiles::write_tile_set(imported_sets[index].document);
+            const auto parsed = tiles::read_tile_set(encoding);
+            if (!parsed.succeeded())
+                throw import_error{"DPE-TILED-NATIVE-VALIDATION",
+                    "Generated Dragon Pixel TileSet failed validation: " + parsed.error};
+            set_encodings.push_back(std::move(encoding));
+            result.tileset_paths.push_back(request.staging_directory /
+                (imported_sets.size() == 1 ? "tileset.dpetileset"
+                    : "tileset-" + std::to_string(index) + ".dpetileset"));
+            result.texture_paths.push_back(request.staging_directory /
+                (imported_sets.size() == 1 ? "texture.png"
+                    : "texture-" + std::to_string(index) + ".png"));
+            result.tileset_asset_ids.push_back(imported_sets[index].document.asset_id);
+            result.texture_asset_ids.push_back(imported_sets[index].document.texture_asset_id);
+        }
+        result.tileset_path = result.tileset_paths.front();
+        result.texture_path = result.texture_paths.front();
         try
         {
-            write_file(result.tileset_path, set_encoding);
             write_file(result.tilemap_path, map_encoding);
-            write_file(result.texture_path, texture_bytes);
+            for (std::size_t index = 0; index < imported_sets.size(); ++index)
+            {
+                write_file(result.tileset_paths[index], set_encodings[index]);
+                write_file(result.texture_paths[index], imported_sets[index].texture_bytes);
+            }
         }
         catch (...)
         {
-            std::filesystem::remove(result.tileset_path, filesystem_error);
             std::filesystem::remove(result.tilemap_path, filesystem_error);
-            std::filesystem::remove(result.texture_path, filesystem_error);
+            for (const auto& path : result.tileset_paths) std::filesystem::remove(path, filesystem_error);
+            for (const auto& path : result.texture_paths) std::filesystem::remove(path, filesystem_error);
             throw;
         }
-        result.tile_count = output_set.tiles.size();
+        result.tile_count = total_tile_count;
         result.layer_count = output_map.layers.size();
         result.cell_count = total_cells;
         result.succeeded = true;
@@ -595,7 +846,7 @@ int execute_request_file(const std::filesystem::path& request_path, std::string&
     {
         const auto root = parse_json_file(request_path, 1024U * 1024U, "Importer request");
         if (!root.is_object() || root.value("format", std::string{}) != "dpe.tile-import.request"
-            || root.value("formatVersion", 0) != 1
+            || (root.value("formatVersion", 0) != 1 && root.value("formatVersion", 0) != 2)
             || root.value("importer", std::string{}) != "dragonpixel.tiled-json")
         {
             throw import_error{"DPE-TILED-REQUEST", "Unsupported tile importer request format, version, or importer."};
@@ -611,6 +862,7 @@ int execute_request_file(const std::filesystem::path& request_path, std::string&
             required_uuid(ids, "tileset"),
             required_uuid(ids, "texture"),
             root.value("pixelsPerUnit", 32.0),
+            root.value("importIsometricAsZAsY", false),
         };
         const auto result = import_tiled_json(request);
         write_file(request.staging_directory / "result.json", result_json(request, result).dump(2) + "\n");

@@ -14,10 +14,12 @@ inline constexpr std::string_view light = "1859c426-7cfe-42fc-a815-f5fc1bf1dad6"
 inline constexpr std::string_view rigid_body_2d = "ea23c9e1-2580-4aa9-94a2-96de0c5545ac";
 inline constexpr std::string_view box_collider_2d = "edbe79a3-4e97-4440-a23d-05c2d8faa1ca";
 inline constexpr std::string_view circle_collider_2d = "aee65743-286c-431e-8aaf-321cac47eaa1";
+inline constexpr std::string_view polygon_collider_2d = "712e4559-a179-4fe9-8c73-44a9a04c0c2d";
 inline constexpr std::string_view rigid_body_3d = "1025c21c-34a8-4f64-977b-453d81e402c5";
 inline constexpr std::string_view box_collider_3d = "bfc9ff93-a892-4c1f-ad8f-f13d8bc1ba38";
 inline constexpr std::string_view sphere_collider_3d = "11f84a3a-b568-4107-ad02-c53a86e50971";
 inline constexpr std::string_view tilemap_2d = "eea820b4-79e4-4dd6-86f8-04c93c3486fb";
 inline constexpr std::string_view tilemap_collider_2d = "43d833f1-6ff4-4fd1-9a62-90d230118e7b";
+inline constexpr std::string_view tile_object_placement_2d = "7edf6876-d677-42a8-a204-2eff41bb45f4";
 inline constexpr std::string_view input_motion_2d = "64348aba-c5a4-42fc-86e6-e99f9640e36d";
 }

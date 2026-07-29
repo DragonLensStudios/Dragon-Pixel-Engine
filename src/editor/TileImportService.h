@@ -16,6 +16,7 @@ struct TileImportRequest final
     double pixels_per_unit{32.0};
     int timeout_milliseconds{30'000};
     std::function<bool()> cancellation_requested;
+    bool import_isometric_as_z_as_y{};
 };
 
 enum class TileImportWorkerStatus
@@ -41,9 +42,15 @@ struct TileImportResult final
     QString tilemap_asset_id;
     QString tileset_asset_id;
     QString texture_asset_id;
+    QString palette_asset_id;
     QString tilemap_path;
     QString tileset_path;
     QString texture_path;
+    QString palette_path;
+    QStringList tileset_asset_ids;
+    QStringList texture_asset_ids;
+    QStringList tileset_paths;
+    QStringList texture_paths;
     qsizetype tile_count{};
     qsizetype layer_count{};
     qsizetype cell_count{};

@@ -59,6 +59,12 @@ public:
         const QVector3D& bounds_maximum,
         const QQuaternion& local_rotation);
     void clear_selection_geometry();
+    void set_tile_edit_enabled(bool enabled);
+    void set_tile_cell_overlay(
+        const QVector3D& origin,
+        const QVector3D& x_axis,
+        const QVector3D& y_axis);
+    void clear_tile_cell_overlay();
     void focus_on_selection() { focus_selection(); }
 
     [[nodiscard]] ViewMode view_mode() const noexcept { return view_mode_; }
@@ -70,6 +76,9 @@ public:
     [[nodiscard]] QPoint gizmo_anchor_widget_position() const;
     [[nodiscard]] const QVector3D& camera_target() const noexcept { return camera_target_; }
     [[nodiscard]] QPoint map_to_frame(const QPoint& widget_position) const;
+    [[nodiscard]] std::optional<QVector3D> map_to_world_2d(
+        const QPoint& widget_position) const;
+    [[nodiscard]] bool tile_edit_enabled() const noexcept { return tile_edit_enabled_; }
 
 signals:
     void viewport_resized(const QSize& size);
@@ -84,6 +93,10 @@ signals:
     void gizmo_previewed(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void gizmo_committed(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void gizmo_cancelled();
+    void tile_pointer_pressed(const QVector3D& world_position);
+    void tile_pointer_moved(const QVector3D& world_position);
+    void tile_pointer_released(const QVector3D& world_position);
+    void tile_pointer_cancelled();
     void project_item_dropped(
         const QString& project_id,
         qint64 source_revision,
@@ -110,6 +123,7 @@ private:
         pan,
         orbit,
         gizmo,
+        tile,
     };
 
     [[nodiscard]] QRect frame_rect() const;
@@ -120,6 +134,7 @@ private:
     void emit_camera();
     void draw_grid(QPainter& painter, const QRect& target) const;
     void draw_gizmo(QPainter& painter) const;
+    void draw_tile_overlay(QPainter& painter) const;
 
     QImage preview_frame_;
     QImage play_frame_;
@@ -145,6 +160,11 @@ private:
     QVector3D selection_bounds_minimum_{};
     QVector3D selection_bounds_maximum_{};
     QQuaternion selection_local_rotation_{};
+    bool tile_edit_enabled_{};
+    bool has_tile_cell_overlay_{};
+    QVector3D tile_overlay_origin_{};
+    QVector3D tile_overlay_x_axis_{};
+    QVector3D tile_overlay_y_axis_{};
     qreal angle_{};
 };
 

@@ -25,9 +25,12 @@
 
 #include <QComboBox>
 #include <QDockWidget>
+#include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QListView>
 #include <QMainWindow>
+#include <QMatrix4x4>
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -51,6 +54,7 @@ class QMimeData;
 class QProcess;
 class QPushButton;
 class QStackedWidget;
+class QTimer;
 class QToolButton;
 class EditorInteractionTests;
 
@@ -71,6 +75,7 @@ public:
     using PrefabPathPrompt = std::function<QString(const QString& suggested_path)>;
     using PrefabLevelPrompt = std::function<int(const QStringList& levels)>;
     using ComponentNamePrompt = std::function<std::optional<QString>(ProjectComponentLanguage language)>;
+    using TilemapNamePrompt = std::function<std::optional<QString>(const QString& suggested_name)>;
 
     explicit EditorWindow(QString initial_document, QWidget* parent = nullptr);
 
@@ -86,6 +91,7 @@ public:
     void set_prefab_path_prompt(PrefabPathPrompt prompt) { prefab_path_prompt_ = std::move(prompt); }
     void set_prefab_level_prompt(PrefabLevelPrompt prompt) { prefab_level_prompt_ = std::move(prompt); }
     void set_component_name_prompt(ComponentNamePrompt prompt) { component_name_prompt_ = std::move(prompt); }
+    void set_tilemap_name_prompt(TilemapNamePrompt prompt) { tilemap_name_prompt_ = std::move(prompt); }
 
 signals:
     void gizmo_preview_scene_changed(
@@ -122,6 +128,7 @@ private:
     void rebuild_scene_summary();
     void rebuild_assets();
     void update_project_browser_folder(const QModelIndex& folder_index);
+    void update_project_details(const QModelIndex& proxy_index);
     [[nodiscard]] QString current_project_folder_relative() const;
     void import_asset_paths(const QStringList& paths);
     bool handle_project_browser_drop(const QMimeData* data, const QModelIndex& destination_source);
@@ -149,7 +156,7 @@ private:
         const std::optional<dragonpixel::core::uuid>& parent,
         std::optional<std::size_t> sibling_index);
     void edit_inspector_item(QStandardItem* item);
-    void create_preset(
+    std::optional<dragonpixel::core::uuid> create_preset(
         dragonpixel::scene::entity_preset preset,
         const QString& asset_override = {},
         bool force_scene_root = false,
@@ -181,11 +188,23 @@ private:
     void revert_all_prefab();
     void repair_prefab();
     void unpack_prefab(bool completely);
-    void create_tile_set_from_png();
+    void create_tile_set_from_image();
+    void create_tilemap_from_selected_tileset();
+    [[nodiscard]] bool create_tilemap_from_tileset(
+        const QString& tileset_asset_id,
+        const QString& name,
+        const QString& grid_layout = QStringLiteral("rectangular"));
+    [[nodiscard]] bool prompt_create_tilemap_from_tileset(
+        const QString& tileset_asset_id,
+        const QString& suggested_name);
+    [[nodiscard]] std::optional<dragonpixel::core::uuid> attach_tilemap_to_scene(
+        const QString& tilemap_asset_id);
     void import_tiled_tilemap();
     [[nodiscard]] bool perform_tiled_tilemap_import(
         const QString& source,
         double pixels_per_unit);
+    [[nodiscard]] QString tile_texture_path_for(
+        const ProjectIndexEntry* tileset_entry) const;
     void create_project_component(ProjectComponentLanguage language);
     void build_project_components();
     void edit_project_source(const QString& source_path);
@@ -210,6 +229,51 @@ private:
     void update_window_title();
     void update_worker_viewport();
     void update_viewport_selection_geometry(const dragonpixel::scene::scene& geometry_scene);
+    struct TileSceneTarget final
+    {
+        dragonpixel::core::uuid entity_id;
+        QMatrix4x4 local_to_world;
+        QMatrix4x4 world_to_local;
+        float cell_width{1.0F};
+        float cell_height{1.0F};
+        dragonpixel::tiles::tile_grid_settings grid;
+    };
+    [[nodiscard]] std::optional<TileSceneTarget> tile_scene_target() const;
+    [[nodiscard]] static QPoint tile_cell_at(
+        const QVector3D& world_position,
+        const TileSceneTarget& target);
+    void update_tile_scene_edit_state();
+    void update_tile_scene_overlay(
+        const QPoint& cell,
+        const TileSceneTarget& target);
+    void begin_tile_scene_stroke(const QVector3D& world_position);
+    void update_tile_scene_stroke(const QVector3D& world_position);
+    void end_tile_scene_stroke(const QVector3D& world_position);
+    void cancel_tile_scene_stroke();
+    void request_custom_tile_brush(const QPoint& cell);
+    void apply_custom_tile_brush_proposal(
+        quint64 request_token,
+        const QJsonArray& commands);
+    void reject_custom_tile_brush_proposal(
+        quint64 request_token,
+        const QString& error_code,
+        const QString& error_message);
+    [[nodiscard]] bool place_tile_object(
+        const TilePaletteWidget::ObjectBrushSource& source,
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell);
+    [[nodiscard]] bool erase_tile_objects(
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell);
+    [[nodiscard]] std::vector<dragonpixel::scene::command> tile_object_placement_commands(
+        const dragonpixel::core::uuid& entity_id,
+        const TileSceneTarget& target,
+        int layer,
+        const QPoint& cell,
+        const QString& source_kind,
+        const QString& source) const;
     void begin_gizmo_preview(AuthoringViewport::GizmoTool tool);
     void preview_gizmo_delta(AuthoringViewport::GizmoTool tool, const QVector3D& delta);
     void cancel_gizmo_preview();
@@ -322,6 +386,26 @@ private:
 
     TileDocumentService* tile_document_service_{};
     TilePaletteWidget* tile_palette_{};
+    QTimer* tile_preview_timer_{};
+    bool tile_scene_stroke_active_{};
+    std::optional<QPoint> tile_scene_stroke_start_;
+    std::optional<QPoint> tile_scene_last_cell_;
+    std::optional<TileSceneTarget> tile_scene_stroke_target_;
+    TileCanvas::Tool tile_scene_stroke_tool_{TileCanvas::Tool::paint};
+    int tile_scene_stroke_layer_{};
+    std::optional<TileDocumentService::Brush> tile_scene_stroke_brush_;
+    std::optional<dragonpixel::core::uuid> pinned_tile_scene_target_;
+    struct PendingCustomTileBrush final
+    {
+        dragonpixel::core::uuid map_id;
+        dragonpixel::core::uuid layer_id;
+        int layer{};
+        std::uint64_t document_revision{};
+        TileDocumentService::Brush brush;
+    };
+    QHash<quint64, PendingCustomTileBrush> pending_custom_tile_brushes_;
+    quint64 next_custom_tile_brush_token_{};
+    std::uint64_t tile_document_revision_{};
 
     QAction* save_action_{};
     QAction* new_scene_action_{};
@@ -355,6 +439,7 @@ private:
     PrefabPathPrompt prefab_path_prompt_;
     PrefabLevelPrompt prefab_level_prompt_;
     ComponentNamePrompt component_name_prompt_;
+    TilemapNamePrompt tilemap_name_prompt_;
     SelectionService selection_service_;
     ProjectLifecycleService project_lifecycle_service_;
     AssetService asset_service_;

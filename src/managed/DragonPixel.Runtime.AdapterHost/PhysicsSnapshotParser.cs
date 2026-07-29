@@ -64,6 +64,7 @@ internal static class PhysicsSnapshotParser
 
             var bodyProperties = has2D ? body2D : body3D;
             var transform = worldTransforms[entityIdText];
+            colliders = ScaleColliders(colliders, transform.Scale, has2D);
             var mode = bodyProperties.HasValue
                 ? ReadBodyMode(bodyProperties.Value, has2D ? "dpe.physics2d.body_mode" : "dpe.physics3d.body_mode")
                 : PhysicsBodyMode.Static;
@@ -157,6 +158,7 @@ internal static class PhysicsSnapshotParser
         typeId.Equals(BuiltinComponentIds.RigidBody2D, StringComparison.OrdinalIgnoreCase)
         || typeId.Equals(BuiltinComponentIds.BoxCollider2D, StringComparison.OrdinalIgnoreCase)
         || typeId.Equals(BuiltinComponentIds.CircleCollider2D, StringComparison.OrdinalIgnoreCase)
+        || typeId.Equals(BuiltinComponentIds.PolygonCollider2D, StringComparison.OrdinalIgnoreCase)
         || typeId.Equals(BuiltinComponentIds.RigidBody3D, StringComparison.OrdinalIgnoreCase)
         || typeId.Equals(BuiltinComponentIds.BoxCollider3D, StringComparison.OrdinalIgnoreCase)
         || typeId.Equals(BuiltinComponentIds.SphereCollider3D, StringComparison.OrdinalIgnoreCase);
@@ -182,6 +184,16 @@ internal static class PhysicsSnapshotParser
                 NativePhysicsShape.CircleOrSphere,
                 new PhysicsVector3(radius, radius, radius),
                 ReadVector2As3(circle, "dpe.physics2d.offset", PhysicsVector3Zero)));
+        }
+        if (components.GetValueOrDefault(BuiltinComponentIds.PolygonCollider2D) is JsonElement polygon)
+        {
+            var collider = ReadCollider(
+                polygon,
+                NativePhysicsShape.Polygon2D,
+                new PhysicsVector3(1, 1, 1),
+                ReadVector2As3(polygon, "dpe.physics2d.offset", PhysicsVector3Zero));
+            collider.Vertices = ReadPolygon(polygon, "dpe.physics2d.points");
+            result.Add(collider);
         }
         return result;
     }
@@ -226,6 +238,65 @@ internal static class PhysicsSnapshotParser
         Layer = ReadUShort(properties, "dpe.physics.layer", 0, 15),
         Mask = ReadUShort(properties, "dpe.physics.mask", ushort.MaxValue, ushort.MaxValue),
     };
+
+    private static IReadOnlyList<PhysicsVector2> ReadPolygon(JsonElement properties, string name)
+    {
+        if (!properties.TryGetProperty(name, out var value)
+            || value.ValueKind != JsonValueKind.Array
+            || value.GetArrayLength() is < 3 or > 8)
+        {
+            throw new InvalidDataException(
+                $"Physics property {name} must contain three to eight convex vector2 points.");
+        }
+        var result = new List<PhysicsVector2>(value.GetArrayLength());
+        foreach (var point in value.EnumerateArray())
+        {
+            if (point.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Physics property {name} contains a non-vector point.");
+            }
+            result.Add(new PhysicsVector2(
+                RequiredFinite(point, "x"), RequiredFinite(point, "y")));
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<NativePhysicsCollider> ScaleColliders(
+        IReadOnlyList<NativePhysicsCollider> colliders,
+        RenderVector3 scale,
+        bool twoDimensional)
+    {
+        foreach (var collider in colliders)
+        {
+            collider.Offset = new PhysicsVector3(
+                collider.Offset.X * scale.X,
+                collider.Offset.Y * scale.Y,
+                collider.Offset.Z * scale.Z);
+            if (collider.Shape == NativePhysicsShape.CircleOrSphere)
+            {
+                var amount = Math.Max(Math.Abs(scale.X), Math.Abs(scale.Y));
+                if (!twoDimensional)
+                    amount = Math.Max(amount, Math.Abs(scale.Z));
+                collider.Size = new PhysicsVector3(
+                    collider.Size.X * amount,
+                    collider.Size.Y * amount,
+                    collider.Size.Z * amount);
+            }
+            else
+            {
+                collider.Size = new PhysicsVector3(
+                    collider.Size.X * Math.Abs(scale.X),
+                    collider.Size.Y * Math.Abs(scale.Y),
+                    collider.Size.Z * Math.Abs(scale.Z));
+            }
+            if (collider.Shape == NativePhysicsShape.Polygon2D)
+            {
+                collider.Vertices = collider.Vertices.Select(point => new PhysicsVector2(
+                    point.X * scale.X, point.Y * scale.Y)).ToArray();
+            }
+        }
+        return colliders;
+    }
 
     private static ScenePhysicsSettings ReadSettings(JsonElement root, int formatVersion)
     {

@@ -503,9 +503,10 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
                     Layer = layer,
                     Cell = cell,
                 })))
-            .OrderBy(static item => item.Tilemap.BaseLayer + item.Layer.Order)
-            .ThenBy(static item => item.Tilemap.TextureAssetId, StringComparer.Ordinal)
-            .ThenBy(static item => item.Cell.Y)
+            .OrderBy(static item => item.Tilemap.BaseLayer + item.Layer.Order + item.Layer.SortOrder)
+            .ThenBy(static item => GridSortCoordinate(item.Tilemap, item.Cell))
+            .ThenBy(static item => item.Cell.Elevation)
+            .ThenBy(static item => item.Cell.TextureAssetId, StringComparer.Ordinal)
             .ThenBy(static item => item.Cell.X)
             .ToArray();
         if (batches.Length == 0)
@@ -521,10 +522,8 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         foreach (var item in batches)
         {
             var world = ResolveWorldTransform(item.Entity, entities, request.Elapsed);
-            var worldPosition = Vector3.Transform(new Vector3(
-                (item.Cell.X + 0.5f) * item.Tilemap.CellWidth,
-                (item.Cell.Y + 0.5f) * item.Tilemap.CellHeight,
-                0), world);
+            var projected = ProjectTileCell(item.Tilemap, item.Cell);
+            var worldPosition = Vector3.Transform(projected, world);
             var position = GraphicsDevice.Viewport.Project(
                 worldPosition,
                 camera.Projection,
@@ -538,12 +537,14 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             var scaleY = new Vector3(world.M21, world.M22, world.M23).Length();
             var width = Math.Clamp(
                 (int)MathF.Round(Math.Min(request.Width, request.Height) * 0.10f
-                    * item.Tilemap.CellWidth * Math.Max(0.01f, scaleX)),
+                    * item.Tilemap.CellWidth * Math.Max(0.01f, scaleX)
+                    * Math.Max(0.01f, Math.Abs(item.Cell.ScaleX))),
                 2,
                 Math.Min(request.Width, request.Height));
             var height = Math.Clamp(
                 (int)MathF.Round(Math.Min(request.Width, request.Height) * 0.10f
-                    * item.Tilemap.CellHeight * Math.Max(0.01f, scaleY)),
+                    * item.Tilemap.CellHeight * Math.Max(0.01f, scaleY)
+                    * Math.Max(0.01f, Math.Abs(item.Cell.ScaleY))),
                 2,
                 Math.Min(request.Width, request.Height));
             var destination = new Rectangle(
@@ -551,15 +552,20 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
                 (int)MathF.Round(position.Y) - (height / 2),
                 width,
                 height);
-            var tileTexture = idTokens is null ? GetTileTexture(item.Tilemap) : null;
+            var animationFrame = ResolveAnimationFrame(item.Cell, item.Layer, request.Elapsed);
+            var textureAssetId = animationFrame?.TextureAssetId ?? item.Cell.TextureAssetId;
+            var tileTexture = idTokens is null ? GetTileTexture(item.Tilemap, textureAssetId) : null;
+            var sourceX = animationFrame?.SourceX ?? item.Cell.SourceX;
+            var sourceY = animationFrame?.SourceY ?? item.Cell.SourceY;
+            var sourceWidth = animationFrame?.SourceWidth ?? item.Cell.SourceWidth;
+            var sourceHeight = animationFrame?.SourceHeight ?? item.Cell.SourceHeight;
             Rectangle? source = null;
             if (tileTexture is not null
-                && item.Cell.SourceX >= 0 && item.Cell.SourceY >= 0
-                && item.Cell.SourceX + item.Cell.SourceWidth <= tileTexture.Width
-                && item.Cell.SourceY + item.Cell.SourceHeight <= tileTexture.Height)
+                && sourceX >= 0 && sourceY >= 0
+                && sourceX + sourceWidth <= tileTexture.Width
+                && sourceY + sourceHeight <= tileTexture.Height)
             {
-                source = new Rectangle(item.Cell.SourceX, item.Cell.SourceY,
-                    item.Cell.SourceWidth, item.Cell.SourceHeight);
+                source = new Rectangle(sourceX, sourceY, sourceWidth, sourceHeight);
             }
             else
             {
@@ -567,16 +573,15 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
             }
             var color = idTokens is not null
                 ? TokenColor(idTokens[item.Entity.Id])
-                : tileTexture is not null
-                    ? ToXnaColor(item.Tilemap.Tint)
-                    : ToXnaColor(new RenderColor(
-                        item.Cell.Color.R * item.Tilemap.Tint.R,
-                        item.Cell.Color.G * item.Tilemap.Tint.G,
-                        item.Cell.Color.B * item.Tilemap.Tint.B,
-                        item.Cell.Color.A * item.Tilemap.Tint.A));
+                : ToXnaColor(new RenderColor(
+                    item.Cell.Color.R * item.Layer.Tint.R * item.Tilemap.Tint.R,
+                    item.Cell.Color.G * item.Layer.Tint.G * item.Tilemap.Tint.G,
+                    item.Cell.Color.B * item.Layer.Tint.B * item.Tilemap.Tint.B,
+                    item.Cell.Color.A * item.Layer.Tint.A * item.Tilemap.Tint.A));
             var effects = (item.Cell.FlipX ? SpriteEffects.FlipHorizontally : SpriteEffects.None)
                 | (item.Cell.FlipY ? SpriteEffects.FlipVertically : SpriteEffects.None);
-            var rotation = item.Cell.RotationQuarterTurns * MathF.PI * 0.5f;
+            var rotation = (item.Cell.RotationQuarterTurns * MathF.PI * 0.5f)
+                + (item.Cell.RotationDegrees * MathF.PI / 180.0f);
             var origin = source.HasValue
                 ? new Vector2(source.Value.Width * 0.5f, source.Value.Height * 0.5f)
                 : Vector2.Zero;
@@ -586,15 +591,81 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         _spriteBatch.End();
     }
 
-    private Texture2D? GetTileTexture(RenderTilemap tilemap)
+    private static Vector3 ProjectTileCell(RenderTilemap tilemap, RenderTileCell cell)
     {
-        if (tilemap.TexturePng.Length == 0) return null;
-        var key = $"{tilemap.TextureAssetId}:{Convert.ToHexString(SHA256.HashData(tilemap.TexturePng))}";
+        var width = tilemap.CellWidth + tilemap.CellGapX;
+        var height = tilemap.CellHeight + tilemap.CellGapY;
+        var x = cell.X * width;
+        var y = cell.Y * height;
+        switch (tilemap.GridLayout)
+        {
+            case RenderGridLayout.HexPointTop:
+                x = width * (cell.X + (0.5f * cell.Y));
+                y = height * 0.75f * cell.Y;
+                break;
+            case RenderGridLayout.HexFlatTop:
+                x = width * 0.75f * cell.X;
+                y = height * (cell.Y + (0.5f * cell.X));
+                break;
+            case RenderGridLayout.Isometric:
+            case RenderGridLayout.IsometricZAsY:
+                x = (cell.X - cell.Y) * width * 0.5f;
+                y = (cell.X + cell.Y) * height * 0.5f;
+                if (tilemap.GridLayout == RenderGridLayout.IsometricZAsY)
+                    y += cell.Elevation * height * 0.5f;
+                break;
+        }
+        x += ((tilemap.TileAnchorX - 0.5f) * tilemap.CellWidth) + cell.OffsetX;
+        y += ((tilemap.TileAnchorY - 0.5f) * tilemap.CellHeight) + cell.OffsetY;
+        return new Vector3(x, y, 0);
+    }
+
+    private static float GridSortCoordinate(RenderTilemap tilemap, RenderTileCell cell)
+    {
+        var projected = ProjectTileCell(tilemap, cell);
+        var height = tilemap.CellHeight + tilemap.CellGapY;
+        return projected.Y + (cell.Elevation * height);
+    }
+
+    private static RenderTileAnimationFrame? ResolveAnimationFrame(
+        RenderTileCell cell,
+        RenderTileLayer layer,
+        TimeSpan elapsed)
+    {
+        if (cell.AnimationFrames.Count == 0) return null;
+        var startIndex = Math.Abs(cell.AnimationStartFrame) % cell.AnimationFrames.Count;
+        if (cell.AnimationPaused) return cell.AnimationFrames[startIndex];
+        var seed = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+            $"{cell.TileSetId}:{cell.TileId}:{cell.X}:{cell.Y}"));
+        var amount = seed[0] / 255.0f;
+        var speed = cell.MinimumAnimationSpeed
+            + ((cell.MaximumAnimationSpeed - cell.MinimumAnimationSpeed) * amount);
+        var duration = cell.AnimationFrames.Sum(static frame => Math.Max(0.000001f, frame.DurationSeconds));
+        var time = Math.Max(0, (float)elapsed.TotalSeconds - cell.AnimationStartTime)
+            * Math.Max(0, speed) * Math.Max(0, layer.AnimationRate);
+        if (cell.AnimationLoopOnce) time = Math.Min(time, MathF.BitDecrement(duration));
+        else time %= duration;
+        var index = startIndex;
+        for (var visited = 0; visited < cell.AnimationFrames.Count; ++visited)
+        {
+            var frame = cell.AnimationFrames[index];
+            if (time < frame.DurationSeconds) return frame;
+            time -= frame.DurationSeconds;
+            index = (index + 1) % cell.AnimationFrames.Count;
+        }
+        return cell.AnimationFrames[index];
+    }
+
+    private Texture2D? GetTileTexture(RenderTilemap tilemap, string textureAssetId)
+    {
+        if (!tilemap.Textures.TryGetValue(textureAssetId, out var binding)
+            || binding.PngBytes.Length == 0) return null;
+        var key = $"{textureAssetId}:{Convert.ToHexString(SHA256.HashData(binding.PngBytes))}";
         if (_tileTextures.TryGetValue(key, out var existing)) return existing;
         if (_failedTileTextures.Contains(key)) return null;
         try
         {
-            using var stream = new MemoryStream(tilemap.TexturePng, writable: false);
+            using var stream = new MemoryStream(binding.PngBytes, writable: false);
             var texture = Texture2D.FromStream(GraphicsDevice, stream);
             _tileTextures.Add(key, texture);
             return texture;
@@ -679,10 +750,28 @@ internal sealed class FrameworkSceneAdapter : Game, IFrameworkSceneAdapter
         {
             RenderColliderKind.Box2D => CreateBox2DOutline(offset, halfSize, color),
             RenderColliderKind.Circle2D => CreateRingOutline(offset, halfSize.X, RingPlane.XY, color),
+            RenderColliderKind.Polygon2D => CreatePolygon2DOutline(collider.Points, offset, color),
             RenderColliderKind.Box3D => CreateBox3DOutline(offset, halfSize, color),
             RenderColliderKind.Sphere3D => CreateSphereOutline(offset, halfSize.X, color),
             _ => Array.Empty<VertexPositionColor>(),
         };
+    }
+
+    private static VertexPositionColor[] CreatePolygon2DOutline(
+        IReadOnlyList<RenderVector3>? points,
+        Vector3 offset,
+        Color color)
+    {
+        if (points is null || points.Count < 3) return Array.Empty<VertexPositionColor>();
+        var vertices = new List<VertexPositionColor>(points.Count * 2);
+        for (var index = 0; index < points.Count; ++index)
+        {
+            AddLine(vertices,
+                offset + ToVector3(points[index]),
+                offset + ToVector3(points[(index + 1) % points.Count]),
+                color);
+        }
+        return vertices.ToArray();
     }
 
     private static VertexPositionColor[] CreateBox2DOutline(

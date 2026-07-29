@@ -110,8 +110,11 @@ add_test(
         $<TARGET_FILE:dpe_component_runtime_v1_test_plugin>
 )
 set_tests_properties(s2.project_component_runtime poc_i.worker_only_component_runtime PROPERTIES TIMEOUT 60)
-dpe_configure_managed_asan_test(s2.project_component_runtime NATIVE_HOST)
-dpe_configure_managed_asan_test(poc_i.worker_only_component_runtime NATIVE_HOST)
+# These managed test hosts load the instrumented native modules directly.
+# Preload the Clang ASan runtime into dotnet rather than reserving it for a
+# child process that these aliases never launch.
+dpe_configure_managed_asan_test(s2.project_component_runtime)
+dpe_configure_managed_asan_test(poc_i.worker_only_component_runtime)
 
 add_test(
     NAME s2.sample_mymover_runtime

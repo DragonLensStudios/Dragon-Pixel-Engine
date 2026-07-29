@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -9,7 +10,12 @@ import unittest
 CI_SCRIPT_DIRECTORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CI_SCRIPT_DIRECTORY))
 
-from validate_ci import ValidationError, validate_gitflow_event, validate_junit  # noqa: E402
+from validate_ci import (  # noqa: E402
+    ValidationError,
+    validate_gitflow_event,
+    validate_junit,
+    validate_linux_asan_hosts,
+)
 
 
 class GitFlowValidationTests(unittest.TestCase):
@@ -124,6 +130,49 @@ class JUnitValidationTests(unittest.TestCase):
                     validate_junit(path)
         with self.assertRaises(ValidationError):
             validate_junit(self._write('<testsuite><testcase name="test"/></testsuite>'), minimum_tests=0)
+
+
+class LinuxAsanHostValidationTests(unittest.TestCase):
+    def _write(self, tests: list[dict[str, object]]) -> Path:
+        temporary = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False)
+        self.addCleanup(Path(temporary.name).unlink, missing_ok=True)
+        with temporary:
+            json.dump({"kind": "ctestInfo", "version": {"major": 1, "minor": 0}, "tests": tests}, temporary)
+        return Path(temporary.name)
+
+    @staticmethod
+    def _test(name: str, *environment: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "properties": [{"name": "ENVIRONMENT", "value": list(environment)}],
+        }
+
+    def test_accepts_direct_and_child_native_host_environments(self) -> None:
+        path = self._write([
+            self._test("s2.project_component_runtime", "LD_PRELOAD=/usr/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so"),
+            self._test("poc_i.worker_only_component_runtime", "LD_PRELOAD=/usr/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so"),
+            self._test("s2.editor_interactions", "QT_QPA_PLATFORM=offscreen", "DPE_ASAN_RUNTIME=/usr/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so"),
+            self._test("poc_h.qt_interactions", "QT_QPA_PLATFORM=offscreen", "DPE_ASAN_RUNTIME=/usr/lib/clang/18/lib/linux/libclang_rt.asan-x86_64.so"),
+        ])
+        self.assertEqual(validate_linux_asan_hosts(path), 4)
+
+    def test_rejects_missing_or_inverted_host_classification(self) -> None:
+        valid = [
+            self._test("s2.project_component_runtime", "LD_PRELOAD=/asan.so"),
+            self._test("poc_i.worker_only_component_runtime", "LD_PRELOAD=/asan.so"),
+            self._test("s2.editor_interactions", "DPE_ASAN_RUNTIME=/asan.so"),
+            self._test("poc_h.qt_interactions", "DPE_ASAN_RUNTIME=/asan.so"),
+        ]
+        invalid_documents = (
+            valid[:-1],
+            [*valid[:2], self._test("s2.editor_interactions", "LD_PRELOAD=/asan.so"), valid[3]],
+            [self._test("s2.project_component_runtime", "DPE_ASAN_RUNTIME=/asan.so"), *valid[1:]],
+            [self._test("s2.project_component_runtime", "LD_PRELOAD=relative.so"), *valid[1:]],
+        )
+        for tests in invalid_documents:
+            with self.subTest(tests=tests):
+                with self.assertRaises(ValidationError):
+                    validate_linux_asan_hosts(self._write(tests))
 
 
 if __name__ == "__main__":

@@ -95,6 +95,9 @@ if(TARGET DragonPixelCAbi)
 endif()
 
 dpe_configure_native_target(DragonPixelEditorLibrary)
+if(MSVC)
+    target_compile_options(DragonPixelEditorLibrary PRIVATE /bigobj)
+endif()
 
 add_executable(DragonPixelEditor
     main.cpp
@@ -268,6 +271,11 @@ add_test(NAME s1.editor_crash_recovery COMMAND DragonPixelEditor --self-test-cra
 add_test(NAME s2.editor_interactions COMMAND DragonPixelEditorInteractionTests)
 add_test(NAME poc_h.qt_interactions COMMAND DragonPixelEditorInteractionTests)
 add_test(
+    NAME s2.tilemap_creation_workflow
+    COMMAND DragonPixelEditorInteractionTests
+        tilemap_creation_workflow_is_paint_ready_recoverable_and_guided
+)
+add_test(
     NAME poc_j.qt_input_latency
     COMMAND DragonPixelEditorInteractionTests poc_j_qt_input_latency
 )
@@ -299,6 +307,15 @@ set_tests_properties(s2.editor_interactions poc_h.qt_interactions PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 if(DPE_ENABLE_ASAN)
+    set(DPE_TILEMAP_CREATION_WORKFLOW_TIMEOUT 240)
+else()
+    set(DPE_TILEMAP_CREATION_WORKFLOW_TIMEOUT 120)
+endif()
+set_tests_properties(s2.tilemap_creation_workflow PROPERTIES
+    TIMEOUT ${DPE_TILEMAP_CREATION_WORKFLOW_TIMEOUT}
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;DPE_RUN_TILEMAP_CREATION_WORKFLOW=1"
+)
+if(DPE_ENABLE_ASAN)
     set(DPE_POC_J_TEST_TIMEOUT 1200)
 else()
     set(DPE_POC_J_TEST_TIMEOUT 750)
@@ -311,6 +328,8 @@ set_tests_properties(poc_j.qt_input_latency PROPERTIES
 dpe_configure_managed_asan_test(s1.editor_monogame NATIVE_HOST)
 dpe_configure_managed_asan_test(s1.editor_kni NATIVE_HOST)
 dpe_configure_managed_asan_test(s1.editor_crash_recovery NATIVE_HOST)
+dpe_configure_managed_asan_test(s2.editor_interactions NATIVE_HOST)
+dpe_configure_managed_asan_test(poc_h.qt_interactions NATIVE_HOST)
 dpe_configure_managed_asan_test(poc_j.qt_input_latency NATIVE_HOST)
 
 if(WIN32)
@@ -322,6 +341,7 @@ if(WIN32)
         s1.editor_crash_recovery
         s2.editor_interactions
         poc_h.qt_interactions
+        s2.tilemap_creation_workflow
         poc_j.qt_input_latency
         s2.project_component_modules
         poc_i.project_component_modules

@@ -48,6 +48,7 @@ enum class collider_shape : std::uint8_t
 {
     box,
     circle_or_sphere,
+    polygon_2d,
 };
 
 struct collider_descriptor final
@@ -55,6 +56,7 @@ struct collider_descriptor final
     collider_shape shape{collider_shape::box};
     vector3 size{1.0, 1.0, 1.0};
     vector3 offset{};
+    std::vector<vector2> vertices;
     bool sensor{};
     double density{1.0};
     double friction{0.5};

@@ -12,6 +12,7 @@ public static class BuiltinComponentIds
     public const string RigidBody2D = "ea23c9e1-2580-4aa9-94a2-96de0c5545ac";
     public const string BoxCollider2D = "edbe79a3-4e97-4440-a23d-05c2d8faa1ca";
     public const string CircleCollider2D = "aee65743-286c-431e-8aaf-321cac47eaa1";
+    public const string PolygonCollider2D = "712e4559-a179-4fe9-8c73-44a9a04c0c2d";
     public const string RigidBody3D = "1025c21c-34a8-4f64-977b-453d81e402c5";
     public const string BoxCollider3D = "bfc9ff93-a892-4c1f-ad8f-f13d8bc1ba38";
     public const string SphereCollider3D = "11f84a3a-b568-4107-ad02-c53a86e50971";

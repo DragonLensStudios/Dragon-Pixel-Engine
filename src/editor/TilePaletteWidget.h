@@ -2,15 +2,25 @@
 
 #include "TileDocumentService.h"
 
+#include <QImage>
+#include <QHash>
 #include <QWidget>
 
 #include <optional>
+#include <functional>
+#include <vector>
 
 class QActionGroup;
 class QComboBox;
 class QLabel;
 class QListWidget;
 class QSlider;
+class QToolButton;
+class QPolygonF;
+class QDoubleSpinBox;
+class QSpinBox;
+class QCheckBox;
+class QLineEdit;
 
 class TileCanvas final : public QWidget
 {
@@ -22,20 +32,39 @@ public:
         paint,
         erase,
         rectangle,
+        line,
         fill,
         eyedropper,
         select,
+        move,
     };
 
     explicit TileCanvas(TileDocumentService* service, QWidget* parent = nullptr);
     void set_tool(Tool tool) noexcept { tool_ = tool; }
     void set_layer(int layer) noexcept { layer_ = layer; update(); }
-    void set_selected_tile(std::optional<dragonpixel::core::uuid> tile) { selected_tile_ = tile; }
+    void set_selected_brush(std::optional<TileDocumentService::Brush> brush) { selected_brush_ = brush; }
+    void set_atlas(QImage atlas) { atlas_ = std::move(atlas); update(); }
+    void set_atlases(QHash<QString, QImage> atlases) { atlases_ = std::move(atlases); update(); }
+    void set_brush_provider(std::function<std::optional<TileDocumentService::Brush>(int, int)> provider)
+    {
+        brush_provider_ = std::move(provider);
+    }
+    void set_pattern_provider(std::function<std::vector<std::pair<QPoint,
+        TileDocumentService::Brush>>(int, int)> provider)
+    {
+        pattern_provider_ = std::move(provider);
+    }
+    void set_custom_brush_mode(bool enabled) noexcept { custom_brush_mode_ = enabled; }
     void set_zoom(double zoom) noexcept;
 
+    [[nodiscard]] Tool tool() const noexcept { return tool_; }
+    [[nodiscard]] std::optional<QRect> selection() const;
+
 signals:
-    void tilePicked(const QString& tile_id);
+    void brushPicked(const QString& tile_set_id, const QString& tile_id,
+        bool flip_x, bool flip_y, int rotation_quarter_turns);
     void selectionChanged(int x, int y);
+    void customBrushRequested(int x, int y);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -47,16 +76,24 @@ protected:
 private:
     [[nodiscard]] QPoint cell_at(const QPoint& position) const;
     [[nodiscard]] QRect cell_rect(int x, int y) const;
+    [[nodiscard]] QPolygonF cell_polygon(int x, int y) const;
     void apply_at(const QPoint& cell, bool preview_rectangle);
 
     TileDocumentService* service_{};
     Tool tool_{Tool::paint};
     int layer_{};
     double zoom_{1.0};
-    std::optional<dragonpixel::core::uuid> selected_tile_;
+    std::optional<TileDocumentService::Brush> selected_brush_;
+    std::function<std::optional<TileDocumentService::Brush>(int, int)> brush_provider_;
+    std::function<std::vector<std::pair<QPoint, TileDocumentService::Brush>>(int, int)> pattern_provider_;
+    QImage atlas_;
+    QHash<QString, QImage> atlases_;
     std::optional<QPoint> stroke_start_;
     std::optional<QPoint> selected_cell_;
+    std::optional<QPoint> selection_start_;
+    std::optional<QPoint> selection_end_;
     std::optional<QPoint> last_cell_;
+    bool custom_brush_mode_{};
 };
 
 class TilePaletteWidget final : public QWidget
@@ -64,16 +101,122 @@ class TilePaletteWidget final : public QWidget
     Q_OBJECT
 
 public:
+    enum class ObjectBrushKind
+    {
+        prefab,
+        scene_objects,
+    };
+
+    struct ObjectBrushSource final
+    {
+        ObjectBrushKind kind{ObjectBrushKind::prefab};
+        QString source_path;
+        QString project_id;
+        QString scene_id;
+        qint64 source_revision{};
+        std::vector<dragonpixel::core::uuid> entity_ids;
+    };
+
     explicit TilePaletteWidget(TileDocumentService* service, QWidget* parent = nullptr);
-    [[nodiscard]] bool load_documents(const QString& tilemap_path, const QString& tileset_path);
+    [[nodiscard]] bool load_documents(
+        const QString& tilemap_path,
+        const QString& tileset_path,
+        const QString& texture_path = {},
+        const QString& palette_path = {});
+    [[nodiscard]] bool load_documents(
+        const QString& tilemap_path,
+        const QStringList& tileset_paths,
+        const QStringList& texture_paths,
+        const QString& palette_path = {});
+    [[nodiscard]] TileCanvas::Tool active_tool() const noexcept;
+    [[nodiscard]] int active_layer() const noexcept;
+    [[nodiscard]] bool target_pinned() const noexcept;
+    [[nodiscard]] bool custom_extension_brush_active() const;
+    [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush() const;
+    [[nodiscard]] std::optional<TileDocumentService::Brush> active_brush_at(int x, int y) const;
+    [[nodiscard]] std::vector<std::pair<QPoint, TileDocumentService::Brush>>
+        active_brush_pattern_at(int x, int y) const;
+    [[nodiscard]] std::optional<ObjectBrushSource> active_object_brush() const;
+    void select_brush(const TileDocumentService::Brush& brush);
+
+signals:
+    void authoringStateChanged();
+    void customBrushRequested(int x, int y);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void rebuild();
+    void update_layer_controls();
+    void update_map_editor();
+    void update_brush();
+    void update_tile_editor();
 
     TileDocumentService* service_{};
     TileCanvas* canvas_{};
     QListWidget* tiles_{};
+    QComboBox* palettes_{};
+    QComboBox* brush_behavior_{};
     QComboBox* layers_{};
     QLabel* status_{};
     QSlider* zoom_{};
+    QToolButton* layer_visible_{};
+    QToolButton* layer_up_{};
+    QToolButton* layer_down_{};
+    QToolButton* layer_remove_{};
+    QToolButton* target_pin_{};
+    QToolButton* flip_x_{};
+    QToolButton* flip_y_{};
+    QToolButton* rotate_{};
+    QLineEdit* brush_tint_{};
+    QDoubleSpinBox* brush_offset_x_{};
+    QDoubleSpinBox* brush_offset_y_{};
+    QDoubleSpinBox* brush_rotation_degrees_{};
+    QDoubleSpinBox* brush_scale_x_{};
+    QDoubleSpinBox* brush_scale_y_{};
+    QSpinBox* brush_elevation_{};
+    QSpinBox* group_gap_{};
+    QSpinBox* group_limit_{};
+    QCheckBox* brush_lock_color_{};
+    QCheckBox* brush_lock_transform_{};
+    QLineEdit* tile_name_{};
+    QComboBox* tile_kind_{};
+    QComboBox* tile_collider_{};
+    QLineEdit* tile_outline_{};
+    QDoubleSpinBox* tile_minimum_speed_{};
+    QDoubleSpinBox* tile_maximum_speed_{};
+    QDoubleSpinBox* tile_start_time_{};
+    QSpinBox* tile_start_frame_{};
+    QCheckBox* tile_loop_once_{};
+    QCheckBox* tile_paused_{};
+    QCheckBox* tile_update_physics_{};
+    QDoubleSpinBox* tile_frame_duration_{};
+    QComboBox* tile_rule_topology_{};
+    QComboBox* tile_rule_match_{};
+    QComboBox* tile_rule_output_{};
+    QComboBox* tile_rule_neighbor_{};
+    QSpinBox* tile_rule_offset_x_{};
+    QSpinBox* tile_rule_offset_y_{};
+    QLineEdit* tile_custom_type_{};
+    QLineEdit* tile_custom_payload_{};
+    QComboBox* grid_layout_{};
+    QDoubleSpinBox* grid_cell_width_{};
+    QDoubleSpinBox* grid_cell_height_{};
+    QDoubleSpinBox* grid_gap_x_{};
+    QDoubleSpinBox* grid_gap_y_{};
+    QDoubleSpinBox* grid_anchor_x_{};
+    QDoubleSpinBox* grid_anchor_y_{};
+    QLineEdit* layer_tint_{};
+    QSpinBox* layer_sort_order_{};
+    QComboBox* layer_renderer_mode_{};
+    QDoubleSpinBox* layer_animation_rate_{};
+    QDoubleSpinBox* layer_culling_x_{};
+    QDoubleSpinBox* layer_culling_y_{};
+    QImage atlas_;
+    QHash<QString, QImage> atlases_;
+    QString texture_path_;
+    unsigned brush_rotation_{};
+    bool rebuilding_{};
+    std::optional<ObjectBrushSource> object_brush_;
 };

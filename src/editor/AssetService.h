@@ -30,6 +30,13 @@ struct AssetImportRequest final
 
 struct TileAssetPublicationRequest final
 {
+    struct Document final
+    {
+        QString asset_id;
+        QByteArray bytes;
+        QString name_suffix;
+    };
+
     QString project_manifest_path;
     QString base_name;
     QString tilemap_asset_id;
@@ -40,6 +47,19 @@ struct TileAssetPublicationRequest final
     QByteArray texture_bytes;
     QString source_map_hash;
     double pixels_per_unit{32.0};
+    QString palette_asset_id;
+    QByteArray palette_bytes;
+    QVector<Document> tilesets;
+    QVector<Document> textures;
+};
+
+struct TilemapCreationRequest final
+{
+    QString project_manifest_path;
+    QString tileset_asset_id;
+    QString name;
+    bool create_palette{true};
+    QString grid_layout{QStringLiteral("rectangular")};
 };
 
 struct AssetOperationResult final
@@ -78,6 +98,8 @@ public:
         const AssetImportRequest& request) const = 0;
     [[nodiscard]] virtual AssetOperationResult publish_tile_import(
         const TileAssetPublicationRequest& request) const = 0;
+    [[nodiscard]] virtual AssetOperationResult create_tilemap(
+        const TilemapCreationRequest& request) const = 0;
     [[nodiscard]] virtual AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const = 0;
@@ -122,6 +144,8 @@ public:
         const AssetImportRequest& request) const override;
     [[nodiscard]] AssetOperationResult publish_tile_import(
         const TileAssetPublicationRequest& request) const override;
+    [[nodiscard]] AssetOperationResult create_tilemap(
+        const TilemapCreationRequest& request) const override;
     [[nodiscard]] AssetOperationResult create_folder(
         const QString& project_manifest_path,
         const QString& project_relative_folder) const override;

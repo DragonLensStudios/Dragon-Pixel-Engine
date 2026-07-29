@@ -240,6 +240,47 @@ int main()
     world.clear();
     require(world.body_count() == 0, "clear must destroy both runtime worlds");
 
+    physics_world polygon_world;
+    collider_descriptor polygon_ground;
+    polygon_ground.shape = collider_shape::polygon_2d;
+    polygon_ground.vertices = {
+        {-3.0, -0.5}, {3.0, -0.5}, {2.0, 0.5}, {-2.0, 0.5}};
+    collider_descriptor polygon_faller;
+    polygon_faller.shape = collider_shape::circle_or_sphere;
+    polygon_faller.size = {0.5, 0.5, 0.5};
+    const auto polygon_ground_id = test_id(40);
+    const auto polygon_faller_id = test_id(41);
+    const std::array polygon_bodies{
+        body(40, body_dimension::two_d, body_mode::static_body,
+            {0.0, 0.0, 0.0}, polygon_ground),
+        body(41, body_dimension::two_d, body_mode::dynamic,
+            {0.0, 4.0, 0.0}, polygon_faller),
+    };
+    require(polygon_world.rebuild(polygon_bodies).empty(),
+        "valid convex 2D polygon worlds should rebuild");
+    dragonpixel::physics::step_result polygon_step;
+    bool polygon_contact{};
+    for (int index = 0; index < 240; ++index)
+    {
+        polygon_step = polygon_world.advance(1.0 / 60.0);
+        polygon_contact = polygon_contact || std::any_of(
+            polygon_step.contacts.begin(), polygon_step.contacts.end(),
+            [&](const auto& event) { return contact_pair(event, polygon_ground_id, polygon_faller_id); });
+    }
+    require(transform_for(polygon_step, polygon_faller_id).position.y > 0.8
+            && transform_for(polygon_step, polygon_faller_id).position.y < 1.2,
+        "Box2D body should rest on the neutral polygon collider");
+    require(polygon_contact,
+        "neutral polygon collider should emit Box2D contacts");
+    auto invalid_polygon = polygon_ground;
+    invalid_polygon.vertices = {{0.0, 0.0}, {1.0, 0.0}};
+    const std::array invalid_polygon_bodies{body(42, body_dimension::two_d,
+        body_mode::static_body, {}, invalid_polygon)};
+    require(!polygon_world.rebuild(invalid_polygon_bodies).empty(),
+        "polygon colliders with fewer than three vertices should be rejected");
+    require(polygon_world.body_count() == 2,
+        "rejected polygon rebuild must retain the last valid world");
+
     dragonpixel::physics::world_settings zero_gravity;
     zero_gravity.gravity_2d = {};
     zero_gravity.gravity_3d = {};

@@ -10,6 +10,7 @@
 #include <QByteArray>
 
 #include <optional>
+#include <functional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -55,6 +56,9 @@ enum class PrefabApplyFault
 class PrefabService final
 {
 public:
+    using RootCommandFactory = std::function<std::vector<dragonpixel::scene::command>(
+        const dragonpixel::core::uuid&)>;
+
     void set_metadata(const dragonpixel::metadata::registry* metadata) noexcept
     {
         metadata_ = metadata;
@@ -87,7 +91,8 @@ public:
     [[nodiscard]] PrefabOperationResult instantiate(
         dragonpixel::scene::scene& current_scene,
         const QString& source_path,
-        const std::optional<dragonpixel::core::uuid>& placement_parent);
+        const std::optional<dragonpixel::core::uuid>& placement_parent,
+        RootCommandFactory root_commands = {});
     [[nodiscard]] PrefabOperationResult create_from_selection(
         dragonpixel::scene::scene& current_scene,
         const dragonpixel::core::uuid& root_entity_id,

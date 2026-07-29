@@ -14,6 +14,7 @@ public enum NativePhysicsShape
 {
     Box,
     CircleOrSphere,
+    Polygon2D,
 }
 
 public sealed class NativePhysicsCollider
@@ -21,6 +22,7 @@ public sealed class NativePhysicsCollider
     public NativePhysicsShape Shape { get; set; } = NativePhysicsShape.Box;
     public PhysicsVector3 Size { get; set; } = new(1, 1, 1);
     public PhysicsVector3 Offset { get; set; }
+    public IReadOnlyList<PhysicsVector2> Vertices { get; set; } = [];
     public bool Sensor { get; set; }
     public double Density { get; set; } = 1;
     public double Friction { get; set; } = 0.5;
@@ -97,7 +99,7 @@ public sealed class NativePhysicsWorldHandle : SafeHandle
             ArgumentNullException.ThrowIfNull(body.Colliders);
             colliderCount = checked(colliderCount + body.Colliders.Count);
         }
-        var nativeColliders = new DpePhysicsColliderV1[colliderCount];
+        var nativeColliders = new DpePhysicsColliderV2[colliderCount];
         var colliderIndex = 0;
         for (var bodyIndex = 0; bodyIndex < bodies.Count; ++bodyIndex)
         {
@@ -120,6 +122,79 @@ public sealed class NativePhysicsWorldHandle : SafeHandle
             foreach (var collider in body.Colliders)
             {
                 ArgumentNullException.ThrowIfNull(collider);
+                DpePhysicsColliderV2 nativeCollider = default;
+                nativeCollider.StructSize = (uint)sizeof(DpePhysicsColliderV2);
+                nativeCollider.Shape = (uint)collider.Shape;
+                nativeCollider.Sensor = collider.Sensor ? 1U : 0U;
+                WriteVector(collider.Size, nativeCollider.Size);
+                WriteVector(collider.Offset, nativeCollider.Offset);
+                nativeCollider.Density = collider.Density;
+                nativeCollider.Friction = collider.Friction;
+                nativeCollider.Restitution = collider.Restitution;
+                nativeCollider.Layer = collider.Layer;
+                nativeCollider.Mask = collider.Mask;
+                ArgumentNullException.ThrowIfNull(collider.Vertices);
+                if (collider.Vertices.Count > 8)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(collider.Vertices),
+                        "Native 2D polygon colliders support at most eight convex vertices.");
+                }
+                nativeCollider.VertexCount = checked((uint)collider.Vertices.Count);
+                for (var vertexIndex = 0; vertexIndex < collider.Vertices.Count; ++vertexIndex)
+                {
+                    nativeCollider.Vertices[vertexIndex * 2] = collider.Vertices[vertexIndex].X;
+                    nativeCollider.Vertices[(vertexIndex * 2) + 1] = collider.Vertices[vertexIndex].Y;
+                }
+                nativeColliders[colliderIndex++] = nativeCollider;
+            }
+            nativeBodies[bodyIndex] = native;
+        }
+
+        fixed (DpePhysicsBodyV1* bodyPointer = nativeBodies)
+        fixed (DpePhysicsColliderV2* colliderPointer = nativeColliders)
+        {
+            if (_api.RebuildV2 == 0)
+            {
+                if (bodies.SelectMany(static body => body.Colliders)
+                    .Any(static collider => collider.Shape == NativePhysicsShape.Polygon2D))
+                {
+                    throw new NotSupportedException(
+                        "The native runtime did not negotiate physics ABI minor 1 polygon colliders.");
+                }
+                RebuildLegacy(bodies);
+                return;
+            }
+            var rebuild = (delegate* unmanaged[Cdecl]<ulong, DpePhysicsBodyV1*, nuint, DpePhysicsColliderV2*, nuint, DpeStatus>)_api.RebuildV2;
+            ThrowIfFailed(rebuild(Value, bodyPointer, (nuint)nativeBodies.Length, colliderPointer,
+                (nuint)nativeColliders.Length),
+                "rebuild physics world");
+        }
+    }
+
+    private unsafe void RebuildLegacy(IReadOnlyList<NativePhysicsBody> bodies)
+    {
+        var nativeBodies = new DpePhysicsBodyV1[bodies.Count];
+        var nativeColliders = new List<DpePhysicsColliderV1>();
+        for (var bodyIndex = 0; bodyIndex < bodies.Count; ++bodyIndex)
+        {
+            var body = bodies[bodyIndex];
+            DpePhysicsBodyV1 native = default;
+            native.StructSize = (uint)sizeof(DpePhysicsBodyV1);
+            native.Dimension = (uint)body.Dimension;
+            native.Mode = (uint)body.Mode;
+            native.Flags = body.ContinuousCollision ? ContinuousCollision : 0;
+            WriteId(body.EntityId, native.EntityUuid);
+            WriteVector(body.Position, native.Position);
+            WriteQuaternion(body.Rotation, native.Rotation);
+            WriteVector(body.LinearVelocity, native.LinearVelocity);
+            WriteVector(body.AngularVelocity, native.AngularVelocity);
+            native.LinearDamping = body.LinearDamping;
+            native.AngularDamping = body.AngularDamping;
+            native.GravityScale = body.GravityScale;
+            native.ColliderStart = checked((uint)nativeColliders.Count);
+            native.ColliderCount = checked((uint)body.Colliders.Count);
+            foreach (var collider in body.Colliders)
+            {
                 DpePhysicsColliderV1 nativeCollider = default;
                 nativeCollider.StructSize = (uint)sizeof(DpePhysicsColliderV1);
                 nativeCollider.Shape = (uint)collider.Shape;
@@ -131,17 +206,18 @@ public sealed class NativePhysicsWorldHandle : SafeHandle
                 nativeCollider.Restitution = collider.Restitution;
                 nativeCollider.Layer = collider.Layer;
                 nativeCollider.Mask = collider.Mask;
-                nativeColliders[colliderIndex++] = nativeCollider;
+                nativeColliders.Add(nativeCollider);
             }
             nativeBodies[bodyIndex] = native;
         }
-
+        var colliderArray = nativeColliders.ToArray();
         fixed (DpePhysicsBodyV1* bodyPointer = nativeBodies)
-        fixed (DpePhysicsColliderV1* colliderPointer = nativeColliders)
+        fixed (DpePhysicsColliderV1* colliderPointer = colliderArray)
         {
-            var rebuild = (delegate* unmanaged[Cdecl]<ulong, DpePhysicsBodyV1*, nuint, DpePhysicsColliderV1*, nuint, DpeStatus>)_api.Rebuild;
-            ThrowIfFailed(rebuild(Value, bodyPointer, (nuint)nativeBodies.Length, colliderPointer, (nuint)nativeColliders.Length),
-                "rebuild physics world");
+            var rebuild = (delegate* unmanaged[Cdecl]<ulong, DpePhysicsBodyV1*, nuint,
+                DpePhysicsColliderV1*, nuint, DpeStatus>)_api.Rebuild;
+            ThrowIfFailed(rebuild(Value, bodyPointer, (nuint)nativeBodies.Length,
+                colliderPointer, (nuint)colliderArray.Length), "rebuild legacy physics world");
         }
     }
 

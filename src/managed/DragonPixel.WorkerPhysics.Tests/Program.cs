@@ -93,6 +93,36 @@ internal static class Program
             new JsonObject { ["protocolVersion"] = 2 });
         Assert(handshake["nativePhysics"]!.GetValue<bool>(), "Preview did not negotiate native physics.");
         Assert(handshake["simulatePreview"]!.GetValue<bool>(), "Preview simulation was not negotiated.");
+        Assert(handshake["tileBrushProposals"]!.GetValue<bool>(),
+            "Preview did not negotiate disposable-worker Tile brush proposals.");
+        var unavailableProposal = await worker.CallAsync(
+            "proposeTileBrush",
+            new JsonObject
+            {
+                ["requestToken"] = 17,
+                ["pluginId"] = "example.missing-tile",
+                ["context"] = new JsonObject
+                {
+                    ["cellX"] = 2,
+                    ["cellY"] = -3,
+                    ["elevation"] = 0,
+                    ["layout"] = 0,
+                    ["deterministicSeed"] = "223698854302154547",
+                    ["elapsedSeconds"] = 0.0,
+                    ["mapId"] = "fd2f3574-8e6f-43d1-bc96-c6650ab49a54",
+                    ["layerId"] = "59737391-9417-45bf-a8af-cb6e24e7aa38",
+                    ["tileSetId"] = "4fe655df-c40f-4e48-a5cc-fbe9bd356ac6",
+                    ["tileId"] = "a9ba355a-51e8-49e9-b581-c6174026c160",
+                    ["payloadJson"] = "{}",
+                    ["neighborhoodJson"] = "{}",
+                },
+                ["request"] = new JsonObject { ["kind"] = "stamp" },
+            });
+        Assert(unavailableProposal["requestToken"]!.GetValue<long>() == 17
+                && !unavailableProposal["succeeded"]!.GetValue<bool>()
+                && unavailableProposal["errorCode"]!.GetValue<string>()
+                    == "DPE-TILE-EXT-UNAVAILABLE",
+            "A missing Tile brush extension did not degrade without worker failure.");
         await worker.CallAsync("initialize");
         var loaded = await LoadAsync(worker, scene, 1, reload: false);
         Assert(loaded["physicsBodies"]!.GetValue<int>() == 2, "Preview loaded the wrong body count.");

@@ -1,9 +1,9 @@
 # Dragon Pixel Engine LLM Prompt Source
 
 > **Document role:** Prompt and generated-result provenance  
-> **Design revision:** `DPE-ARCH-0014`
-> **Result revision:** `RESULT-DPE-ARCH-0014`
-> **Last reviewed:** 2026-07-27
+> **Design revision:** `DPE-ARCH-0015`
+> **Result revision:** `RESULT-DPE-ARCH-0015`
+> **Last reviewed:** 2026-07-28
 > **Design paths:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md` and `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`  
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine LLM Prompt Source.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine LLM Prompt Source.md`
@@ -549,6 +549,24 @@ The user approved implementation of a Unity-familiar New Project and daily-autho
 - Make Inspector a reusable dock. Extra Inspectors can be independently locked to stable scene/entity identities; layout/count persists but locks reopen cleared. Shared-component edits retain explicit mixed state, all-target validation, one transaction, and exact Undo.
 - Preserve scene-v3, prefab-v1, metadata-v4, runtime snapshot-v4, C ABI, managed lifecycle, Rider, and input-map compatibility. POCs F/H/M/O, all affected ADRs, slice closure, cross-platform support, and KNI remain open until complete evidence passes.
 
+## Complete 2D Tilemap Editor Request and Result
+
+### Request accepted 2026-07-28
+
+The user approved expanding active draft PR #6 into a complete Dragon Pixel-owned 2D Tilemap Editor with Unity-familiar functional behavior: durable palettes, five grid layouts, multi-TileSet maps, typed basic/animated/rule/custom tiles, the documented built-in brush families, full selection editing, image slicing, configurable shortcuts, richer rendering/collision, both runtime adapters, expanded Tiled JSON conversion, and a safe public native extension boundary. The request explicitly retains one Tilemap asset with internal layers, universal logical palettes, worker isolation, original Dragon Pixel presentation, existing recovery guarantees, unchanged platform thresholds, experimental KNI status, and a stop before merge.
+
+### Result `RESULT-DPE-ARCH-0015`
+
+- Add `dpe.tileset` v2, `dpe.tilepalette` v1, and `dpe.tilemap` v2 with deterministic v1 migration, stable qualified tile references, multiple TileSets/textures, five grid layouts, sparse universal palette cells, typed/opaque definitions, rich per-cell state, and per-layer renderer settings.
+- Add runtime snapshot v5 while retaining explicit snapshot-v4 compatibility. MonoGame and KNI consume one framework-neutral grid, animation, rule, rendering, picking, and collision contract; KNI remains experimental and separately reported.
+- Evolve the existing TileDocumentService into the single Tile workspace mutation owner with unified validated commands, compound Undo/Redo, atomic Save All, and exact dirty/recovery behavior across TileSet, palette, Tilemap, and scene documents.
+- Expand Create TileSet from Image with automatic/cell-size/cell-count slicing, offset/padding/empty policy/pivot, safe reslicing, layout selection, and a default full texture/TileSet/palette/Tilemap/GameObject/collider handoff.
+- Replace the current combined palette/live-map surface with active palette and pinned/following target selection, neutral multi-cell clipboard, separate palette organization, configurable tool shortcuts, brush inspection, dedicated TileSet editors, full Grid Selection properties, and transactional structural edits.
+- Add deterministic Rule/Override and Animated tiles; Random, Line, Group, and GameObject brushes; stable per-cell randomness; linked-prefab or command-backed clone placement; layout-aware None/Grid/Sprite Outline collision; and per-layer renderer modes.
+- Add worker-only, size-tagged `dpe_tile_extension_plugin_v1` batch evaluation/proposal calls. Project-local modules cannot load into the editor or write project files; missing/crashed implementations preserve opaque records and degrade locally.
+- Expand the isolated Tiled JSON converter to multiple atlas TileSets, orthogonal/isometric/staggered/hexagonal layouts, animation, representable Wang/terrain rules, palette publication, and an explicit isometric-Z-as-Y interpretation. Continue rejecting XML, compressed/encoded, object/image-collection, reimport, and unrepresentable semantics before publication.
+- Require focused/full Windows Release and AddressSanitizer evidence plus the hosted Windows/Ubuntu/macOS Release/sanitizer matrix without changing thresholds. The work cannot promote POC K/O/P, an ADR, a slice, KNI, or a platform from partial evidence.
+
 ## Research Manifest
 
 Research used primary vendor/project documentation and source on 2026-07-24:
@@ -579,6 +597,7 @@ Research used primary vendor/project documentation and source on 2026-07-24:
 | Windows package integrity | Windows package signing uses SignTool and a valid signing certificate; verification remains part of the clean-package gate | [Microsoft package deployment](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/), [SignTool package signing](https://learn.microsoft.com/en-us/windows/msix/package/sign-app-package-using-signtool) |
 | macOS direct distribution | Directly distributed macOS software uses distribution signing and the Apple notarization workflow; Dragon Pixel records signing/notarization as POC R evidence | [Distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) |
 | Unity AOT boundary | IL2CPP is Unity's ahead-of-time scripting backend, so the bridge prototype requires generated/AOT-safe behavior and link-preservation evidence | [Unity 6.3 IL2CPP](https://docs.unity3d.com/6000.3/Documentation/Manual/il2cpp-introduction.html) |
+| Unity Tilemap workflow | Current Unity documentation separates Grid/Tilemap targets, durable Tile Palettes, active targets, brush tools/inspection, grid selection, slicing, collider modes, and the optional Extras tile/brush package | [Create Tilemap](https://docs.unity3d.com/kr/current/Manual/tilemaps/work-with-tilemaps/create-tilemap.html), [Create Tile Palette](https://docs.unity3d.com/kr/current/Manual/tilemaps/tile-palettes/create-tile-palette.html), [Tile Palette reference](https://docs.unity3d.com/cn/2023.2/Manual/tile-palette-ui-ref.html), [Grid Selection](https://docs.unity3d.com/cn/2023.2/Manual/tile-palette-grid-selection.html), [Sprite slicing](https://docs.unity3d.com/kr/6000.0/Manual/sprite/sprite-editor/automatic-slicing.html), [Tilemap Collider 2D](https://docs.unity3d.com/6000.0/Documentation/Manual/tilemaps/work-with-tilemaps/tilemap-collider-2d-reference.html), [2D Tilemap Extras](https://docs.unity3d.com/cn/6000.0/Manual/com.unity.2d.tilemap.extras.html) |
 
 Additional primary specifications for the selected durable boundaries are JSON-RPC 2.0, RFC 8259 JSON, RFC 9562 UUIDs, and Khronos glTF 2.0. The expanded source list is maintained in the design document.
 
@@ -586,9 +605,9 @@ Additional primary specifications for the selected durable boundaries are JSON-R
 
 ### Result identity
 
-- **Result:** `RESULT-DPE-ARCH-0014`
-- **Design:** `DPE-ARCH-0014`
-- **Disposition:** Accepted the bounded Project Hub/minimal-template, project-v4/template-v1, asset-v3/two-pane-browser, linked-prefab drag, ordered Hierarchy multi-operation, and multiple lockable Inspector implementation contract while preserving command ownership, worker isolation, older-format compatibility, and all existing POC/platform gates. Slice 1 and Slice 2 remain unaccepted; POCs F/H/M/O, physical input/timing, current cross-platform evidence, later Slice 3/4 workflows, macOS POC B, accessibility/distribution matrices, and KNI support remain open.
+- **Result:** `RESULT-DPE-ARCH-0015`
+- **Design:** `DPE-ARCH-0015`
+- **Disposition:** Accepted the complete 2D Tilemap Editor expansion on active draft PR #6: versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, framework-neutral renderer/collision behavior, worker-only native tile extensions, and expanded Tiled JSON conversion. Existing command/asset/recovery ownership, support thresholds, POC/ADR gates, worker isolation, original presentation, and experimental KNI status remain unchanged.
 
 ### Implementation evidence result
 
@@ -622,6 +641,8 @@ DPE-ARCH-0012 Windows implementation adds `IGameObjectControllerLifecycle`, `Gam
 DPE-ARCH-0013 Windows implementation replaces the Game view's hard-coded binding table with a project-owned `dpe.inputmap` v1 asset, one validated `InputMapService`, Qt keyboard/mouse capture, an SDL 3.4.12 standard-gamepad adapter, compatibility fallback, and an Input Map editor for named maps, actions, bindings, and persistent rebinding. The sample map drives both `InputMotion2D` and `MyMover` through the existing `move.x`/`move.y` action protocol and also defines representative jump, look, and fire actions. Five focused Release aliases pass 5/5 in 94.67 seconds and the matching MSVC AddressSanitizer aliases pass 5/5 in 116.79 seconds, covering deterministic preservation, validation, containment, atomic conflict-safe saves, custom keyboard/mouse/gamepad evaluation, analog dead zones, transient and lifecycle neutralization, project indexing/loading, and dialog interaction. The refreshed 179-entry production bundle hash-verifies and passes the packaged MonoGame self-test while preserving the user's `MyMover.cs`; its editor, manifest, default-map, mover, and SDL hashes are recorded in the active plan. Physical-controller/hot-plug evidence, aggregate Qt input-to-paint timing, current Ubuntu/macOS runs, and complete POC J runtime device-pixel/pick correlation remain open.
 
 The 2026-07-26 Inspector/input-settings follow-up remains within DPE-ARCH-0012/0013. It adds embedded high-contrast checked/mixed Inspector indicators; an explicit **Edit > Project Settings > Input...** route; control-map enabled state, action rename, and full binding path/scale/dead-zone editing; and generated/sample C# movers with editable Horizontal Action, Vertical Action, and Speed fields matching `Input Motion 2D`. C# creation schedules an isolated component build automatically, and the sample no longer writes movement values every frame. A new exact-source .NET test compiles and executes the canonical `MyMover` with custom action names and proves GUID/lifecycle/Transform/reset behavior. Ten focused Release aliases pass 10/10 in 133.55 seconds and their MSVC AddressSanitizer counterparts pass 10/10 in 157.17 seconds; final UI reruns pass in 87.61/108.35 seconds. The writable project builds with zero warnings/errors, the packaged MonoGame self-test passes, and all 183 bundle records verify. Physical-gamepad, aggregate Qt input-to-paint, current Ubuntu/macOS, and remaining POC J gates stay open.
+
+DPE-ARCH-0015 is an accepted implementation contract, not completed evidence. At selection time, draft PR #6 already passes its recorded Windows static-orthogonal Tilemap workflow and atomic save correction, but TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, non-orthogonal layouts, typed tiles/brushes, extension ABI, and broader Tiled conversion have not yet been implemented or verified. The active mirrored plan owns incremental results. No pre-existing Windows, hosted-platform, POC, ADR, slice, release, or KNI claim is promoted by accepting the expansion.
 
 Current manual Windows QA opens a writable disposable sample under `out/dev`, uses the typed Inspector and indexed Project Explorer with thumbnails/import/dependency/structural status, creates a preset as one undoable transaction, runs isolated Simulate, displays actual MonoGame and KNI preview/play output, and exercises pause and stop. DPE-ARCH-0011 additionally requires Project Explorer component-source visibility and a contained detached Rider handoff from Inspector/Project actions; its focused implementation evidence is recorded in the active plan. This useful Windows workflow evidence does not complete the full 2D/3D designer, linked nested-prefab, source-authoring cross-platform, or accessibility acceptance matrices.
 
@@ -663,7 +684,7 @@ The canonical space is right-handed, Y-up, negative-Z-forward, meter/second base
 
 Authoritative project, scene, prefab, asset, workspace, and migration data use deterministic UTF-8 JSON with document and component schema versions. Import caches are disposable. Unknown or newer components remain opaque, visible, and structurally preserved during load/save. Renames retain stable IDs; true schema changes use explicit ordered migrations. Saves validate first, write and flush a sibling temporary file, atomically replace the target where possible, and retain bounded recovery data.
 
-The current implemented authoring expansion includes project v3, scene v3, prefab v1, asset v2, component metadata v4, TileSet/Tilemap v1, and runtime snapshot v4 paths within the registered Windows scope. DPE-ARCH-0009 accepts explicit planned migrations to project v4 and asset v3 plus new template, migration-plan, plugin, build-result, release/update, and support-bundle version-1 contracts. Known and opaque data must remain lossless through every supported migration; newer/incompatible documents are preserved read-only or rejected without silent rewrite.
+The current implemented authoring expansion includes project v3, scene v3, prefab v1, asset v2, component metadata v4, TileSet/Tilemap v1, and runtime snapshot v4 paths within the registered Windows scope. DPE-ARCH-0009 accepts explicit planned migrations to project v4 and asset v3 plus new template, migration-plan, plugin, build-result, release/update, and support-bundle version-1 contracts. DPE-ARCH-0015 accepts TileSet v2, TilePalette v1, Tilemap v2, and runtime snapshot v5 while retaining explicit older-version readers. Known and opaque data must remain lossless through every supported migration; newer/incompatible documents are preserved read-only or rejected without silent rewrite.
 
 The Qt shell uses dockable Scene, Hierarchy, Project/Assets, Inspector, and Console panels backed by project, scene, selection, command, metadata, asset, runtime-session, and diagnostics services. All mutations are commands/transactions. Undo/redo, panels, migration, plugins, Python, and AI use the same validation path. Standard Qt controls are preferred for accessibility; custom viewport/gizmo controls must expose keyboard and assistive behavior.
 
@@ -762,3 +783,4 @@ The authoritative design document contains the exact ownership rules, module tab
 | `RESULT-DPE-ARCH-0012` | `DPE-ARCH-0012` | 2026-07-26 | Accepted the backward-compatible managed `GameObjectController` lifecycle surface, stable GUID, shared worker-owned `Vector3` Transform, input/time access, disposable runtime render/pick overlays, generated mover behavior, and Inspector lifecycle-row removal |
 | `RESULT-DPE-ARCH-0013` | `DPE-ARCH-0013` | 2026-07-26 | Accepted project-owned configurable input maps, named control maps, persistent rebinding, Qt keyboard/mouse capture, SDL 3 standard-gamepad support, and shared device-neutral movement actions for `InputMotion2D` and `MyMover` |
 | `RESULT-DPE-ARCH-0014` | `DPE-ARCH-0014` | 2026-07-27 | Accepted the Project Hub and minimal templates/clean scenes, project-v4/template-v1 implementation, asset-v3 and recoverable two-pane Project Browser operations, immutable imported-image bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors |
+| `RESULT-DPE-ARCH-0015` | `DPE-ARCH-0015` | 2026-07-28 | Accepted the complete 2D Tilemap Editor expansion with versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, runtime rendering/collision, isolated native extensions, broader Tiled JSON conversion, and unchanged evidence gates |
