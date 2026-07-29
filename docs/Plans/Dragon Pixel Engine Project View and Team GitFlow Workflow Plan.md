@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Project View and Team GitFlow Workflow Plan
 
-> **Status:** Implementation complete — review handoff pending
+> **Status:** Ready for review — draft PR #7 open
 > **Branch:** `feature/project-view-workflow`
 > **Target:** `develop`
 > **Owner:** Codex / Dragon Lens Studios
@@ -159,8 +159,8 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 - [x] Supported Project-to-Scene/Hierarchy and Project-to-Inspector drops work through existing validated owners; invalid drops fail without mutation.
 - [x] Concurrent independent and explicit dependent feature PR rules are documented and CI-policy tested.
 - [x] Focused tests and required Windows/Ubuntu verification pass under unchanged thresholds; macOS status is explicit.
-- [ ] Aggregate diff and commit sequence are reviewed, documentation/evidence is current, branch is pushed, and a draft PR into `develop` is ready for manual review.
-- [ ] The branch remains unmerged.
+- [x] Aggregate diff and commit sequence are reviewed, documentation/evidence is current, branch is pushed, and a draft PR into `develop` is ready for manual review.
+- [x] The branch remains unmerged.
 
 ## Work log
 
@@ -174,7 +174,8 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 | 2026-07-29 | Added Back/Forward/Up and clickable breadcrumb navigation, stable refresh restoration, synchronized list/tile selection, per-user splitter/view-mode state, and scene-independent Project asset/folder moves through `AssetService`. New and existing public Qt drop/navigation coverage passes 4 cases with zero failures/errors in 21.363 seconds Release and 36.208 seconds under MSVC AddressSanitizer. |
 | 2026-07-29 | Complete Windows Release configured and built with zero managed warnings/errors and passed 63/63 tests in 510.19 seconds. Complete MSVC AddressSanitizer configured and built with zero managed warnings/errors and passed 63/63 tests in 717.87 seconds without a sanitizer finding. JUnit outputs are `out/build/windows-msvc-vcpkg/out/project-view-windows-release.xml` and `out/build/windows-msvc-asan-vcpkg/out/project-view-windows-asan.xml`; both independently validate 63 cases with zero failures/errors. |
 | 2026-07-29 | The first Ubuntu container run reproduced missing native Autotools prerequisites before project configuration. Added a focused container-definition regression plus `build-essential`, `gawk`, and `python3-venv`; CI tests pass 13/13. The rebuilt Ubuntu 24.04 image then configured and built the complete Release tree with zero managed warnings/errors and passed 62/62 tests in 152.01 seconds; JUnit validation reported 62 cases, zero failures, and zero errors. macOS was not run by explicit feature direction and remains an open product gate. |
+| 2026-07-29 | Byte-verified 66 mirrored UTF-8/LF Markdown pairs at DPE-ARCH-0016. Reviewed the complete six pre-handoff commits in the `origin/develop...HEAD` diff, commit order, CI topology, Project View ownership, generated/bundle impact, changed-file inventory, and `git diff --check`; no unrelated or generated changes were found. Confirmed `origin/develop` remained `fa59b227e3057af603c569f1913b652d22b50c5a`, pushed the independent branch, and opened draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) into `develop`. |
 
 ## Handoff notes
 
-Implementation and the required local Windows/Ubuntu evidence are complete. The independent branch targets `develop`; no dependent stack is present. Project View now provides stable folder/content navigation and service-owned organization without changing durable formats or mutation owners, while the repository workflow supports concurrent independent PRs and explicitly governed dependent review stacks. The aggregate diff, mirror validation, push, and draft-PR creation remain before the final ready-for-review disposition. macOS, hosted matrices, POC H/O/M completion, ADR acceptance, slice closure, release qualification, and KNI production support remain open and unclaimed.
+Implementation and required local evidence are complete, and draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) is ready for manual review into `develop`. The branch is independent, published, and unmerged; no dependent stack is present. Project View provides stable folder/content navigation and service-owned organization without changing durable formats or mutation owners, while the repository workflow supports concurrent independent PRs and explicitly governed dependent review stacks. Hosted PR checks remain pending. macOS, POC H/O/M completion, ADR acceptance, slice closure, release qualification, and KNI production support remain open and unclaimed. Stop feature development on this branch until review feedback or merge direction is received.

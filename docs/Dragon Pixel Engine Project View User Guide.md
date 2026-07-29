@@ -1,7 +1,7 @@
 # Dragon Pixel Engine Project View User Guide
 
 > **Applies to:** DPE-ARCH-0016 Project View workflow
-> **Status:** Implemented on `feature/project-view-workflow`; pending review
+> **Status:** Implemented on `feature/project-view-workflow`; draft PR #7 ready for review
 > **Last updated:** 2026-07-29
 
 ## Project View layout
