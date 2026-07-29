@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Project View and Team GitFlow Workflow Plan
 
-> **Status:** Implementation and Project-specific QA complete; complete Ubuntu gate blocked
+> **Status:** Published to draft PR #7; complete Ubuntu gate blocked
 > **Branch:** `feature/project-view-workflow`
 > **Target:** `develop`
 > **Owner:** Codex / Dragon Lens Studios
@@ -172,7 +172,7 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 - [x] Aggregate diff and commit sequence are reviewed, documentation/evidence is current, branch is pushed, and a draft PR into `develop` is ready for manual review.
 - [x] The branch remains unmerged.
 - [x] User QA correction is implemented and verified in two-column list, two-column icon, one-column, and automated locked states.
-- [ ] Draft PR #7 is updated with the correction evidence and remains draft pending a stable complete Ubuntu gate.
+- [x] Draft PR #7 is updated with the correction evidence and remains draft pending a stable complete Ubuntu gate.
 
 ## Work log
 
@@ -193,7 +193,8 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 | 2026-07-29 | Generated and inspected native-Windows Qt renders for two-column icons, two-column list, and one-column mode. Rendered QA found nested search results leaking after search clear and deferred breadcrumb widgets overlapping; both were repaired and the renders regenerated. Public Qt coverage also verifies locked state, layout and slider transitions, saved search activation, recursive search/list enforcement, return to immediate-content icons, and shortcuts. The native focused scenario passes 3/3 QtTest cases in 5.208 seconds. |
 | 2026-07-29 | Rebuilt the changed Release targets with zero managed warnings/errors. Registered Windows Release aliases `s2.project_model_candidate`, `s2.editor_interactions`, and `poc_h.qt_interactions` pass 3/3 in 340.03 seconds. The same three MSVC AddressSanitizer registrations pass 3/3 in 571.63 seconds without a sanitizer finding. |
 | 2026-07-29 | Rebuilt Ubuntu 24.04 from the current worktree. The changed aliases pass 3/3 in 48.25 seconds and their three-case JUnit artifact validates with zero failures/errors. Three complete current-source runs each pass 61/62: the first exposed `s1.editor_crash_recovery` with `Worker: corrupted double-linked list`, which then passed three focused reruns; the next two passed crash recovery but KNI POC J measured 29.250 and 28.879 FPS against its unchanged 30.0 FPS threshold, while three focused POC J reruns passed. No test, timeout, threshold, or platform was weakened. The complete Ubuntu gate remains blocked and macOS is deferred/unrun. |
+| 2026-07-29 | Reviewed the aggregate correction, repaired Command+D portability on macOS, rebuilt the Release interaction/model targets with zero managed warnings/errors, and reran the focused interaction and model executables successfully. Verified all 66 mirrored Markdown pairs byte-identical and `git diff --check` clean. Committed the implementation, tests, and evidence as `59f1076`, `91c897c`, and `84e2d5b`, pushed the branch, and updated draft PR #7's title/body with exact passing and failing evidence. The PR remains draft, targets `develop`, and is unmerged. |
 
 ## Handoff notes
 
-The DPE-ARCH-0017 Project Window parity correction is implemented locally with rendered native-Windows QA and passing changed-path coverage on Windows Release, Windows MSVC AddressSanitizer, and Ubuntu Release. Draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) must remain draft because the current complete Ubuntu matrix is not stable: three 61/62 runs produced one sequence-sensitive crash-recovery allocator failure followed by two KNI POC J frame-throughput failures under the unchanged 30.0 FPS threshold. Finish mirror/diff review, commit and push the correction, update the draft PR with this exact evidence, then address or obtain stable complete Ubuntu evidence before calling the branch ready for review. macOS, POC H/O/M completion, ADR acceptance, slice closure, release qualification, and KNI production support remain open and unclaimed.
+The DPE-ARCH-0017 Project Window parity correction is implemented, rendered-QA verified, committed, and pushed. Draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) contains the exact platform-separated evidence and remains draft/unmerged because the current complete Ubuntu matrix is not stable: three 61/62 runs produced one sequence-sensitive crash-recovery allocator failure followed by two KNI POC J frame-throughput failures under the unchanged 30.0 FPS threshold. Address or obtain stable complete Ubuntu evidence before calling the branch ready for review. macOS, POC H/O/M completion, ADR acceptance, slice closure, release qualification, and KNI production support remain open and unclaimed.
