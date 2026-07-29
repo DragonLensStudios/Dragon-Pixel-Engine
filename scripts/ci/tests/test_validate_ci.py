@@ -41,6 +41,7 @@ class GitFlowValidationTests(unittest.TestCase):
     def test_pull_request_accepts_documented_relationships(self) -> None:
         relationships = (
             ("feature/editor-library-modularization", "develop"),
+            ("feature/project-view-navigation", "feature/project-view-foundation"),
             ("release/1.0.0", "develop"),
             ("hotfix/1.0.1", "develop"),
             ("release/1.0.0", "main"),
@@ -56,6 +57,8 @@ class GitFlowValidationTests(unittest.TestCase):
             ("feature/work", "main"),
             ("main", "develop"),
             ("feature/work", "release/1.0.0"),
+            ("feature/project-view", "feature/project-view"),
+            ("release/1.0.0", "feature/project-view"),
             ("", "develop"),
         )
         for head_ref, base_ref in relationships:
