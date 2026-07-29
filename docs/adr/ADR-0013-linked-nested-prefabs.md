@@ -81,3 +81,5 @@ The Project View presents prefab assets and Hierarchy-to-Project creation throug
 - ADR-0005: Cross-Language Component Metadata and Inspector Reflection
 - ADR-0006: JSON Versioning, Migration, and Unknown-Data Preservation
 - ADR-0008: Command Transactions, Validation, Undo/Redo, Dirty State, and Automation
+
+Focused DPE-ARCH-0016 evidence (2026-07-29): the existing public domain-drop test continues to prove linked prefab instantiation into Scene/Hierarchy, Hierarchy-to-Project prefab creation, stable identity preservation, and stale/cross-project rejection after the Project View changes. The new no-Scene test proves Project asset/folder organization does not enter the prefab path, while entity-to-Project handling still diagnoses the missing Scene. Complete Windows Release/MSVC AddressSanitizer and Ubuntu Release pass 63/63, 63/63, and 62/62 respectively. Nested Apply, full public three-level workflows, and complete three-platform POC F remain open; ADR-0013 remains `Proposed`.

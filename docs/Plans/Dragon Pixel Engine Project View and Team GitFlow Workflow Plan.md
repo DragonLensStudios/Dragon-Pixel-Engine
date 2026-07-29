@@ -1,6 +1,6 @@
 # Dragon Pixel Engine Project View and Team GitFlow Workflow Plan
 
-> **Status:** Active — architecture and plan accepted; implementation pending
+> **Status:** Implementation complete — review handoff pending
 > **Branch:** `feature/project-view-workflow`
 > **Target:** `develop`
 > **Owner:** Codex / Dragon Lens Studios
@@ -151,14 +151,14 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 
 ## Definition of done
 
-- [ ] Architecture, plan, handbooks, ADRs, AGENTS, CI policy, and PR template agree and mirrors are byte-identical.
-- [ ] Project View exposes functional Back/Forward/Up and clickable breadcrumb navigation with accessible states.
-- [ ] Active folder, expansion, view mode, and stable selection restore safely across refresh.
-- [ ] Immediate child content is deterministic, folder-first, and usable in list and tile modes.
-- [ ] Project asset/folder moves work without an open Scene and preserve stable IDs.
-- [ ] Supported Project-to-Scene/Hierarchy and Project-to-Inspector drops work through existing validated owners; invalid drops fail without mutation.
-- [ ] Concurrent independent and explicit dependent feature PR rules are documented and CI-policy tested.
-- [ ] Focused tests and required Windows/Ubuntu verification pass under unchanged thresholds; macOS status is explicit.
+- [x] Architecture, plan, handbooks, ADRs, AGENTS, CI policy, and PR template agree and mirrors are byte-identical.
+- [x] Project View exposes functional Back/Forward/Up and clickable breadcrumb navigation with accessible states.
+- [x] Active folder, expansion, view mode, and stable selection restore safely across refresh.
+- [x] Immediate child content is deterministic, folder-first, and usable in list and tile modes.
+- [x] Project asset/folder moves work without an open Scene and preserve stable IDs.
+- [x] Supported Project-to-Scene/Hierarchy and Project-to-Inspector drops work through existing validated owners; invalid drops fail without mutation.
+- [x] Concurrent independent and explicit dependent feature PR rules are documented and CI-policy tested.
+- [x] Focused tests and required Windows/Ubuntu verification pass under unchanged thresholds; macOS status is explicit.
 - [ ] Aggregate diff and commit sequence are reviewed, documentation/evidence is current, branch is pushed, and a draft PR into `develop` is ready for manual review.
 - [ ] The branch remains unmerged.
 
@@ -169,7 +169,12 @@ Tests will first reproduce defects where practical. No existing assertion, timeo
 | 2026-07-29 | Verified the Design, Prompt/Result, Original Prompt, and Notes mirror pairs exist and are byte-identical at DPE-ARCH-0015 before planning. Read the governing architecture, active tracker, prior Project workflow plan, CI plan, GitFlow controls, and affected ADRs. |
 | 2026-07-29 | Fetched `origin`, confirmed PR #6 and CI/GitFlow PR #4 are merged, fast-forwarded local `develop` to `fa59b227e3057af603c569f1913b652d22b50c5a`, confirmed a clean worktree, and created `feature/project-view-workflow` directly from that commit. |
 | 2026-07-29 | Inspected `ProjectIndexService`, Project models/proxies, `AssetService`, Project Browser composition, drag handlers, interaction tests, CI validator/workflow, and PR template. Selected one cohesive Project View plus team-review workflow feature and accepted synchronized DPE-ARCH-0016. |
+| 2026-07-29 | Added and then satisfied CI policy regressions for valid `feature/* -> feature/*` dependent reviews and invalid self/non-feature stacks. The PR workflow now runs for feature targets. Portable CI policy/evidence tests pass 13/13; local `actionlint` is unavailable, so hosted workflow parsing remains review evidence rather than a fabricated local pass. |
+| 2026-07-29 | Added folder-first natural ordering and theme-aware folder/asset presentation. The focused Windows Release `s2.project_model_candidate` alias passes 1/1 in 0.04 seconds; its MSVC AddressSanitizer registration passes 1/1 in 0.21 seconds. |
+| 2026-07-29 | Added Back/Forward/Up and clickable breadcrumb navigation, stable refresh restoration, synchronized list/tile selection, per-user splitter/view-mode state, and scene-independent Project asset/folder moves through `AssetService`. New and existing public Qt drop/navigation coverage passes 4 cases with zero failures/errors in 21.363 seconds Release and 36.208 seconds under MSVC AddressSanitizer. |
+| 2026-07-29 | Complete Windows Release configured and built with zero managed warnings/errors and passed 63/63 tests in 510.19 seconds. Complete MSVC AddressSanitizer configured and built with zero managed warnings/errors and passed 63/63 tests in 717.87 seconds without a sanitizer finding. JUnit outputs are `out/build/windows-msvc-vcpkg/out/project-view-windows-release.xml` and `out/build/windows-msvc-asan-vcpkg/out/project-view-windows-asan.xml`; both independently validate 63 cases with zero failures/errors. |
+| 2026-07-29 | The first Ubuntu container run reproduced missing native Autotools prerequisites before project configuration. Added a focused container-definition regression plus `build-essential`, `gawk`, and `python3-venv`; CI tests pass 13/13. The rebuilt Ubuntu 24.04 image then configured and built the complete Release tree with zero managed warnings/errors and passed 62/62 tests in 152.01 seconds; JUnit validation reported 62 cases, zero failures, and zero errors. macOS was not run by explicit feature direction and remains an open product gate. |
 
 ## Handoff notes
 
-Implementation has not yet been claimed. The branch is independent and should target `develop`. PR #6's merge is historical evidence only; it does not close the remaining POC K/O/P/J or platform gates. The first source increment is the regression-guarded CI/team workflow contract, followed by Project navigation and no-Scene drag/drop behavior.
+Implementation and the required local Windows/Ubuntu evidence are complete. The independent branch targets `develop`; no dependent stack is present. Project View now provides stable folder/content navigation and service-owned organization without changing durable formats or mutation owners, while the repository workflow supports concurrent independent PRs and explicitly governed dependent review stacks. The aggregate diff, mirror validation, push, and draft-PR creation remain before the final ready-for-review disposition. macOS, hosted matrices, POC H/O/M completion, ADR acceptance, slice closure, release qualification, and KNI production support remain open and unclaimed.
