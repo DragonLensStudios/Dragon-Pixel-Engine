@@ -1,18 +1,35 @@
 # Dragon Pixel Engine Project View User Guide
 
-> **Applies to:** DPE-ARCH-0016 Project View workflow
-> **Status:** Implemented on `feature/project-view-workflow`; draft PR #7 ready for review
+> **Applies to:** DPE-ARCH-0017 Project Window workflow
+> **Status:** Implemented and Project-specific QA passed on `feature/project-view-workflow`; draft PR #7 remains blocked by the complete Ubuntu gate
 > **Last updated:** 2026-07-29
 
 ## Project View layout
 
-Open **View > Project** if the Project dock is hidden. The left pane shows project folders. The right pane shows only the immediate folders and assets inside the active folder.
+Open **View > Project** if the Project dock is hidden. In the default two-column layout, Favorites and the project folder hierarchy appear on the left. The right side shows only the immediate folders and assets inside the active folder. Use the **Layout** menu to switch to one-column folder navigation, and use **Lock** when externally driven Project navigation should not replace the current location.
 
-Use **Back**, **Forward**, and **Up** or select a segment in the clickable breadcrumb to navigate. Folder activation in the tree, list, or tile view changes the active folder. Search and type/status filters refine the visible content without changing authoritative project data.
+Use **Back**, **Forward**, and **Up** or select a segment in the clickable breadcrumb to navigate. Folder activation in the tree, list, or icon view changes the active folder. Built-in Favorites select all assets, Scenes, or Prefabs; folder favorites and saved searches are retained as per-user editor state. Missing favorites are ignored without changing project data.
 
-Folders sort before assets. Names use deterministic, case-insensitive natural ordering, so `Folder2` appears before `Folder10`. List mode emphasizes name, kind/type, and status; tile mode emphasizes recognizable folder, asset-type, and preview graphics. Both modes project the same indexed records and keep their stable selection synchronized.
+Folders sort before assets. Names use deterministic, case-insensitive natural ordering, so `Folder2` appears before `Folder10`. The content surface normally uses scalable icon tiles. Move the bottom icon-size slider to its extreme left for the compact **Name** and **Kind / Type** list. Both modes project the same indexed records and keep stable selection synchronized; status and diagnostic metadata remain available in details and tooltips instead of consuming navigation columns.
 
-The editor restores the nearest valid active folder, expanded folders, stable selected item, splitter position, and list/tile mode after an index refresh. If a remembered folder was removed, Project View falls back to the nearest valid ancestor and then the declared Assets root. These choices are per-user editor state and never modify project or asset files.
+The bottom row identifies the selected item and shows its full logical path while searching. The editor restores the nearest valid active folder, expanded folders, stable selected item, splitter position, layout, lock, and icon size after refresh. If a remembered folder was removed, Project View falls back to the nearest valid ancestor and then the declared Assets root. These choices are per-user editor state and never modify project or asset files.
+
+## Search, saved searches, and keyboard
+
+Search terms separated by whitespace are combined with AND. Prefix a term with `t:` to filter by indexed type; multiple `t:` terms are ORed. Prefix a term with `s:` to filter by Dragon Pixel status; multiple `s:` terms are ORed. Search traverses the project and temporarily uses the compact result list. Clear the search to return to the active folder's immediate children and the selected icon size. Use **Save** to place the current query in Favorites.
+
+| Action | Keyboard |
+| --- | --- |
+| Focus Project search | Ctrl/Cmd+F |
+| Move focus through Project controls | Tab / Shift+Tab |
+| Frame the selected item | F |
+| Select all visible items | Ctrl/Cmd+A |
+| Duplicate the selected supported item | Ctrl/Cmd+D |
+| Move the selected supported item to recoverable trash | Delete, with confirmation |
+| Move to recoverable trash without a dialog | Shift+Delete |
+| Rename on Windows | F2 |
+| Open or activate the selection | Enter / Return |
+| Navigate to the parent folder | Backspace |
 
 ## Organizing folders and assets
 
@@ -57,4 +74,6 @@ Every PR remains manually reviewed. A dependent base changes review topology onl
 
 ## Current verification boundary
 
-DPE-ARCH-0016 is verified locally on Windows Release, Windows MSVC AddressSanitizer, and Ubuntu 24.04 Release. macOS is deferred for this feature but remains a required open product platform gate. This feature changes no durable authoring format, drag-envelope version, C ABI, managed contract, worker protocol, POC status, ADR acceptance status, release status, or KNI production status.
+DPE-ARCH-0017's changed Project aliases pass Windows Release 3/3 in 340.03 seconds, Windows MSVC AddressSanitizer 3/3 in 571.63 seconds without findings, and Ubuntu 24.04 Release 3/3 in 48.25 seconds. Native-Windows Qt renders cover two-column icons, two-column list, and one-column mode; public tests cover lock and the other interactions described above.
+
+The current complete Ubuntu matrix is not stable enough for review handoff: three current-source runs each passed 61/62, first because of a sequence-sensitive crash-recovery allocator failure and then twice because KNI POC J measured 29.250 and 28.879 FPS against its unchanged 30.0 FPS threshold. Focused reruns passed, but the complete gate remains open. macOS is deferred for this feature but remains a required product platform gate. This feature changes no durable authoring format, drag-envelope version, C ABI, managed contract, worker protocol, POC status, ADR acceptance status, release status, or KNI production status.

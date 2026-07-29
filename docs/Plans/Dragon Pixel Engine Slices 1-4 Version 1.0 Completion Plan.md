@@ -3,7 +3,7 @@
 > **Plan status:** In progress
 > **Disposition:** Active master delivery plan
 > **Accepted architecture at creation:** `DPE-ARCH-0008`
-> **Governing architecture:** `DPE-ARCH-0016`
+> **Governing architecture:** `DPE-ARCH-0017`
 > **Current milestone:** Milestone 1 — Close Slice 1
 > **Started:** 2026-07-25
 > **Last updated:** 2026-07-29
@@ -286,6 +286,10 @@ Scope acceptance alone does not promote an ADR.
 
 | 2026-07-29 | DPE-ARCH-0016 Project View implementation verified | `feature/project-view-workflow` adds stable Back/Forward/Up and clickable-breadcrumb folder navigation, deterministic folder-first natural ordering, synchronized list/tile selection, refresh restoration, per-user view/splitter state, and scene-independent Project asset/folder moves through `AssetService`. Existing Scene/Hierarchy/Inspector and prefab drop owners remain unchanged. CI permits documented `feature/* -> feature/*` review stacks while rejecting invalid topology; handbooks and the PR template require explicit dependency, ownership, overlap, retarget, and merge-order records. Windows Release passes 63/63 in 510.19 seconds; MSVC AddressSanitizer passes 63/63 in 717.87 seconds without findings; Ubuntu 24.04 Release passes 62/62 in 152.01 seconds after the checked-in image gained its missing native/Python build prerequisites. macOS is deferred/unrun and every POC/ADR/slice/release/KNI gate remains unchanged. |
 
+| 2026-07-29 | DPE-ARCH-0017 Project Window parity correction selected | User QA superseded the familiar-only Project View presentation target with a one-to-one functional and structural representation of Unity 5.4's documented Project Window for supported local-project behavior. The same branch and draft PR #7 now own Favorites, toolbar/breadcrumb, icon slider/list transition, one/two-column layout, lock, saved search, keyboard, rendered QA, and retained Dragon Pixel/service boundaries. Prior navigation/drop and platform evidence remains valid only for its covered assertions. |
+| 2026-07-29 | DPE-ARCH-0017 Project Window parity implemented and Project-specific QA passed | `feature/project-view-workflow` now provides Favorites/saved searches, immediate-content list and scalable icons, Create/search/filter/save/layout/lock toolbar, clickable breadcrumbs, one/two-column layouts, non-authoritative persistent UI state, and documented keyboard behavior through existing `AssetService`/command owners. Native-Windows renders for icons, list, and one-column mode exposed and drove repairs for search-expansion leakage and breadcrumb overlap. Changed aliases pass Windows Release 3/3 in 340.03 seconds, MSVC AddressSanitizer 3/3 in 571.63 seconds without findings, and Ubuntu Release 3/3 in 48.25 seconds. Three current-source complete Ubuntu runs are each 61/62: one sequence-sensitive crash-recovery allocator failure followed by two KNI POC J frame-throughput failures at 29.250 and 28.879 FPS against the unchanged 30.0 FPS threshold. The draft PR remains blocked/draft; no gate or support claim is promoted. |
+
+
 ## Completion Checklist
 
 - [x] Create and hash-verify this mirrored active plan.
@@ -326,6 +330,6 @@ Scope acceptance alone does not promote an ADR.
 - [ ] Verify every mirrored Markdown pair is byte-identical UTF-8/no-BOM with LF endings.
 - [ ] Mark this plan complete only after every required acceptance statement has direct evidence.
 
-## DPE-ARCH-0016 current feature handoff
+## DPE-ARCH-0017 current feature handoff
 
-On 2026-07-29, human review merged Tilemap PR #6 and CI/GitFlow PR #4 into `develop`; neither merge promotes a POC, ADR, slice, release, platform, or KNI support claim. The user selected `feature/project-view-workflow` as the next bounded feature, directly from merged `develop` commit `fa59b227e3057af603c569f1913b652d22b50c5a`. The implementation, aggregate review, mirror verification, and local Windows Release/MSVC AddressSanitizer plus Ubuntu 24.04 Release evidence are complete. The independent branch is published and draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) targets `develop` for manual review; feature development stops pending review. macOS remains explicitly deferred but visible; POC H/O/M, the remaining cross-platform matrices, ADR acceptance, slice/release closure, and KNI production support remain open.
+On 2026-07-29, the DPE-ARCH-0017 Project Window correction reached local implementation and Project-specific QA completion on `feature/project-view-workflow`. The expanded Favorites/toolbar/breadcrumb/icon-slider/layout/lock/search/shortcut surface passes changed-path coverage on Windows Release, Windows MSVC AddressSanitizer, and Ubuntu Release, and native-Windows renders cover two-column icons, two-column list, and one-column mode. Draft PR [#7](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/7) remains unmerged and must remain draft because three complete current-source Ubuntu runs are each 61/62 under unchanged thresholds: one sequence-sensitive crash-recovery allocator failure and two KNI POC J frame-throughput failures. The independent branch remains based directly on merged `develop` commit `fa59b227e3057af603c569f1913b652d22b50c5a`. macOS remains explicitly deferred but visible; POC H/O/M, the remaining cross-platform matrices, ADR acceptance, slice/release closure, and KNI production support remain open.

@@ -1,8 +1,8 @@
 # Dragon Pixel Engine Design Document
 
 > **Status:** Accepted full version 1.0 delivery architecture; implementation in progress
-> **Design revision:** `DPE-ARCH-0016`
-> **Last reviewed:** 2026-07-28
+> **Design revision:** `DPE-ARCH-0017`
+> **Last reviewed:** 2026-07-29
 > **Current phase:** Gate-preserving completion of Slices 1 through 4 and the full design-defined Dragon Pixel Engine 1.0 feature set
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`
@@ -510,6 +510,33 @@ This revision accepts the user's 2026-07-29 request for a clearer, Unity-familia
 - Focused acceptance covers Project Model ordering and identity, no-Scene folder and asset moves, navigation restoration, public Qt list/tile/breadcrumb interactions, Project-to-Scene/Hierarchy creation, rejected drops, keyboard/accessibility paths, and CI policy tests for independent and explicitly stacked feature reviews.
 - Review handoff requires current Windows Release and MSVC AddressSanitizer evidence plus Ubuntu Release/build evidence for changed portable/editor paths. macOS stabilization may be deferred by explicit user direction, but macOS remains in the product support matrix and any unrun or failing result stays visible.
 - ADR-0007, ADR-0008, ADR-0013, ADR-0018, and ADR-0020 remain `Proposed` until their complete named gates pass. This feature cannot promote a POC, slice, platform, release, or KNI production claim from partial evidence.
+
+## DPE-ARCH-0017 Project Window Functional Parity Contract
+
+This revision accepts the user's 2026-07-29 correction that the Project View must be a one-to-one functional and structural representation of Unity 5.4's documented Project Window rather than merely Unity-familiar. Functional parity applies to the supported local-project surface and interaction model. Dragon Pixel keeps its name, visual theme, standard/generated icons, asset contracts, and service-owned mutation paths; it does not copy Unity branding, artwork, source code, Asset Store integration, or serialized formats.
+
+### Required Project Window surface
+
+- The two-column layout has a top toolbar, a clickable breadcrumb row, a left navigation column, a right content column, and a bottom selected-item/icon-size row. The left column contains a Favorites section above the declared project roots and folder hierarchy. Selecting a folder presents only its immediate children on the right.
+- The toolbar exposes Create for the current folder, project search, indexed type and Dragon Pixel status filters, Save Search, a one-column/two-column layout menu, and a lock toggle. Import and refresh remain available from the Assets menu and context menu but do not displace the documented Project Window toolbar structure.
+- The right content column defaults to resizable icon tiles with recognizable type icons. A bottom slider changes icon size continuously and switches to the compact Name/Kind list at its extreme-left position. The bottom text reports the selected item and uses its full path while a search is active.
+- One-column mode presents the folder hierarchy as the primary Project surface. The lock freezes externally driven folder/content changes while still allowing explicit Project Window navigation and commands. Per-user favorites, saved searches, layout, lock, splitter, and icon-size state remain non-authoritative UI settings.
+- Search terms are whitespace-ANDed. `t:` terms filter indexed types, multiple type terms are ORed, and saved searches can be recalled from Favorites. Dragon Pixel status filtering remains an explicit engine extension because asset labels and the Unity Asset Store are not Dragon Pixel 1.0 contracts.
+- Public keyboard behavior covers Ctrl/Cmd+F search focus, Tab column focus transfer, F frame selected, Ctrl/Cmd+A visible selection, Ctrl/Cmd+D duplicate, Delete recoverable removal with confirmation, F2 rename on Windows, Enter activation, and Backspace parent navigation. Existing tree expand/collapse behavior remains available in the folder hierarchy.
+
+### Ownership, safety, and evidence
+
+- Favorites and saved searches store stable logical paths or query text only. Missing paths are ignored and invalid UI state is discarded without touching project data.
+- Create, import, rename, duplicate, move, trash/restore, drag/drop, scene attachment, and prefab creation continue through `AssetService`, project lifecycle services, prefab commands, or scene commands. Project View widgets never write project files directly.
+- No durable project, asset, scene, prefab, tile, ABI, managed, worker, or drag-protocol version changes. The feature remains on `feature/project-view-workflow` and draft PR #7; DPE-ARCH-0017 supersedes only the Project Window presentation/interaction acceptance of DPE-ARCH-0016.
+- Acceptance requires public model/Qt regressions for the complete surface above, rendered Windows QA in both list and icon modes plus one-column and locked states, focused Windows Release and MSVC AddressSanitizer evidence, Ubuntu Release evidence for changed portable/editor paths, byte-identical documentation mirrors, aggregate review, and an updated unmerged draft PR. macOS remains explicitly unrun/deferred and every POC/ADR/slice/release/KNI gate remains open.
+
+### Current implementation evidence (2026-07-29)
+
+- `feature/project-view-workflow` implements the accepted Favorites/folder hierarchy, immediate-content list and scalable icon modes, Create/search/type/status/save/layout/lock toolbar, clickable breadcrumb, selected-item row, persistent non-authoritative UI state, saved searches, and keyboard behavior. Public Project models expose only Name on the folder surface and Name plus Kind/Type on the compact content list; diagnostics remain available through details and tooltips.
+- Deterministic native-Windows Qt renders were inspected for two-column icons, two-column list, and one-column mode. That inspection found and drove repairs for search expansion leaking into normal immediate-content mode and deferred breadcrumb widgets overlapping; regenerated renders show the corrected states. Public Qt tests also assert the locked state, layout transitions, slider/list transition, saved search activation, shortcuts, search recursion, and return to immediate-content icons.
+- The changed Project aliases pass Windows Release 3/3 in 340.03 seconds, MSVC AddressSanitizer 3/3 in 571.63 seconds without a sanitizer finding, and Ubuntu 24.04 Release 3/3 in 48.25 seconds with a valid three-case JUnit artifact. The focused native-Windows parity scenario passes 3/3 QtTest cases in 5.208 seconds.
+- Current-source complete Ubuntu evidence is not stable enough for review handoff: an initial 61/62 run exposed a sequence-sensitive `s1.editor_crash_recovery` allocator failure that then passed three focused reruns; two subsequent complete runs were 61/62 because KNI POC J measured 29.250 and 28.879 FPS against the unchanged 30.0 FPS threshold, while three focused POC J reruns passed. No test, threshold, platform, POC, ADR, slice, release, or KNI support claim was weakened or promoted. macOS remains explicitly deferred/unrun.
 
 ## 1. Product Definition and Non-Goals
 
@@ -1081,7 +1108,7 @@ Current evidence status (progress updated 2026-07-25): the current Windows matri
 
 ### Slice 2: Designer-friendly 2D and 3D tooling
 
-Milestones include model-backed layouts, typed Inspector editing/validation, browse/open/assign asset workflows, previews, drag-and-drop, a unified 2D/3D Scene View, editor cameras and gizmos, multi-selection, command-based undo/redo, linked nested prefabs, custom drawers, baseline lighting, and live Box2D/Jolt physics authoring. Conduct Qt interaction, keyboard, accessibility, and designer usability tests throughout rather than at the end.
+Milestones include model-backed layouts, the DPE-ARCH-0017 Project Window parity surface, typed Inspector editing/validation, browse/open/assign asset workflows, previews, drag-and-drop, a unified 2D/3D Scene View, editor cameras and gizmos, multi-selection, command-based undo/redo, linked nested prefabs, custom drawers, baseline lighting, and live Box2D/Jolt physics authoring. Conduct Qt interaction, keyboard, accessibility, and designer usability tests throughout rather than at the end.
 
 Acceptance: a technical designer can assemble, validate, run, save, reopen, and revise a small 2D scene and a small 3D scene—including linked nested prefabs and physics—without editing generated metadata or scene JSON by hand. Both adapters must render scene-dependent real-device pixels and picking IDs; KNI remains visibly experimental until its broader support matrix passes.
 
@@ -1122,6 +1149,7 @@ Current evidence status (scope activated 2026-07-25): Windows passes the current
 | Linked prefab rebasing loses identity or overrides | Medium / Critical | Stable source/instance mappings, canonical revisions, fallbacks, cycle/expansion guards, three-level fixtures, and atomic multi-document saves |
 | Physics backends leak types or runtime state into durable contracts | Medium / High | Engine-owned facade, private linkage, neutral DTOs/C ABI batches, serialization-negative tests, and world-destruction tests |
 | A visually present editor remains non-operable or inaccessible | Medium / High | Real Qt Test interaction, prompt seams, action-state tests, keyboard/high-contrast/accessibility checks, and designer acceptance scenarios |
+| Project Window parity drifts, copies proprietary assets, or bypasses Dragon Pixel ownership | Medium / High | Pin acceptance to the official Unity 5.4 interaction description, use only Dragon Pixel/Qt presentation assets, keep unsupported Asset Store/label behavior explicit, and require service-bound public Qt plus rendered QA evidence |
 | Mixed Inspector values are overwritten without explicit intent | Medium / Critical | First-class mixed state, mutation-free open/focus/close tests, one compound commit, and Undo restoring distinct before-images |
 | Project component code enters the editor or executes without a validated module boundary | Medium / Critical | JSON-only editor metadata service, worker-only managed/native loading, versioned factories/C ABI, module identity checks, restart reload, and mapped-module tests |
 | Input revisions claim latency without proving runtime consumption | High / High | Full-state action input, focus-loss neutralization, consumed revisions, real pixel/pick changes through both adapters, and POC J correlated timing |
@@ -1458,3 +1486,4 @@ Additional primary sources were accessed on 2026-07-26 for DPE-ARCH-0013:
 | `DPE-ARCH-0014` | 2026-07-27 | Accepted project and daily-authoring workflow | Added the Project Hub, minimal declarative 2D/3D creation and clean scenes, project-v4/template-v1 implementation boundary, asset-v3 service and recoverable Project Browser operations, immutable imported-image runtime bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors while retaining every POC/platform gate |
 | `DPE-ARCH-0015` | 2026-07-28 | Accepted complete 2D Tilemap Editor expansion | Added TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, five grid layouts, multi-TileSet typed tiles and brushes, full palette/selection/slicing workflows, renderer/collision behavior, worker-only native tile extensions, expanded Tiled JSON conversion, and unchanged cross-platform/POC/KNI gates |
 | `DPE-ARCH-0016` | 2026-07-29 | Accepted Project View and team GitFlow workflow | Added service-owned folder/content navigation, stable Unity-familiar Project View behavior, scene-independent Project moves, validated drag destinations, concurrent independent PRs, explicit feature-stack review rules, and unchanged format/platform/evidence gates |
+| `DPE-ARCH-0017` | 2026-07-29 | Accepted Project Window functional parity correction | Superseded the familiar-only Project View acceptance with the Unity 5.4 two-column/Favorites/toolbar/breadcrumb/icon-slider/layout-lock/search/shortcut interaction surface while preserving Dragon Pixel presentation, service ownership, formats, and evidence gates |
