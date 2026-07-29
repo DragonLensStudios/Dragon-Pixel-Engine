@@ -1,9 +1,9 @@
 # Dragon Pixel Engine LLM Prompt Source
 
 > **Document role:** Prompt and generated-result provenance  
-> **Design revision:** `DPE-ARCH-0015`
-> **Result revision:** `RESULT-DPE-ARCH-0015`
-> **Last reviewed:** 2026-07-28
+> **Design revision:** `DPE-ARCH-0017`
+> **Result revision:** `RESULT-DPE-ARCH-0017`
+> **Last reviewed:** 2026-07-29
 > **Design paths:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md` and `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`  
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine LLM Prompt Source.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine LLM Prompt Source.md`
@@ -567,6 +567,43 @@ The user approved expanding active draft PR #6 into a complete Dragon Pixel-owne
 - Expand the isolated Tiled JSON converter to multiple atlas TileSets, orthogonal/isometric/staggered/hexagonal layouts, animation, representable Wang/terrain rules, palette publication, and an explicit isometric-Z-as-Y interpretation. Continue rejecting XML, compressed/encoded, object/image-collection, reimport, and unrepresentable semantics before publication.
 - Require focused/full Windows Release and AddressSanitizer evidence plus the hosted Windows/Ubuntu/macOS Release/sanitizer matrix without changing thresholds. The work cannot promote POC K/O/P, an ADR, a slice, KNI, or a platform from partial evidence.
 
+## Project View and Team GitFlow Request and Result
+
+### Request accepted 2026-07-29
+
+The user confirmed Tilemap PR #6 was merged and selected the next feature: make the Project View cleaner and more Unity-familiar, handle folders correctly, and make asset drag/drop into the Scene dependable. The user is adding a team member and also requested a less painful GitFlow process where multiple contributors can work on bounded tasks, accumulate manually reviewed PRs, and use explicit stacked reviews when one feature genuinely depends on another.
+
+### Result `RESULT-DPE-ARCH-0016`
+
+- Keep the detached project index as the Project View read owner and `AssetService` as the only asset/folder mutation owner. Add Back, Forward, Up, clickable breadcrumbs, deterministic folder-first content, stable selection/expansion restoration, list/tile presentation, and accessible keyboard behavior without making the view a general filesystem authority.
+- Make OS import and Project-to-Project asset/folder moves resolve the visible destination and work without an open Scene. Preserve the version-1 project drag envelope, stable asset IDs, containment/collision checks, operation recovery, and diagnostic rejection of stale, cross-project, recursive, or incompatible drops.
+- Route sprite/image, prefab, Tilemap, and other supported Project-to-Scene/Hierarchy drops through the existing validated scene and prefab commands. Project organization and scene attachment remain separate operations.
+- Allow multiple independent feature PRs to be open concurrently against `develop`. Permit a feature PR to target one parent feature branch only for an explicitly documented dependency; require the child to wait, update/retarget to current `develop`, review the new aggregate diff, and rerun affected checks after the parent merges.
+- Extend CI triggers and policy tests for documented feature-to-feature PRs while retaining manual review, one cohesive feature per branch, no child-before-parent merge, and no uncoordinated force-push of shared history.
+- Do not change durable authoring formats, runtime snapshots, public ABI, managed contracts, worker protocols, or drag format version. Windows Release/MSVC AddressSanitizer and Ubuntu Release evidence are required for review handoff; macOS may remain explicitly deferred but cannot be reported as passing.
+
+## Project Window Functional Parity Correction and Result
+
+### Request accepted 2026-07-29
+
+After reviewing the implemented Project View screenshot, the user explicitly replaced the familiar-only presentation target with a one-to-one representation of Unity 5.4's documented Project Window and requested rendered QA. The official reference defines the folder hierarchy/Favorites column, immediate-content icon panel, clickable breadcrumb, Create/search toolbar, icon-size slider with list mode at the extreme left, one/two-column layout, lock, saved searches, and keyboard behaviors.
+
+### Result `RESULT-DPE-ARCH-0017`
+
+- Implement the official Unity 5.4 Project Window's supported local-project structure and interaction model: Favorites over the left folder hierarchy, immediate folder contents on the right, toolbar plus clickable breadcrumbs, resizable icon tiles/list-at-minimum slider, compact selected-item path, one/two-column layouts, lock, saved searches, and documented keyboard operations.
+- Preserve Dragon Pixel names, theme, Qt/generated icons, project formats, and authoritative owners. Do not copy Unity artwork, branding, source code, Asset Store behavior, or serialized formats. Map Unity's label filter area to Dragon Pixel's indexed status filter because asset labels and an Asset Store are outside the accepted 1.0 contracts.
+- Keep favorites, queries, layout, lock, splitter, and icon size in per-user non-authoritative settings. Resolve favorites through stable logical paths and discard stale UI state without project mutation.
+- Keep every Create/import/rename/duplicate/move/trash/restore/drop operation behind `AssetService`, project lifecycle services, prefab commands, or scene commands. No widget or shortcut gains a direct filesystem write path.
+- Require public model/Qt regressions and rendered Windows QA for list, icons, one-column, and locked states; rerun focused Windows Release/MSVC AddressSanitizer and Ubuntu Release evidence, byte-verify mirrors, review the aggregate diff, and update unmerged draft PR #7. No POC, ADR, slice, platform, release, or KNI claim changes.
+
+### Implementation and verification result (2026-07-29)
+
+- The branch now implements the accepted Project Window structure and behavior with Dragon Pixel visuals and existing service/command mutation owners. The Project folder model exposes only Name; the compact content list exposes Name and Kind/Type; full diagnostics remain in details/tooltips instead of dominating navigation.
+- Native-Windows Qt renders cover two-column icons, two-column list, and one-column mode. Inspection found and corrected a search-expansion leak and deferred-breadcrumb overlap before the final renders. Public Qt coverage asserts layout, lock, slider/list transitions, Favorites and saved searches, search recursion/clear behavior, selection, and keyboard actions.
+- Changed aliases pass Windows Release 3/3 in 340.03 seconds, MSVC AddressSanitizer 3/3 in 571.63 seconds without findings, and Ubuntu 24.04 Release 3/3 in 48.25 seconds with a validated three-case JUnit artifact. The focused native-Windows parity scenario passes 3/3 in 5.208 seconds.
+- The current complete Ubuntu matrix is explicitly inconclusive/failed for handoff: three complete runs each passed 61/62, first on a sequence-sensitive crash-recovery allocator failure and then twice on unchanged KNI POC J's 30.0 FPS gate at 29.250 and 28.879 FPS. Focused crash recovery passed 3/3 reruns and focused POC J passed 3/3 reruns. No failing test or threshold was weakened; draft PR #7 remains unmerged and must remain draft until the complete Ubuntu gate is stable. macOS remains deferred/unrun.
+
+
 ## Research Manifest
 
 Research used primary vendor/project documentation and source on 2026-07-24:
@@ -598,6 +635,7 @@ Research used primary vendor/project documentation and source on 2026-07-24:
 | macOS direct distribution | Directly distributed macOS software uses distribution signing and the Apple notarization workflow; Dragon Pixel records signing/notarization as POC R evidence | [Distribution signing](https://developer.apple.com/documentation/xcode/creating-distribution-signed-code-for-the-mac/), [notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) |
 | Unity AOT boundary | IL2CPP is Unity's ahead-of-time scripting backend, so the bridge prototype requires generated/AOT-safe behavior and link-preservation evidence | [Unity 6.3 IL2CPP](https://docs.unity3d.com/6000.3/Documentation/Manual/il2cpp-introduction.html) |
 | Unity Tilemap workflow | Current Unity documentation separates Grid/Tilemap targets, durable Tile Palettes, active targets, brush tools/inspection, grid selection, slicing, collider modes, and the optional Extras tile/brush package | [Create Tilemap](https://docs.unity3d.com/kr/current/Manual/tilemaps/work-with-tilemaps/create-tilemap.html), [Create Tile Palette](https://docs.unity3d.com/kr/current/Manual/tilemaps/tile-palettes/create-tile-palette.html), [Tile Palette reference](https://docs.unity3d.com/cn/2023.2/Manual/tile-palette-ui-ref.html), [Grid Selection](https://docs.unity3d.com/cn/2023.2/Manual/tile-palette-grid-selection.html), [Sprite slicing](https://docs.unity3d.com/kr/6000.0/Manual/sprite/sprite-editor/automatic-slicing.html), [Tilemap Collider 2D](https://docs.unity3d.com/6000.0/Documentation/Manual/tilemaps/work-with-tilemaps/tilemap-collider-2d-reference.html), [2D Tilemap Extras](https://docs.unity3d.com/cn/6000.0/Manual/com.unity.2d.tilemap.extras.html) |
+| Unity 5.4 Project Window | The documented surface uses Favorites plus a folder hierarchy on the left, immediate icon contents on the right, clickable breadcrumbs, Create/search toolbar, icon-size slider/list mode, one/two-column layouts, lock, saved searches, and defined keyboard operations | [Unity 5.4 Project Window](https://docs.unity3d.com/540/Documentation/Manual/ProjectView.html) |
 
 Additional primary specifications for the selected durable boundaries are JSON-RPC 2.0, RFC 8259 JSON, RFC 9562 UUIDs, and Khronos glTF 2.0. The expanded source list is maintained in the design document.
 
@@ -605,11 +643,13 @@ Additional primary specifications for the selected durable boundaries are JSON-R
 
 ### Result identity
 
-- **Result:** `RESULT-DPE-ARCH-0015`
-- **Design:** `DPE-ARCH-0015`
-- **Disposition:** Accepted the complete 2D Tilemap Editor expansion on active draft PR #6: versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, framework-neutral renderer/collision behavior, worker-only native tile extensions, and expanded Tiled JSON conversion. Existing command/asset/recovery ownership, support thresholds, POC/ADR gates, worker isolation, original presentation, and experimental KNI status remain unchanged.
+- **Result:** `RESULT-DPE-ARCH-0017`
+- **Design:** `DPE-ARCH-0017`
+- **Disposition:** Implemented the Unity 5.4 Project Window functional-parity correction on active draft PR #7 with rendered native-Windows QA and passing changed aliases on Windows Release, Windows MSVC AddressSanitizer, and Ubuntu Release. The draft remains blocked by three 61/62 current-source complete Ubuntu runs under unchanged crash-recovery and KNI POC J thresholds; macOS remains deferred/unrun and no POC/ADR/slice/release/KNI claim is promoted.
 
 ### Implementation evidence result
+
+DPE-ARCH-0017 Project-specific verification passes 3/3 changed aliases on Windows Release in 340.03 seconds, 3/3 under MSVC AddressSanitizer in 571.63 seconds without findings, and 3/3 on Ubuntu 24.04 Release in 48.25 seconds. Native-Windows Qt renders cover two-column icons, two-column list, and one-column mode, while public tests cover lock, search, saved queries, layout, slider, and keyboard behavior. Complete Ubuntu evidence remains blocked as described in the DPE-ARCH-0017 result above.
 
 The current Windows 11 x64 worktree passes all 45 registered strict Release tests; the persisted CTest log contains 45 pass markers, zero failures, and 294.56 seconds of recorded test execution. The refreshed Windows MSVC AddressSanitizer build passes 45/45 in 368.80 seconds; its duplicate full Qt interaction registrations complete in 95.78 and 91.47 seconds under the sanitizer-only 180-second harness cap. The most recent Ubuntu 24.04 x64 evidence predates DPE-ARCH-0008 and passes all 36 then-registered strict Release tests in 102.20 seconds and all 36 then-registered Clang AddressSanitizer tests in 101.97 seconds. Current POC I/J and project-index/prefab/transaction hardening have Windows evidence only. POCs M-S have no complete implementation evidence.
 
@@ -642,7 +682,9 @@ DPE-ARCH-0013 Windows implementation replaces the Game view's hard-coded binding
 
 The 2026-07-26 Inspector/input-settings follow-up remains within DPE-ARCH-0012/0013. It adds embedded high-contrast checked/mixed Inspector indicators; an explicit **Edit > Project Settings > Input...** route; control-map enabled state, action rename, and full binding path/scale/dead-zone editing; and generated/sample C# movers with editable Horizontal Action, Vertical Action, and Speed fields matching `Input Motion 2D`. C# creation schedules an isolated component build automatically, and the sample no longer writes movement values every frame. A new exact-source .NET test compiles and executes the canonical `MyMover` with custom action names and proves GUID/lifecycle/Transform/reset behavior. Ten focused Release aliases pass 10/10 in 133.55 seconds and their MSVC AddressSanitizer counterparts pass 10/10 in 157.17 seconds; final UI reruns pass in 87.61/108.35 seconds. The writable project builds with zero warnings/errors, the packaged MonoGame self-test passes, and all 183 bundle records verify. Physical-gamepad, aggregate Qt input-to-paint, current Ubuntu/macOS, and remaining POC J gates stay open.
 
-DPE-ARCH-0015 is an accepted implementation contract, not completed evidence. At selection time, draft PR #6 already passes its recorded Windows static-orthogonal Tilemap workflow and atomic save correction, but TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, non-orthogonal layouts, typed tiles/brushes, extension ABI, and broader Tiled conversion have not yet been implemented or verified. The active mirrored plan owns incremental results. No pre-existing Windows, hosted-platform, POC, ADR, slice, release, or KNI claim is promoted by accepting the expansion.
+DPE-ARCH-0015 was implemented and merged through reviewed PR #6 at `fa59b227e3057af603c569f1913b652d22b50c5a` on 2026-07-29. Its plan records complete local Windows Release and MSVC AddressSanitizer evidence, passing hosted Ubuntu Release and AddressSanitizer evidence, hosted Windows framebuffer limitations, and explicitly deferred macOS stabilization. That merge does not close POC K/O/P/J, an ADR, a slice, a platform support gate, a release, or KNI production support.
+
+DPE-ARCH-0017 is the active implemented Project Window contract. DPE-ARCH-0016 supplied the service-owned two-pane Project foundation, stable project index, navigation, no-Scene moves, versioned drag paths, and team-review topology. The user's visual QA correction now implements the documented Unity 5.4 Project Window's supported functional structure and interactions with rendered verification and retained Dragon Pixel ownership/presentation boundaries. The active mirrored plan records passing changed-path evidence and the failing complete Ubuntu gate; implementation promotes no POC, ADR, slice, platform, release, or KNI claim.
 
 Current manual Windows QA opens a writable disposable sample under `out/dev`, uses the typed Inspector and indexed Project Explorer with thumbnails/import/dependency/structural status, creates a preset as one undoable transaction, runs isolated Simulate, displays actual MonoGame and KNI preview/play output, and exercises pause and stop. DPE-ARCH-0011 additionally requires Project Explorer component-source visibility and a contained detached Rider handoff from Inspector/Project actions; its focused implementation evidence is recorded in the active plan. This useful Windows workflow evidence does not complete the full 2D/3D designer, linked nested-prefab, source-authoring cross-platform, or accessibility acceptance matrices.
 
@@ -784,3 +826,5 @@ The authoritative design document contains the exact ownership rules, module tab
 | `RESULT-DPE-ARCH-0013` | `DPE-ARCH-0013` | 2026-07-26 | Accepted project-owned configurable input maps, named control maps, persistent rebinding, Qt keyboard/mouse capture, SDL 3 standard-gamepad support, and shared device-neutral movement actions for `InputMotion2D` and `MyMover` |
 | `RESULT-DPE-ARCH-0014` | `DPE-ARCH-0014` | 2026-07-27 | Accepted the Project Hub and minimal templates/clean scenes, project-v4/template-v1 implementation, asset-v3 and recoverable two-pane Project Browser operations, immutable imported-image bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors |
 | `RESULT-DPE-ARCH-0015` | `DPE-ARCH-0015` | 2026-07-28 | Accepted the complete 2D Tilemap Editor expansion with versioned TileSet/palette/Tilemap/snapshot contracts, five layouts, multi-TileSet typed tiles/brushes, full slicing/palette/selection workflows, runtime rendering/collision, isolated native extensions, broader Tiled JSON conversion, and unchanged evidence gates |
+| `RESULT-DPE-ARCH-0016` | `DPE-ARCH-0016` | 2026-07-29 | Accepted a service-owned Unity-familiar Project View, stable folder navigation and drag/drop, scene-independent Project moves, concurrent independent feature PRs, explicit dependent-stack review rules, and CI coverage without changing durable formats or evidence gates |
+| `RESULT-DPE-ARCH-0017` | `DPE-ARCH-0017` | 2026-07-29 | Accepted the Unity 5.4 Project Window functional-parity correction with Favorites, toolbar/breadcrumb, icon slider/list mode, layout/lock/search/shortcut behavior, Dragon Pixel presentation/ownership, rendered QA, and unchanged format/platform/evidence gates |

@@ -1,8 +1,8 @@
 # Dragon Pixel Engine Design Document
 
 > **Status:** Accepted full version 1.0 delivery architecture; implementation in progress
-> **Design revision:** `DPE-ARCH-0015`
-> **Last reviewed:** 2026-07-28
+> **Design revision:** `DPE-ARCH-0017`
+> **Last reviewed:** 2026-07-29
 > **Current phase:** Gate-preserving completion of Slices 1 through 4 and the full design-defined Dragon Pixel Engine 1.0 feature set
 > **Documentation-system path:** `C:\Projects\Documentation\Engines\Dragon Pixel Engine\Dragon Pixel Engine Design Document.md`  
 > **Repository mirror:** `C:\Projects\Github\Engines\Dragon Pixel Engine\docs\Dragon Pixel Engine Design Document.md`
@@ -478,6 +478,65 @@ This revision accepts the user's 2026-07-28 request to expand draft PR #6 from t
 - POC K expands to cover v1/v2 migrations, palette assets, every layout/tool/tile/brush/collider behavior, large sparse maps, real adapter pixels/picking/animation, Box2D contacts, missing-extension preservation, and atomic recovery. POCs O and P cover the broader importer and worker-extension boundaries.
 - Review handoff requires focused and complete Windows Release/MSVC AddressSanitizer evidence plus the existing hosted Windows, Ubuntu, and macOS Release/sanitizer matrix without lowering any threshold. MonoGame and KNI are reported separately, KNI remains experimental, and a pre-existing unrelated platform failure remains visible and keeps the PR draft.
 - ADR-0006, ADR-0008, ADR-0009, ADR-0012, ADR-0016, ADR-0020, and ADR-0022 remain `Proposed` until their complete named gates pass. This revision does not claim POC, slice, platform, release, or KNI production completion.
+
+## DPE-ARCH-0016 Project View and Team GitFlow Contract
+
+This revision accepts the user's 2026-07-29 request for a clearer, Unity-familiar Project View and a lower-friction multi-contributor GitFlow workflow. Familiarity means recognizable folder/content navigation and drag behavior with Dragon Pixel-owned presentation; it does not authorize copying Unity branding, artwork, icons, text, proprietary layouts, or serialized formats. The existing project index, `AssetService`, scene commands, linked-prefab ownership, recovery boundaries, and evidence gates remain authoritative.
+
+### Project View ownership and presentation
+
+- Project View is a reusable Qt surface over the detached project index and `AssetService`; it is not a general file manager and never mutates project files directly. The project index remains the read owner for declared roots, folders, scenes, prefabs, assets, component sources, identities, status, and diagnostics.
+- The left pane presents declared project roots and folders. The right pane presents only the active folder's immediate children in list or tile mode, with folders first, deterministic case-insensitive natural ordering, stable selection, recognizable type/status presentation, and bounded previews.
+- Navigation provides Back, Forward, Up, and clickable breadcrumb segments. Refresh and index replacement restore the nearest still-valid active folder, expansion state, view mode, and stable selection; invalid per-user state falls back to the declared Assets root without changing authoritative project data.
+- Search, type, and status filters operate on indexed data and retain diagnostics. Keyboard navigation, context actions, focus order, accessible names/descriptions, visible focus, high DPI, high contrast, and text scaling remain part of the POC H boundary.
+
+### Folder and drag/drop behavior
+
+- OS-to-Project drops propose imports into the visible destination folder. Project-to-Project drops propose contained asset or folder moves through `AssetService` and must work without an open Scene. They preserve stable asset IDs and reject stale, cross-project, escaping, recursive, colliding, or ambiguous operations before mutation.
+- Project drag payload version 1 remains the stable envelope. Scene, Hierarchy, Inspector, palette, and Project targets interpret the same project/revision/item identity; a view index or display path is never authoritative.
+- Compatible sprite/image, prefab, Tilemap, TileSet/palette-assisted, and supported scene-object drops expose clear accepted/rejected feedback. Scene and Hierarchy creation remains one validated scene transaction; prefab instances retain links, Tilemap objects retain stable asset references, and project organization never requires or silently creates a Scene.
+- Folder creation, rename, move, duplicate, removal, restore, import, and asset creation remain `AssetService` or existing lifecycle/prefab command operations. No drag handler may perform an ad hoc filesystem write or partially publish a multi-file result.
+
+### Concurrent and dependent feature reviews
+
+- Multiple independent `feature/*` branches may be active and have draft or ready PRs open concurrently. Each starts from the then-current `develop`, names one owner and cohesive scope in its mirrored plan, targets `develop`, and is manually reviewed and merged one at a time.
+- A dependent feature may explicitly stack on one unmerged `feature/*` branch only when both feature plans and both PR bodies name the dependency, base commit, target branch, overlapping owners/files, rebase or retarget procedure, and verification required after the parent merges. The child PR temporarily targets the parent feature branch so review and CI show only the child delta.
+- A stacked child never merges before its parent. After the parent reaches `develop`, the child author updates from current `develop`, retargets the PR to `develop`, reviews the new aggregate diff, resolves conflicts without weakening gates, and reruns affected checks. Shared feature history is never force-pushed without explicit coordination.
+- CI runs for PRs targeting `main`, `develop`, or `feature/**` and validates only documented GitFlow relationships. Allowing a feature-to-feature PR is a review topology, not permission to combine unrelated scope or bypass the final `develop` review.
+
+### Compatibility and evidence gate
+
+- No durable authoring format, runtime snapshot, C ABI, managed contract, worker protocol, or project drag envelope changes in this revision. Project v4, asset v3, scene v3, prefab v1, TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, and drag version 1 remain readable and authoritative as previously accepted.
+- Focused acceptance covers Project Model ordering and identity, no-Scene folder and asset moves, navigation restoration, public Qt list/tile/breadcrumb interactions, Project-to-Scene/Hierarchy creation, rejected drops, keyboard/accessibility paths, and CI policy tests for independent and explicitly stacked feature reviews.
+- Review handoff requires current Windows Release and MSVC AddressSanitizer evidence plus Ubuntu Release/build evidence for changed portable/editor paths. macOS stabilization may be deferred by explicit user direction, but macOS remains in the product support matrix and any unrun or failing result stays visible.
+- ADR-0007, ADR-0008, ADR-0013, ADR-0018, and ADR-0020 remain `Proposed` until their complete named gates pass. This feature cannot promote a POC, slice, platform, release, or KNI production claim from partial evidence.
+
+## DPE-ARCH-0017 Project Window Functional Parity Contract
+
+This revision accepts the user's 2026-07-29 correction that the Project View must be a one-to-one functional and structural representation of Unity 5.4's documented Project Window rather than merely Unity-familiar. Functional parity applies to the supported local-project surface and interaction model. Dragon Pixel keeps its name, visual theme, standard/generated icons, asset contracts, and service-owned mutation paths; it does not copy Unity branding, artwork, source code, Asset Store integration, or serialized formats.
+
+### Required Project Window surface
+
+- The two-column layout has a top toolbar, a clickable breadcrumb row, a left navigation column, a right content column, and a bottom selected-item/icon-size row. The left column contains a Favorites section above the declared project roots and folder hierarchy. Selecting a folder presents only its immediate children on the right.
+- The toolbar exposes Create for the current folder, project search, indexed type and Dragon Pixel status filters, Save Search, a one-column/two-column layout menu, and a lock toggle. Import and refresh remain available from the Assets menu and context menu but do not displace the documented Project Window toolbar structure.
+- The right content column defaults to resizable icon tiles with recognizable type icons. A bottom slider changes icon size continuously and switches to the compact Name/Kind list at its extreme-left position. The bottom text reports the selected item and uses its full path while a search is active.
+- One-column mode presents the folder hierarchy as the primary Project surface. The lock freezes externally driven folder/content changes while still allowing explicit Project Window navigation and commands. Per-user favorites, saved searches, layout, lock, splitter, and icon-size state remain non-authoritative UI settings.
+- Search terms are whitespace-ANDed. `t:` terms filter indexed types, multiple type terms are ORed, and saved searches can be recalled from Favorites. Dragon Pixel status filtering remains an explicit engine extension because asset labels and the Unity Asset Store are not Dragon Pixel 1.0 contracts.
+- Public keyboard behavior covers Ctrl/Cmd+F search focus, Tab column focus transfer, F frame selected, Ctrl/Cmd+A visible selection, Ctrl/Cmd+D duplicate, Delete recoverable removal with confirmation, F2 rename on Windows, Enter activation, and Backspace parent navigation. Existing tree expand/collapse behavior remains available in the folder hierarchy.
+
+### Ownership, safety, and evidence
+
+- Favorites and saved searches store stable logical paths or query text only. Missing paths are ignored and invalid UI state is discarded without touching project data.
+- Create, import, rename, duplicate, move, trash/restore, drag/drop, scene attachment, and prefab creation continue through `AssetService`, project lifecycle services, prefab commands, or scene commands. Project View widgets never write project files directly.
+- No durable project, asset, scene, prefab, tile, ABI, managed, worker, or drag-protocol version changes. The feature remains on `feature/project-view-workflow` and draft PR #7; DPE-ARCH-0017 supersedes only the Project Window presentation/interaction acceptance of DPE-ARCH-0016.
+- Acceptance requires public model/Qt regressions for the complete surface above, rendered Windows QA in both list and icon modes plus one-column and locked states, focused Windows Release and MSVC AddressSanitizer evidence, Ubuntu Release evidence for changed portable/editor paths, byte-identical documentation mirrors, aggregate review, and an updated unmerged draft PR. macOS remains explicitly unrun/deferred and every POC/ADR/slice/release/KNI gate remains open.
+
+### Current implementation evidence (2026-07-29)
+
+- `feature/project-view-workflow` implements the accepted Favorites/folder hierarchy, immediate-content list and scalable icon modes, Create/search/type/status/save/layout/lock toolbar, clickable breadcrumb, selected-item row, persistent non-authoritative UI state, saved searches, and keyboard behavior. Public Project models expose only Name on the folder surface and Name plus Kind/Type on the compact content list; diagnostics remain available through details and tooltips.
+- Deterministic native-Windows Qt renders were inspected for two-column icons, two-column list, and one-column mode. That inspection found and drove repairs for search expansion leaking into normal immediate-content mode and deferred breadcrumb widgets overlapping; regenerated renders show the corrected states. Public Qt tests also assert the locked state, layout transitions, slider/list transition, saved search activation, shortcuts, search recursion, and return to immediate-content icons.
+- The changed Project aliases pass Windows Release 3/3 in 340.03 seconds, MSVC AddressSanitizer 3/3 in 571.63 seconds without a sanitizer finding, and Ubuntu 24.04 Release 3/3 in 48.25 seconds with a valid three-case JUnit artifact. The focused native-Windows parity scenario passes 3/3 QtTest cases in 5.208 seconds.
+- Current-source complete Ubuntu evidence is not stable enough for review handoff: an initial 61/62 run exposed a sequence-sensitive `s1.editor_crash_recovery` allocator failure that then passed three focused reruns; two subsequent complete runs were 61/62 because KNI POC J measured 29.250 and 28.879 FPS against the unchanged 30.0 FPS threshold, while three focused POC J reruns passed. No test, threshold, platform, POC, ADR, slice, release, or KNI support claim was weakened or promoted. macOS remains explicitly deferred/unrun.
 
 ## 1. Product Definition and Non-Goals
 
@@ -1049,7 +1108,7 @@ Current evidence status (progress updated 2026-07-25): the current Windows matri
 
 ### Slice 2: Designer-friendly 2D and 3D tooling
 
-Milestones include model-backed layouts, typed Inspector editing/validation, browse/open/assign asset workflows, previews, drag-and-drop, a unified 2D/3D Scene View, editor cameras and gizmos, multi-selection, command-based undo/redo, linked nested prefabs, custom drawers, baseline lighting, and live Box2D/Jolt physics authoring. Conduct Qt interaction, keyboard, accessibility, and designer usability tests throughout rather than at the end.
+Milestones include model-backed layouts, the DPE-ARCH-0017 Project Window parity surface, typed Inspector editing/validation, browse/open/assign asset workflows, previews, drag-and-drop, a unified 2D/3D Scene View, editor cameras and gizmos, multi-selection, command-based undo/redo, linked nested prefabs, custom drawers, baseline lighting, and live Box2D/Jolt physics authoring. Conduct Qt interaction, keyboard, accessibility, and designer usability tests throughout rather than at the end.
 
 Acceptance: a technical designer can assemble, validate, run, save, reopen, and revise a small 2D scene and a small 3D scene—including linked nested prefabs and physics—without editing generated metadata or scene JSON by hand. Both adapters must render scene-dependent real-device pixels and picking IDs; KNI remains visibly experimental until its broader support matrix passes.
 
@@ -1090,6 +1149,7 @@ Current evidence status (scope activated 2026-07-25): Windows passes the current
 | Linked prefab rebasing loses identity or overrides | Medium / Critical | Stable source/instance mappings, canonical revisions, fallbacks, cycle/expansion guards, three-level fixtures, and atomic multi-document saves |
 | Physics backends leak types or runtime state into durable contracts | Medium / High | Engine-owned facade, private linkage, neutral DTOs/C ABI batches, serialization-negative tests, and world-destruction tests |
 | A visually present editor remains non-operable or inaccessible | Medium / High | Real Qt Test interaction, prompt seams, action-state tests, keyboard/high-contrast/accessibility checks, and designer acceptance scenarios |
+| Project Window parity drifts, copies proprietary assets, or bypasses Dragon Pixel ownership | Medium / High | Pin acceptance to the official Unity 5.4 interaction description, use only Dragon Pixel/Qt presentation assets, keep unsupported Asset Store/label behavior explicit, and require service-bound public Qt plus rendered QA evidence |
 | Mixed Inspector values are overwritten without explicit intent | Medium / Critical | First-class mixed state, mutation-free open/focus/close tests, one compound commit, and Undo restoring distinct before-images |
 | Project component code enters the editor or executes without a validated module boundary | Medium / Critical | JSON-only editor metadata service, worker-only managed/native loading, versioned factories/C ABI, module identity checks, restart reload, and mapped-module tests |
 | Input revisions claim latency without proving runtime consumption | High / High | Full-state action input, focus-loss neutralization, consumed revisions, real pixel/pick changes through both adapters, and POC J correlated timing |
@@ -1425,3 +1485,5 @@ Additional primary sources were accessed on 2026-07-26 for DPE-ARCH-0013:
 | `DPE-ARCH-0013` | 2026-07-26 | Accepted configurable input maps and rebinding | Added project-owned `dpe.inputmap` v1 documents, named control maps, validated persistent bindings, Qt keyboard/mouse capture, SDL 3 standard gamepad support, compatibility fallback, shared `InputMotion2D`/`MyMover` actions, and the expanded POC J evidence gate |
 | `DPE-ARCH-0014` | 2026-07-27 | Accepted project and daily-authoring workflow | Added the Project Hub, minimal declarative 2D/3D creation and clean scenes, project-v4/template-v1 implementation boundary, asset-v3 service and recoverable Project Browser operations, immutable imported-image runtime bindings, versioned drag/drop, ordered Hierarchy multi-operations, and multiple independently lockable Inspectors while retaining every POC/platform gate |
 | `DPE-ARCH-0015` | 2026-07-28 | Accepted complete 2D Tilemap Editor expansion | Added TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, five grid layouts, multi-TileSet typed tiles and brushes, full palette/selection/slicing workflows, renderer/collision behavior, worker-only native tile extensions, expanded Tiled JSON conversion, and unchanged cross-platform/POC/KNI gates |
+| `DPE-ARCH-0016` | 2026-07-29 | Accepted Project View and team GitFlow workflow | Added service-owned folder/content navigation, stable Unity-familiar Project View behavior, scene-independent Project moves, validated drag destinations, concurrent independent PRs, explicit feature-stack review rules, and unchanged format/platform/evidence gates |
+| `DPE-ARCH-0017` | 2026-07-29 | Accepted Project Window functional parity correction | Superseded the familiar-only Project View acceptance with the Unity 5.4 two-column/Favorites/toolbar/breadcrumb/icon-slider/layout-lock/search/shortcut interaction surface while preserving Dragon Pixel presentation, service ownership, formats, and evidence gates |

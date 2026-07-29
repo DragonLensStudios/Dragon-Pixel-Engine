@@ -16,9 +16,10 @@
 
 ### `feature/*`
 
-- Starts from `develop`.
+- Starts from `develop` by default.
 - One cohesive feature or defect.
-- Ends in a PR to `develop`.
+- Ends in a reviewed PR to `develop`.
+- May temporarily start from and target one parent `feature/*` only for an explicitly documented dependency.
 
 ### `release/*`
 
@@ -35,9 +36,10 @@
 
 ## Automated CI policy
 
-The cross-platform workflow runs for pushes to `main`, `develop`, `feature/**`, `release/**`, and `hotfix/**`, and for pull requests targeting `main` or `develop`. Its policy job enforces these accepted relationships:
+The cross-platform workflow runs for pushes to `main`, `develop`, `feature/**`, `release/**`, and `hotfix/**`, and for pull requests targeting `main`, `develop`, or `feature/**`. Its policy job enforces these accepted relationships:
 
 - `feature/*`, `release/*`, and `hotfix/*` may target `develop`.
+- One non-identical `feature/*` branch may target one `feature/*` parent while an explicit dependency is recorded in both plans and PR bodies.
 - Only `release/*` and `hotfix/*` may target `main`.
 - Manual dispatch is allowed only from a documented GitFlow branch.
 
@@ -52,6 +54,27 @@ Open a draft PR when the branch has enough structure to review, not only at the 
 A few focused commits may form one coherent PR.
 Do not create one PR per trivial commit.
 Do not bundle multiple unrelated features into one PR.
+
+### Concurrent independent work
+
+- Contributors may keep multiple independent PRs open against `develop`.
+- Each branch plan names its owner, scope, likely files/owners, and current base commit.
+- Before implementation and before final review, fetch current `develop` and inspect overlapping merged work.
+- Reviewed PRs merge one at a time. Every remaining branch then updates from current `develop`, resolves its own conflicts, reviews the aggregate diff, and reruns affected checks before merge.
+- Avoid assigning two contributors the same authoritative owner or high-conflict file set unless the overlap and coordination are explicit.
+
+### Explicit dependent stacks
+
+Use a stack only when a child cannot be reviewed meaningfully without an unmerged parent. In both feature plans and both PR bodies record:
+
+- parent branch, PR, and base commit;
+- child owner and reviewer;
+- dependency reason and overlapping files/owners;
+- temporary PR target and required merge order;
+- update/retarget procedure after the parent merges;
+- checks that must rerun on the child against current `develop`.
+
+The child PR targets the parent feature branch so its initial diff contains only child work. It remains draft and cannot merge before the parent. After the parent merges, the child author updates the branch from current `develop`, retargets the PR to `develop`, confirms the new aggregate diff, resolves conflicts without weakening gates, and reruns affected verification. A feature-to-feature PR relationship is review topology only; it does not authorize unrelated scope, automatic merging, or bypass of the final `develop` review.
 
 ## Merge policy
 

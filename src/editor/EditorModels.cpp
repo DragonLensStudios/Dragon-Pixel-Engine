@@ -15,6 +15,7 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QPalette>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStyle>
 #include <QDoubleSpinBox>
@@ -144,6 +145,16 @@ bool ProjectFolderProxyModel::filterAcceptsRow(
     return kind == ProjectItemKind::project || kind == ProjectItemKind::folder;
 }
 
+bool ProjectFolderProxyModel::filterAcceptsColumn(
+    int source_column,
+    const QModelIndex&) const
+{
+    // The folder pane is navigation, not an alternate metadata table. Keep
+    // its public model structurally single-column so a source-model reset can
+    // never expose identifiers, paths, or diagnostic fields in the tree.
+    return source_column == static_cast<int>(ProjectColumn::name);
+}
+
 void ProjectFilterProxyModel::set_search_text(QString text)
 {
     text = text.trimmed();
@@ -230,6 +241,17 @@ bool ProjectFilterProxyModel::filterAcceptsRow(
     return accepts_source_row(source_row, source_parent);
 }
 
+bool ProjectFilterProxyModel::filterAcceptsColumn(
+    int source_column,
+    const QModelIndex&) const
+{
+    // Project Window content presents the immediate folder contents by name
+    // and kind. Rich index diagnostics remain available through roles,
+    // tooltips, the details pane, and the authoritative source model.
+    return source_column == static_cast<int>(ProjectColumn::name)
+        || source_column == static_cast<int>(ProjectColumn::kind_type);
+}
+
 bool ProjectFilterProxyModel::accepts_source_row(
     int source_row,
     const QModelIndex& source_parent) const
@@ -301,18 +323,62 @@ bool ProjectFilterProxyModel::row_matches_text(const QModelIndex& source_index) 
     {
         return false;
     }
-    for (auto column = 0; column < model->columnCount(source_index.parent()); ++column)
+
+    const auto terms = search_text_.split(
+        QRegularExpression{QStringLiteral("\\s+")}, Qt::SkipEmptyParts);
+    QStringList type_terms;
+    QStringList status_terms;
+    QStringList text_terms;
+    for (const auto& term : terms)
     {
-        if (source_index.siblingAtColumn(column).data(Qt::DisplayRole).toString().contains(
-                search_text_,
-                Qt::CaseInsensitive))
+        if (term.startsWith(QStringLiteral("t:"), Qt::CaseInsensitive)
+            && term.size() > 2)
         {
-            return true;
+            type_terms.push_back(term.sliced(2));
+        }
+        else if (term.startsWith(QStringLiteral("s:"), Qt::CaseInsensitive)
+            && term.size() > 2)
+        {
+            status_terms.push_back(term.sliced(2));
+        }
+        else
+        {
+            text_terms.push_back(term);
         }
     }
+
+    const auto type_tokens = source_index.data(EditorRoles::project_type_filter)
+                                 .toString()
+                                 .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (!type_terms.isEmpty()
+        && std::none_of(type_terms.cbegin(), type_terms.cend(), [&](const auto& type) {
+               return type_tokens.contains(type, Qt::CaseInsensitive);
+           }))
+    {
+        return false;
+    }
+    if (!status_terms.isEmpty()
+        && std::none_of(status_terms.cbegin(), status_terms.cend(), [&](const auto& status) {
+               return source_index.data(EditorRoles::project_status_filter).toString().compare(
+                          status, Qt::CaseInsensitive) == 0;
+           }))
+    {
+        return false;
+    }
+
     const auto diagnostics = source_index.data(EditorRoles::project_diagnostics).toStringList();
-    return std::any_of(diagnostics.cbegin(), diagnostics.cend(), [&](const auto& diagnostic) {
-        return diagnostic.contains(search_text_, Qt::CaseInsensitive);
+    return std::all_of(text_terms.cbegin(), text_terms.cend(), [&](const auto& term) {
+        for (auto column = 0; column < model->columnCount(source_index.parent()); ++column)
+        {
+            if (source_index.siblingAtColumn(column).data(Qt::DisplayRole).toString().contains(
+                    term, Qt::CaseInsensitive))
+            {
+                return true;
+            }
+        }
+        return std::any_of(diagnostics.cbegin(), diagnostics.cend(), [&](const auto& diagnostic) {
+            return diagnostic.contains(term, Qt::CaseInsensitive);
+        });
     });
 }
 
@@ -914,6 +980,32 @@ constexpr int project_sort_role = Qt::UserRole + 1000;
     const QString& path,
     const QString& identifier)
 {
+    const auto natural_key = [](const QString& value) {
+        const auto folded = value.toCaseFolded();
+        QString result;
+        result.reserve(folded.size() + 16);
+        for (qsizetype index = 0; index < folded.size();)
+        {
+            if (!folded.at(index).isDigit())
+            {
+                result.append(folded.at(index));
+                ++index;
+                continue;
+            }
+            auto end = index;
+            while (end < folded.size() && folded.at(end).isDigit()) ++end;
+            const auto digits = folded.sliced(index, end - index);
+            auto significant = digits;
+            while (significant.size() > 1 && significant.front() == QLatin1Char('0'))
+                significant.removeFirst();
+            result.append(QLatin1Char('\x01'));
+            result.append(QStringLiteral("%1").arg(significant.size(), 8, 10, QLatin1Char('0')));
+            result.append(significant);
+            result.append(QStringLiteral("%1").arg(digits.size(), 8, 10, QLatin1Char('0')));
+            index = end;
+        }
+        return result;
+    };
     int group = 2;
     if (kind == ProjectItemKind::manifest)
     {
@@ -925,7 +1017,54 @@ constexpr int project_sort_role = Qt::UserRole + 1000;
     }
     return QStringLiteral("%1|%2|%3|%4|%5")
         .arg(group)
-        .arg(name.toCaseFolded(), name, path, identifier);
+        .arg(natural_key(name), name, path, identifier);
+}
+
+[[nodiscard]] QIcon project_item_icon(ProjectItemKind kind, const QString& asset_type)
+{
+    auto standard = QStyle::SP_FileIcon;
+    auto theme = QStringLiteral("text-x-generic");
+    switch (kind)
+    {
+    case ProjectItemKind::project:
+        standard = QStyle::SP_DirHomeIcon;
+        theme = QStringLiteral("folder-development");
+        break;
+    case ProjectItemKind::folder:
+        standard = QStyle::SP_DirIcon;
+        theme = QStringLiteral("folder");
+        break;
+    case ProjectItemKind::scene:
+        standard = QStyle::SP_FileDialogDetailedView;
+        theme = QStringLiteral("applications-graphics");
+        break;
+    case ProjectItemKind::prefab:
+        standard = QStyle::SP_DirLinkIcon;
+        theme = QStringLiteral("package-x-generic");
+        break;
+    case ProjectItemKind::component_source:
+        standard = QStyle::SP_FileIcon;
+        theme = QStringLiteral("text-x-script");
+        break;
+    case ProjectItemKind::component_manifest:
+    case ProjectItemKind::manifest:
+        standard = QStyle::SP_FileDialogInfoView;
+        theme = QStringLiteral("application-json");
+        break;
+    case ProjectItemKind::asset:
+        if (asset_type.contains(QStringLiteral("sprite"), Qt::CaseInsensitive)
+            || asset_type.contains(QStringLiteral("texture"), Qt::CaseInsensitive))
+        {
+            theme = QStringLiteral("image-x-generic");
+        }
+        else if (asset_type.contains(QStringLiteral("audio"), Qt::CaseInsensitive))
+        {
+            theme = QStringLiteral("audio-x-generic");
+        }
+        break;
+    }
+    const auto fallback = QApplication::style()->standardIcon(standard);
+    return QIcon::fromTheme(theme, fallback);
 }
 
 struct ProjectRowPresentation final
@@ -1041,6 +1180,7 @@ struct ProjectRowPresentation final
         items.push_back(item);
     }
     auto* name_item = items.constFirst();
+    name_item->setIcon(project_item_icon(row.kind, row.asset_type));
     name_item->setAccessibleText(
         QStringLiteral("%1, %2, %3")
             .arg(row.name, row.kind_type, status_display_name(row.status)));
@@ -1768,8 +1908,14 @@ namespace
         }),
         rows.end());
     std::sort(rows.begin(), rows.end());
-    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
-    return rows;
+    QList<int> unique_rows;
+    unique_rows.reserve(rows.size());
+    for (const auto row : rows)
+    {
+        if (unique_rows.isEmpty() || unique_rows.back() != row)
+            unique_rows.push_back(row);
+    }
+    return unique_rows;
 }
 
 [[nodiscard]] QString quote_csv_field(QString value)

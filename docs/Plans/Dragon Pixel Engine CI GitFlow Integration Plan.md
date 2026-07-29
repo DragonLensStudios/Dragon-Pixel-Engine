@@ -1,11 +1,11 @@
 # Dragon Pixel Engine CI GitFlow Integration Plan
 
-> **Status:** Ready for review — draft PR #4 open and unmerged
+> **Status:** Reviewed and merged through PR #4
 > **Branch:** `feature/ci-gitflow-integration`
 > **Target:** `develop`
 > **Owner:** Dragon Pixel Engine maintainers with Codex implementation support
 > **Created:** 2026-07-27
-> **Last updated:** 2026-07-27
+> **Last updated:** 2026-07-29
 
 ## Goal and user value
 
@@ -212,5 +212,7 @@ Ubuntu ASan fails `s2.worker_physics`, both worker-only component-runtime aliase
 The local Docker CLI still cannot reach the Docker Desktop Linux daemon, so no container result is claimed. GitHub also emits its current Node.js 20 deprecation warning for the pinned v4 first-party actions while forcing them onto Node.js 24; all action setup/upload steps used here complete, and a major-version action upgrade remains separate maintenance.
 
 ## Handoff notes
+
+Human review merged PR [#4](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/4) into `develop` before the DPE-ARCH-0016 work began. This supersedes the pre-merge wording retained below as historical evidence. Branch protection remains intentionally unmodified. DPE-ARCH-0016 extends this foundation with explicitly documented dependent feature PR targets and policy tests; it does not rewrite PR #4 evidence or promote a platform, POC, ADR, slice, release, or KNI claim.
 
 Implementation, local and hosted verification, branch publication, and draft-PR preparation are complete. Draft PR [#4](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/4) remains open and unmerged for human review. Branch protection is intentionally unmodified. After merge and explicit maintainer authorization, `CI policy / GitFlow contracts` is the only current candidate required check; the platform jobs are truthful but must not become required until their separately owned product failures are repaired and their complete matrices pass. No POC, ADR, slice, release, macOS, Windows-hosted, Ubuntu-sanitizer, or KNI claim is promoted by this feature.
