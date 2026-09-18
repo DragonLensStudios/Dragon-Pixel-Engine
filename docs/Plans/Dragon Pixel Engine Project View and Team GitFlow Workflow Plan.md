@@ -12,6 +12,12 @@
 
 ## Goal and user value
 
+### Dependent documentation baseline (2026-09-18)
+
+`feature/documentation-baseline-0.1.0` is a documentation-only child of this PR #7 branch, inspected at `fab41e28288681f37966345413d85f4eee405b79`, with its branch point established by the commit adding this record. Owner: Codex / Dragon Lens Studios; reviewer: human maintainer. It requires the full DPE-ARCH-0017 provenance and implemented Project View context absent from current `develop` (`fa59b227e3057af603c569f1913b652d22b50c5a`). The child owns README, prompt/result organization, licensing explanation, and a documentation baseline tag. Overlap is limited to README, Prompt Source, and plan/evidence records; it makes no product changes. Its mirrored plan is `Dragon Pixel Engine 0.1.0 Documentation Baseline Plan.md`.
+
+The child temporarily targets `feature/project-view-workflow` and remains draft. PR #7 must merge first after its existing blockers are resolved. Then update the child from current `develop` without rewriting shared history, retarget it to `develop`, review its aggregate diff, reconcile changed feature claims, and rerun mirror, provenance-preservation, Markdown link/anchor, and whitespace checks. This stack does not authorize either merge or waive the complete Ubuntu gate.
+
 Deliver the next complete daily-authoring feature: a Dragon Pixel-owned one-to-one functional and structural representation of Unity 5.4's documented Project Window for supported local-project behavior. The surface treats Favorites and folders as first-class navigation, provides the toolbar/breadcrumb/icon-slider/layout/lock/search/shortcut model, keeps list/icon state stable, and makes validated drag/drop into Project folders, Scene, Hierarchy, and compatible Inspector targets predictable. In the same work item, retain the repository's practical multi-contributor GitFlow support without weakening review or CI.
 
 An author should be able to understand where assets live, move through folders, import or organize files without opening a Scene, and drag a supported asset into the Scene with visible, deterministic behavior. A contributor should be able to start independent work from `develop` while another PR is under review, or explicitly stack a genuinely dependent PR and later retarget it safely.
