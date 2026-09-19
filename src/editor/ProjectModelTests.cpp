@@ -340,6 +340,13 @@ private slots:
         model.rebuild(result);
         ProjectFilterProxyModel proxy;
         proxy.setSourceModel(&model);
+        QCOMPARE(proxy.columnCount(), 2);
+        QCOMPARE(proxy.headerData(0, Qt::Horizontal).toString(), QStringLiteral("Name"));
+        QCOMPARE(proxy.headerData(1, Qt::Horizontal).toString(), QStringLiteral("Kind / Type"));
+        ProjectFolderProxyModel folder_proxy;
+        folder_proxy.setSourceModel(&model);
+        QCOMPARE(folder_proxy.columnCount(), 1);
+        QCOMPARE(folder_proxy.headerData(0, Qt::Horizontal).toString(), QStringLiteral("Name"));
         QCOMPARE(entry_count(proxy), 6);
 
         proxy.set_type_filter(QStringLiteral(" SCENE "));
@@ -363,6 +370,21 @@ private slots:
             proxy, QStringLiteral("Components/Gameplay.dpecomponents")).isValid());
 
         proxy.clear_type_filter();
+        proxy.set_search_text(QStringLiteral("main scene"));
+        QCOMPARE(entry_count(proxy), 1);
+        QVERIFY(find_logical_path(proxy, QStringLiteral("Scenes/Main.dpescene")).isValid());
+        proxy.set_search_text(QStringLiteral("dragon scene"));
+        QCOMPARE(entry_count(proxy), 0);
+        proxy.set_search_text(QStringLiteral("t:scene t:prefab"));
+        QCOMPARE(entry_count(proxy), 2);
+        QVERIFY(find_logical_path(proxy, QStringLiteral("Scenes/Main.dpescene")).isValid());
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Assets/Prefabs/Actor.dpeprefab")).isValid());
+        proxy.set_search_text(QStringLiteral("t:asset s:error"));
+        QCOMPARE(entry_count(proxy), 1);
+        QVERIFY(find_logical_path(
+            proxy, QStringLiteral("Assets/Dragon.sprite.dpeasset")).isValid());
+        proxy.clear_search_text();
         proxy.set_status_filter(QStringLiteral("ERROR"));
         QCOMPARE(proxy.status_filter(), QStringLiteral("error"));
         QCOMPARE(entry_count(proxy), 1);
@@ -414,6 +436,60 @@ private slots:
         proxy.clear_type_filter();
         proxy.clear_status_filter();
         QCOMPARE(entry_count(proxy), 6);
+    }
+
+    void orders_folder_and_asset_names_naturally_with_visible_type_icons()
+    {
+        ProjectIndexCandidate candidate;
+        candidate.project_root = QDir::temp().filePath(
+            QStringLiteral("dpe-project-model-natural-%1")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        candidate.manifest_path = QDir{candidate.project_root}.filePath(
+            QStringLiteral("DragonPixelProject.json"));
+        candidate.project_id = QStringLiteral("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+        candidate.name = QStringLiteral("Natural Sort Project");
+        candidate.format_version = 4;
+        candidate.roots = {{
+            ProjectIndexRootKind::assets,
+            QStringLiteral("Assets"),
+            QDir{candidate.project_root}.filePath(QStringLiteral("Assets")),
+        }};
+        candidate.discovered_folders = {
+            QStringLiteral("Assets/Folder10"),
+            QStringLiteral("Assets/Folder2"),
+        };
+
+        const auto make_asset = [&](const QString& id, const QString& name) {
+            ProjectIndexEntry entry;
+            entry.kind = ProjectIndexEntryKind::asset;
+            entry.id = id;
+            entry.display_name = name;
+            entry.logical_path = QStringLiteral("Assets/%1.dpeasset").arg(name);
+            entry.absolute_path = QDir{candidate.project_root}.filePath(entry.logical_path);
+            entry.format_version = 3;
+            entry.asset_type = QStringLiteral("sprite");
+            entry.source = QStringLiteral("generated://%1").arg(name);
+            return entry;
+        };
+        candidate.entries = {
+            make_asset(QStringLiteral("11111111-1111-4111-8111-111111111111"), QStringLiteral("Tile10")),
+            make_asset(QStringLiteral("22222222-2222-4222-8222-222222222222"), QStringLiteral("Tile2")),
+        };
+
+        ProjectModel model;
+        model.rebuild(candidate);
+        const auto assets = find_logical_path(model, QStringLiteral("Assets"));
+        QVERIFY(assets.isValid());
+        QCOMPARE(child_names(model, assets), QStringList({
+            QStringLiteral("Folder2"),
+            QStringLiteral("Folder10"),
+            QStringLiteral("Tile2"),
+            QStringLiteral("Tile10"),
+        }));
+        for (int row = 0; row < model.rowCount(assets); ++row)
+        {
+            QVERIFY(!model.index(row, 0, assets).data(Qt::DecorationRole).value<QIcon>().isNull());
+        }
     }
 };
 

@@ -94,6 +94,9 @@ protected:
     [[nodiscard]] bool filterAcceptsRow(
         int source_row,
         const QModelIndex& source_parent) const override;
+    [[nodiscard]] bool filterAcceptsColumn(
+        int source_column,
+        const QModelIndex& source_parent) const override;
 
 private:
     [[nodiscard]] bool accepts_source_row(
@@ -116,6 +119,9 @@ public:
 protected:
     [[nodiscard]] bool filterAcceptsRow(
         int source_row,
+        const QModelIndex& source_parent) const override;
+    [[nodiscard]] bool filterAcceptsColumn(
+        int source_column,
         const QModelIndex& source_parent) const override;
 };
 

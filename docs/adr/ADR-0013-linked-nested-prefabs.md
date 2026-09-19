@@ -2,8 +2,8 @@
 
 > **Status:** Proposed
 > **Date:** 2026-07-24
-> **Last reviewed:** 2026-07-27
-> **Design revision:** `DPE-ARCH-0014`
+> **Last reviewed:** 2026-07-29
+> **Design revision:** `DPE-ARCH-0016`
 
 ## Context
 
@@ -71,9 +71,15 @@ The current Windows strict Release and MSVC AddressSanitizer matrices both pass 
 
 The gate remains incomplete. Nested-level Apply does not yet cascade child source hashes/revisions through containing prefab sources; Create from Selection requires a locally owned subtree; Apply rejects instance-added entities until durable source-ID allocation is implemented; not every override form has a dedicated case; and partial Unpack, the complete three-level public Qt/accessibility scenario, and platform-specific failure recovery remain unproven. This ADR remains `Proposed`.
 
+## DPE-ARCH-0016 Project View drag refinement
+
+The Project View presents prefab assets and Hierarchy-to-Project creation through the existing version-1 drag envelope. Prefab instantiation into Scene/Hierarchy remains linked and command-backed; creating a prefab from a locally owned Hierarchy root remains Scene-dependent and uses the established atomic prefab/scene owner. Project-only asset/folder organization does not require a Scene and cannot accidentally enter the prefab path. Stale, cross-project, linked-source, ambiguous, or incompatible drops remain fail-before-mutation cases. No prefab format or mapping contract changes, and ADR-0013 remains `Proposed`.
+
 ## Related decisions
 
 - ADR-0002: Hybrid Entity/Component Model and Ownership
 - ADR-0005: Cross-Language Component Metadata and Inspector Reflection
 - ADR-0006: JSON Versioning, Migration, and Unknown-Data Preservation
 - ADR-0008: Command Transactions, Validation, Undo/Redo, Dirty State, and Automation
+
+Focused DPE-ARCH-0016 evidence (2026-07-29): the existing public domain-drop test continues to prove linked prefab instantiation into Scene/Hierarchy, Hierarchy-to-Project prefab creation, stable identity preservation, and stale/cross-project rejection after the Project View changes. The new no-Scene test proves Project asset/folder organization does not enter the prefab path, while entity-to-Project handling still diagnoses the missing Scene. Complete Windows Release/MSVC AddressSanitizer and Ubuntu Release pass 63/63, 63/63, and 62/62 respectively. Nested Apply, full public three-level workflows, and complete three-platform POC F remain open; ADR-0013 remains `Proposed`.

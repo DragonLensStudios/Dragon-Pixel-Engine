@@ -50,6 +50,14 @@ def validate_gitflow_event(event_name: str, ref_name: str = "", head_ref: str = 
 
         if base_ref == "develop" and _is_temporary_branch(head_ref):
             return
+        if (
+            head_ref.startswith("feature/")
+            and len(head_ref) > len("feature/")
+            and base_ref.startswith("feature/")
+            and len(base_ref) > len("feature/")
+            and head_ref != base_ref
+        ):
+            return
         if base_ref == "main" and (
             (head_ref.startswith("release/") and len(head_ref) > len("release/"))
             or (head_ref.startswith("hotfix/") and len(head_ref) > len("hotfix/"))

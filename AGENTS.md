@@ -35,7 +35,7 @@ Before planning, reviewing, or changing architecture or implementation:
 2. Read the Design and Prompt/Result documents completely.
 3. Confirm their design revision fields match this file.
 
-The current synchronized design revision is `DPE-ARCH-0015`, last reviewed 2026-07-28. For maintainers and project agents with access to both roots, if either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict. An external contributor who cannot access the private documentation-system root may prepare a repository-only proposal only when the proposal clearly states that the private mirror was unavailable and unchecked; that proposal is not accepted project evidence and may not merge until a maintainer synchronizes and byte-verifies every affected pair.
+The current synchronized design revision is `DPE-ARCH-0017`, last reviewed 2026-07-29. For maintainers and project agents with access to both roots, if either location is unavailable, paired hashes/revisions differ, or a file appears incomplete, stop documentation, planning, and implementation work and repair or clarify the mirror first. Neither path, timestamp, nor Git status automatically wins a conflict. An external contributor who cannot access the private documentation-system root may prepare a repository-only proposal only when the proposal clearly states that the private mirror was unavailable and unchecked; that proposal is not accepted project evidence and may not merge until a maintainer synchronizes and byte-verifies every affected pair.
 
 The first-structure prompt is immutable historical evidence. The Notes file is a living intake/context record and may receive user-supplied additions, but those additions must be mirrored. Neither file overrides the current Design or Prompt/Result documents.
 
@@ -139,13 +139,15 @@ Temporary branches:
 
 Use clear branch names such as `feature/atomic-publication-recovery`, `feature/editor-library-modularization`, `feature/ci-gitflow-integration`, or `feature/macos-frame-throughput`. Avoid vague names such as `feature/work`, `feature/fixes`, `feature/phase1`, `temp`, or new `codex/*` feature branches.
 
-Do not branch new work from an unmerged feature branch unless the dependency is explicit and recorded in both plans. Never work directly on `main`, and do not use the historical `codex/slice1-complete` branch as a new feature base.
+Multiple independent `feature/*` branches and PRs may be active concurrently. Each independent branch starts from the then-current `develop`, records its owner and cohesive scope in its mirrored plan, and normally targets `develop`.
+
+A dependent feature may branch from and temporarily target one unmerged `feature/*` parent only when both plans and both PR bodies record the dependency, parent base commit, overlap, ownership, retarget procedure, and post-parent verification. The child may not merge before the parent. After the parent merges, update the child from current `develop`, retarget it to `develop`, review the aggregate diff, and rerun affected checks. Never force-push a shared contributor branch without explicit coordination. Never work directly on `main`, and do not use the historical `codex/slice1-complete` branch as a new feature base.
 
 ### Feature lifecycle
 
 For every feature:
 
-1. Fetch and start from the latest `develop`.
+1. Fetch and start an independent feature from the latest `develop`, or record the explicit parent-feature dependency before creating a stacked branch.
 2. Create one focused `feature/*` branch.
 3. Create or update the mirrored feature plan before source changes.
 4. Implement the smallest complete increments.
@@ -156,10 +158,10 @@ For every feature:
 9. Update the plan and documentation with exact commands, results, failures, limitations, and handoff.
 10. Review the aggregate branch diff, commit sequence, generated files, release paths, and evidence.
 11. Push the branch.
-12. Open a draft pull request into `develop` using the feature template.
+12. Open a draft pull request into `develop` using the feature template, or temporarily into the recorded parent feature branch for an explicit dependent stack.
 13. Stop and present the draft PR for human review. Do not merge without explicit authorization.
 
-The ordered Codex handoff above reviews the aggregate diff before push and draft-PR creation. An earlier draft may be opened for visibility only when explicitly requested or when a human contributor follows the handbook; opening it does not trigger the final stop. Implementation, verification, plan/evidence updates, and aggregate review continue, and Codex stops only after the PR has been updated to the ready-for-review handoff state. A few focused commits may form one PR, but unrelated features may not share one PR.
+The ordered Codex handoff above reviews the aggregate diff before push and draft-PR creation. An earlier draft may be opened for visibility only when explicitly requested or when a human contributor follows the handbook; opening it does not trigger the final stop. Implementation, verification, plan/evidence updates, and aggregate review continue, and Codex stops only after the PR has been updated to the ready-for-review handoff state. A few focused commits may form one PR, but unrelated features may not share one PR. A stacked child remains draft and unmergeable until its parent merges, it is updated and retargeted to `develop`, and its aggregate diff and affected verification are current.
 
 ### Release and hotfix lifecycle
 
@@ -183,7 +185,7 @@ Never force-push shared branches or rewrite shared history without explicit auth
 
 Every feature plan must include:
 
-- status, branch, target, owner, and dates;
+- status, branch, target, owner, dates, dependencies, and stack disposition;
 - goal, user value, background, scope, and non-goals;
 - existing architecture, ownership, and state boundaries;
 - contract, ABI, protocol, schema, format, platform, and support impact;
@@ -307,24 +309,24 @@ Use `docs/Development/Verification Checklist.md` to select the required feature 
 
 ## Current Work Boundary
 
-The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. By explicit user reprioritization on 2026-07-28, the current product work item is the reopened mirrored `Dragon Pixel Engine Tilemap Authoring Workspace Plan.md` on `feature/tilemap-authoring-workspace`, updating existing draft PR #6 into the DPE-ARCH-0015 complete 2D Tilemap Editor. The branch remains based directly on `develop` at merged Tiled-import PR #5. The unmerged CI/GitFlow integration branch remains separate and is not stacked into this work. Do not begin another feature until PR #6 reaches its evidence-backed review handoff.
+The active product master tracker is the mirrored plan `Dragon Pixel Engine Slices 1-4 Version 1.0 Completion Plan.md`. PR #6 and the CI/GitFlow integration PR #4 were reviewed and merged into `develop`. By explicit user reprioritization on 2026-07-29, the current product work item is the mirrored `Dragon Pixel Engine Project View and Team GitFlow Workflow Plan.md` on independent branch `feature/project-view-workflow`, based directly on `develop` at `fa59b227e3057af603c569f1913b652d22b50c5a`.
 
 Proceed in evidence-backed increments:
 
-1. Implement DPE-ARCH-0015 through the reopened PR #6 Tilemap plan while preserving the completed `DPE-ARCH-0010` fluid workspace/direct attachment/lifecycle, `DPE-ARCH-0011` Rider source-authoring, `DPE-ARCH-0012` managed-controller/runtime-transform, `DPE-ARCH-0013` configurable input-map/rebinding, focused Windows `DPE-ARCH-0014` project/asset/Hierarchy/multi-Inspector increments, merged atomic-publication recovery, and current editor-library build boundary. Do not weaken editor/worker ownership, portable action contracts, Stop/discard neutralization, data recovery, or existing thresholds.
+1. Implement DPE-ARCH-0017 through the Project View/team workflow plan while preserving the merged DPE-ARCH-0015 Tilemap Editor, `AssetService` and command ownership, versioned drag validation, linked-prefab provenance, editor/worker isolation, data recovery, and current thresholds.
 2. Close Slice 1 without changing its original thresholds: complete aggregate POC J Qt-event-to-paint evidence, repair the macOS POC B failure, and pass the current strict Release/native-sanitizer and foundational matrices on Windows, macOS, and Ubuntu.
 3. Close Slice 2 by completing POCs E-L, the accepted editor-service split, real Scene/Game/input/tile/physics/prefab paths, complete designer workflows, accessibility, dependency/distribution evidence, and three-platform matrices without JSON editing.
 4. Complete Slice 3 through POCs M-R: start with safe declarative 2D/3D project creation and recovery, then project-v4 lifecycle/settings/upgrades/archive, asset-v3 import/cache integrity, reversible MonoGame/KNI migration, declared worker builds, relocatable packaging, plugin management, verified updates/rollback, and the bounded Unity bridge.
 5. Complete Slice 4 through POC S: one product-version source, frozen performance/memory budgets, long-running and corruption recovery, complete compatibility fixtures, clean install/update/rollback/uninstall, security/license/privacy/accessibility reviews, documentation/reference-project reproduction, and final three-platform release-candidate evidence.
 6. Close each slice only when every acceptance statement has direct durable evidence. Mark the active plan complete and publish `1.0.0` only after all applicable gates pass.
 
-Draft PR #6 currently preserves the merged Tiled JSON worker, static orthogonal TileSet/Tilemap v1 path, paint-ready image workflow, transform-aware Scene painting, layer/brush controls, and corrected atomic Windows sharing-lock recovery. The last recorded complete Windows Release matrix passes 61 of 61 in 512.60 seconds and its 189-record developer bundle hash-verifies; the broader sanitizer POC J instrumentation blocker, incomplete hosted matrices, POC K/O/P gates, every affected ADR, and KNI production support remain open. DPE-ARCH-0015 now authorizes TileSet v2, TilePalette v1, Tilemap v2, snapshot v5, five layouts, multi-TileSet typed tiles/brushes, full selection/slicing/rendering/collision behavior, worker-only native tile extensions, and broader Tiled JSON conversion. None of those additions is implementation evidence until the active plan records passing results.
+Merged PR #6 provides the recorded DPE-ARCH-0015 Tilemap implementation and platform-separated evidence; it does not close POC K/O/P/J, affected ADRs, a slice, release, or KNI production support. DPE-ARCH-0017 supersedes only the Project Window presentation/interaction acceptance of DPE-ARCH-0016 and requires the official Unity 5.4 Project Window's supported local-project structure, interactions, and rendered QA while preserving Dragon Pixel presentation and service ownership. The active plan now records passing Project-specific Windows Release, MSVC AddressSanitizer, Ubuntu Release, and native rendered QA evidence, but the current complete Ubuntu matrix remains blocked under unchanged crash-recovery and KNI POC J thresholds; the draft PR is not ready to merge.
 
 Do not claim KNI production support, reduce a platform threshold, substitute synthetic rendering for real-device evidence, promote an ADR without its named gate, claim a slice from partial/platform-local evidence, or broaden beyond the documented 1.0 scope into Unreal, AAA rendering, networking, visual scripting, a marketplace, or general IDE behavior.
 
 ### Recommended focused feature sequence
 
-Re-evaluate after the CI/GitFlow integration branch is reviewed and merged, beginning with:
+Re-evaluate after the current Project View/team workflow PR is reviewed and merged, beginning with:
 
 1. `feature/public-repository-readiness`
 2. `feature/developer-preview-packaging`

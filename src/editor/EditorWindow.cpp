@@ -60,9 +60,11 @@
 #include <QSaveFile>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QStandardPaths>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QStyle>
 #include <QSplitter>
 #include <QTableView>
 #include <QTimer>
@@ -90,6 +92,9 @@
 namespace
 {
 constexpr int workspace_state_version = 6;
+constexpr int project_favorite_kind_role = Qt::UserRole + 201;
+constexpr int project_favorite_value_role = Qt::UserRole + 202;
+constexpr int project_favorite_removable_role = Qt::UserRole + 203;
 
 class ProjectDropTreeView final : public QTreeView
 {
@@ -955,7 +960,26 @@ void EditorWindow::build_interface()
     project_search_->setObjectName(QStringLiteral("ProjectSearch"));
     project_search_->setAccessibleName(QStringLiteral("Search project"));
     project_search_->setPlaceholderText(QStringLiteral("Search scenes, prefabs, assets, and scripts..."));
-    connect(project_search_, &QLineEdit::textChanged, project_filter_, &ProjectFilterProxyModel::set_search_text);
+    connect(project_search_, &QLineEdit::textChanged, this, [this](const QString& text) {
+        project_filter_->set_search_text(text);
+        const auto searching = !text.trimmed().isEmpty();
+        if (project_content_stack_ != nullptr && project_icon_size_ != nullptr)
+        {
+            project_content_stack_->setCurrentIndex(
+                searching || project_icon_size_->value() == 0 ? 0 : 1);
+        }
+        if (project_explorer_ != nullptr)
+        {
+            project_explorer_->setRootIsDecorated(searching);
+            project_explorer_->setItemsExpandable(searching);
+            project_explorer_->setExpandsOnDoubleClick(searching);
+            if (searching)
+                project_explorer_->expandAll();
+            else
+                project_explorer_->collapseAll();
+        }
+        update_project_details(current_project_content_index());
+    });
     project_type_filter_ = new QComboBox(this);
     project_type_filter_->setObjectName(QStringLiteral("ProjectTypeFilter"));
     project_type_filter_->setAccessibleName(QStringLiteral("Filter project by type"));
@@ -988,15 +1012,13 @@ void EditorWindow::build_interface()
     project_folder_tree_->setAccessibleName(QStringLiteral("Project folder tree"));
     project_folder_tree_->setModel(project_folder_filter_);
     project_folder_tree_->setHeaderHidden(true);
+    project_folder_tree_->setDragEnabled(true);
     project_folder_tree_->setAcceptDrops(true);
     project_folder_tree_->setDropIndicatorShown(true);
-    project_folder_tree_->setDragDropMode(QAbstractItemView::DropOnly);
+    project_folder_tree_->setDragDropMode(QAbstractItemView::DragDrop);
     project_folder_tree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     project_folder_tree_->setUniformRowHeights(true);
-    for (int column = 1; column < static_cast<int>(ProjectColumn::count); ++column)
-    {
-        project_folder_tree_->setColumnHidden(column, true);
-    }
+    project_folder_tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     connect(project_folder_tree_->selectionModel(), &QItemSelectionModel::currentChanged,
         this, [this](const QModelIndex& current) { update_project_browser_folder(current); });
 
@@ -1010,8 +1032,18 @@ void EditorWindow::build_interface()
     project_explorer_->setDragDropMode(QAbstractItemView::DragDrop);
     project_explorer_->setDefaultDropAction(Qt::CopyAction);
     project_explorer_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    project_explorer_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    project_explorer_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     project_explorer_->setUniformRowHeights(true);
     project_explorer_->setAlternatingRowColors(true);
+    project_explorer_->setRootIsDecorated(false);
+    project_explorer_->setItemsExpandable(false);
+    project_explorer_->setExpandsOnDoubleClick(false);
+    project_explorer_->setAllColumnsShowFocus(true);
+    project_explorer_->header()->setSectionResizeMode(
+        static_cast<int>(ProjectColumn::name), QHeaderView::Stretch);
+    project_explorer_->header()->setSectionResizeMode(
+        static_cast<int>(ProjectColumn::kind_type), QHeaderView::ResizeToContents);
     project_explorer_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(project_explorer_, &QWidget::customContextMenuRequested,
         this, &EditorWindow::show_project_browser_context_menu);
@@ -1047,6 +1079,7 @@ void EditorWindow::build_interface()
     project_thumbnail_view_->setIconSize(QSize{72, 72});
     project_thumbnail_view_->setGridSize(QSize{132, 112});
     project_thumbnail_view_->setWordWrap(true);
+    project_thumbnail_view_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     project_thumbnail_view_->setDragEnabled(true);
     project_thumbnail_view_->setAcceptDrops(true);
     project_thumbnail_view_->setDragDropMode(QAbstractItemView::DragDrop);
@@ -1071,6 +1104,77 @@ void EditorWindow::build_interface()
             project_folder_filter_->mapToSource(destination.siblingAtColumn(0)));
     });
 
+    auto* project_favorites = new ProjectDropListView(this);
+    project_favorites_ = project_favorites;
+    project_favorites_->setObjectName(QStringLiteral("ProjectFavoritesView"));
+    project_favorites_->setAccessibleName(QStringLiteral("Project favorites and saved searches"));
+    project_favorites_model_ = new QStandardItemModel(project_favorites_);
+    project_favorites_->setModel(project_favorites_model_);
+    project_favorites_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    project_favorites_->setSelectionMode(QAbstractItemView::SingleSelection);
+    project_favorites_->setDragDropMode(QAbstractItemView::DropOnly);
+    project_favorites_->setAcceptDrops(true);
+    project_favorites_->setMaximumHeight(110);
+    project_favorites_->setContextMenuPolicy(Qt::CustomContextMenu);
+    project_favorites->set_domain_drop_handler([this](const QMimeData* mime, const QModelIndex&) {
+        if (mime == nullptr
+            || !mime->hasFormat(QStringLiteral("application/x-dragonpixel-project-item"))
+            || !project_index_.candidate)
+        {
+            return false;
+        }
+        const auto payload = QJsonDocument::fromJson(mime->data(
+            QStringLiteral("application/x-dragonpixel-project-item"))).object();
+        const auto items = payload.value(QStringLiteral("items")).toArray();
+        if (payload.value(QStringLiteral("format")).toString() != QStringLiteral("dpe.drag")
+            || payload.value(QStringLiteral("formatVersion")).toInt() != 1
+            || payload.value(QStringLiteral("projectId")).toString()
+                != project_index_.candidate->project_id
+            || payload.value(QStringLiteral("sourceRevision")).toInteger()
+                != static_cast<qint64>(project_model_->drag_revision())
+            || items.size() != 1 || !items.at(0).isObject()
+            || items.at(0).toObject().value(QStringLiteral("kind")).toString()
+                != QStringLiteral("folder"))
+        {
+            return false;
+        }
+        const auto absolute = items.at(0).toObject().value(QStringLiteral("path")).toString();
+        auto logical = QDir::fromNativeSeparators(QDir{project_root_}.relativeFilePath(absolute));
+        if (logical.startsWith(QStringLiteral("../")) || logical == QStringLiteral(".."))
+        {
+            return false;
+        }
+        const auto source = find_project_source(EditorRoles::project_logical_path, logical);
+        if (!source.isValid() || ProjectModel::item_kind(source) != ProjectItemKind::folder)
+        {
+            return false;
+        }
+        add_project_favorite(QStringLiteral("folder"), logical);
+        return true;
+    });
+    connect(project_favorites_, &QListView::activated,
+        this, &EditorWindow::activate_project_favorite);
+    connect(project_favorites_, &QListView::doubleClicked,
+        this, &EditorWindow::activate_project_favorite);
+    connect(project_favorites_, &QWidget::customContextMenuRequested,
+        this, [this](const QPoint& point) {
+            const auto index = project_favorites_->indexAt(point);
+            if (!index.isValid()
+                || !index.data(project_favorite_removable_role).toBool()) return;
+            QMenu menu{project_favorites_};
+            auto* remove = menu.addAction(QStringLiteral("Remove Favorite"));
+            if (menu.exec(project_favorites_->viewport()->mapToGlobal(point)) != remove) return;
+            const auto kind = index.data(project_favorite_kind_role).toString();
+            const auto value = index.data(project_favorite_value_role).toString();
+            const auto token = QStringLiteral("%1|%2")
+                .arg(kind == QStringLiteral("folder") ? QStringLiteral("F") : QStringLiteral("S"), value);
+            QSettings settings{editor_settings_path(), QSettings::IniFormat};
+            auto favorites = settings.value(QStringLiteral("projectView/favorites")).toStringList();
+            favorites.removeAll(token);
+            settings.setValue(QStringLiteral("projectView/favorites"), favorites);
+            rebuild_project_favorites();
+        });
+
     project_content_stack_ = new QStackedWidget(this);
     project_content_stack_->setObjectName(QStringLiteral("ProjectContentStack"));
     project_content_stack_->addWidget(project_explorer_);
@@ -1079,55 +1183,296 @@ void EditorWindow::build_interface()
     project_panel->setObjectName(QStringLiteral("ProjectExplorerPanel"));
     auto* project_layout = new QVBoxLayout(project_panel);
     project_layout->setContentsMargins(4, 4, 4, 4);
-    project_layout->addWidget(project_search_);
+    project_layout->setSpacing(4);
+    auto* project_toolbar_row = new QHBoxLayout;
+    project_toolbar_row->setSpacing(4);
+    auto* project_create = new QToolButton(project_panel);
+    project_create->setObjectName(QStringLiteral("ProjectCreateMenuButton"));
+    project_create->setText(QStringLiteral("Create"));
+    project_create->setAccessibleName(QStringLiteral("Create a project item"));
+    project_create->setPopupMode(QToolButton::InstantPopup);
+    auto* project_create_menu = new QMenu(project_create);
+    project_create_menu->setObjectName(QStringLiteral("ProjectCreateMenu"));
+    auto* project_create_folder = project_create_menu->addAction(QStringLiteral("Folder..."));
+    project_create_folder->setObjectName(QStringLiteral("ProjectToolbarCreateFolderAction"));
+    connect(project_create_folder, &QAction::triggered, this, &EditorWindow::create_project_folder);
+    auto* project_create_scene = project_create_menu->addAction(QStringLiteral("Scene..."));
+    project_create_scene->setObjectName(QStringLiteral("ProjectToolbarCreateSceneAction"));
+    connect(project_create_scene, &QAction::triggered, this, &EditorWindow::create_clean_scene_dialog);
+    project_create_menu->addSeparator();
+    auto* project_create_tileset = project_create_menu->addAction(
+        QStringLiteral("TileSet from Image..."));
+    project_create_tileset->setObjectName(QStringLiteral("ProjectToolbarCreateTileSetAction"));
+    connect(project_create_tileset, &QAction::triggered,
+        this, &EditorWindow::create_tile_set_from_image);
+    auto* project_create_tilemap = project_create_menu->addAction(
+        QStringLiteral("Tilemap from Selected TileSet..."));
+    project_create_tilemap->setObjectName(QStringLiteral("ProjectToolbarCreateTilemapAction"));
+    connect(project_create_tilemap, &QAction::triggered,
+        this, &EditorWindow::create_tilemap_from_selected_tileset);
+    project_create->setMenu(project_create_menu);
+    project_toolbar_row->addWidget(project_create);
+    project_search_->setMinimumWidth(220);
+    project_toolbar_row->addWidget(project_search_, 1);
+    project_type_filter_->setMaximumWidth(180);
+    project_status_filter_->setMaximumWidth(150);
+    project_toolbar_row->addWidget(project_type_filter_);
+    project_toolbar_row->addWidget(project_status_filter_);
+    auto* project_save_search = new QToolButton(project_panel);
+    project_save_search->setObjectName(QStringLiteral("ProjectSaveSearchButton"));
+    project_save_search->setText(QStringLiteral("Save"));
+    project_save_search->setAutoRaise(true);
+    project_save_search->setToolTip(QStringLiteral("Save the current search to Favorites"));
+    project_save_search->setAccessibleName(QStringLiteral("Save current project search"));
+    connect(project_save_search, &QToolButton::clicked, this, &EditorWindow::save_project_search);
+    project_toolbar_row->addWidget(project_save_search);
+    auto* project_layout_menu_button = new QToolButton(project_panel);
+    project_layout_menu_button->setObjectName(QStringLiteral("ProjectLayoutMenuButton"));
+    project_layout_menu_button->setText(QStringLiteral("Layout"));
+    project_layout_menu_button->setAccessibleName(QStringLiteral("Choose Project Window layout"));
+    project_layout_menu_button->setPopupMode(QToolButton::InstantPopup);
+    auto* project_layout_menu = new QMenu(project_layout_menu_button);
+    project_layout_menu->setObjectName(QStringLiteral("ProjectLayoutMenu"));
+    project_one_column_action_ = project_layout_menu->addAction(QStringLiteral("One Column"));
+    project_one_column_action_->setObjectName(QStringLiteral("ProjectOneColumnAction"));
+    project_one_column_action_->setCheckable(true);
+    project_two_column_action_ = project_layout_menu->addAction(QStringLiteral("Two Columns"));
+    project_two_column_action_->setObjectName(QStringLiteral("ProjectTwoColumnAction"));
+    project_two_column_action_->setCheckable(true);
+    connect(project_one_column_action_, &QAction::triggered,
+        this, [this] { set_project_two_column(false); });
+    connect(project_two_column_action_, &QAction::triggered,
+        this, [this] { set_project_two_column(true); });
+    project_layout_menu_button->setMenu(project_layout_menu);
+    project_toolbar_row->addWidget(project_layout_menu_button);
+    project_lock_ = new QToolButton(project_panel);
+    project_lock_->setObjectName(QStringLiteral("ProjectLockButton"));
+    project_lock_->setText(QStringLiteral("Lock"));
+    project_lock_->setCheckable(true);
+    project_lock_->setAutoRaise(true);
+    project_lock_->setToolTip(QStringLiteral("Freeze externally driven Project Window changes"));
+    project_lock_->setAccessibleName(QStringLiteral("Lock Project Window"));
+    connect(project_lock_, &QToolButton::toggled, this, [this](bool locked) {
+        project_browser_locked_ = locked;
+        QSettings settings{editor_settings_path(), QSettings::IniFormat};
+        settings.setValue(QStringLiteral("projectView/locked"), locked);
+    });
+    project_toolbar_row->addWidget(project_lock_);
     auto* breadcrumb_row = new QHBoxLayout;
+    breadcrumb_row->setSpacing(2);
+    project_back_ = new QToolButton(project_panel);
+    project_back_->setObjectName(QStringLiteral("ProjectNavigateBack"));
+    project_back_->setAccessibleName(QStringLiteral("Back to previous project folder"));
+    project_back_->setToolTip(QStringLiteral("Back"));
+    project_back_->setArrowType(Qt::LeftArrow);
+    project_back_->setAutoRaise(true);
+    connect(project_back_, &QToolButton::clicked, this, [this] {
+        if (project_folder_history_index_ <= 0) return;
+        --project_folder_history_index_;
+        project_navigation_replay_ = true;
+        navigate_project_browser_to(
+            project_folder_history_.at(project_folder_history_index_), false);
+        project_navigation_replay_ = false;
+        update_project_navigation_actions();
+    });
+    breadcrumb_row->addWidget(project_back_);
+    project_forward_ = new QToolButton(project_panel);
+    project_forward_->setObjectName(QStringLiteral("ProjectNavigateForward"));
+    project_forward_->setAccessibleName(QStringLiteral("Forward to next project folder"));
+    project_forward_->setToolTip(QStringLiteral("Forward"));
+    project_forward_->setArrowType(Qt::RightArrow);
+    project_forward_->setAutoRaise(true);
+    connect(project_forward_, &QToolButton::clicked, this, [this] {
+        if (project_folder_history_index_ < 0
+            || project_folder_history_index_ + 1 >= project_folder_history_.size()) return;
+        ++project_folder_history_index_;
+        project_navigation_replay_ = true;
+        navigate_project_browser_to(
+            project_folder_history_.at(project_folder_history_index_), false);
+        project_navigation_replay_ = false;
+        update_project_navigation_actions();
+    });
+    breadcrumb_row->addWidget(project_forward_);
+    project_up_ = new QToolButton(project_panel);
+    project_up_->setObjectName(QStringLiteral("ProjectNavigateUp"));
+    project_up_->setAccessibleName(QStringLiteral("Open parent project folder"));
+    project_up_->setToolTip(QStringLiteral("Up one folder"));
+    project_up_->setArrowType(Qt::UpArrow);
+    project_up_->setAutoRaise(true);
+    connect(project_up_, &QToolButton::clicked, this, [this] {
+        auto parent = QFileInfo{current_project_folder_relative()}.path();
+        if (parent == QStringLiteral(".")) parent.clear();
+        if (!parent.isEmpty()) navigate_project_browser_to(parent);
+    });
+    breadcrumb_row->addWidget(project_up_);
     project_breadcrumb_ = new QLabel(QStringLiteral("Project"), project_panel);
     project_breadcrumb_->setObjectName(QStringLiteral("ProjectBreadcrumb"));
     project_breadcrumb_->setAccessibleName(QStringLiteral("Current project folder breadcrumb"));
-    breadcrumb_row->addWidget(project_breadcrumb_, 1);
-    auto* list_mode = new QToolButton(project_panel);
-    list_mode->setObjectName(QStringLiteral("ProjectListMode"));
-    list_mode->setText(QStringLiteral("List"));
-    list_mode->setAccessibleName(QStringLiteral("Show project assets as a list"));
-    auto* thumbnail_mode = new QToolButton(project_panel);
-    thumbnail_mode->setObjectName(QStringLiteral("ProjectThumbnailMode"));
-    thumbnail_mode->setText(QStringLiteral("Tiles"));
-    thumbnail_mode->setAccessibleName(QStringLiteral("Show project assets as thumbnails"));
-    connect(list_mode, &QToolButton::clicked, this, [this] { project_content_stack_->setCurrentIndex(0); });
-    connect(thumbnail_mode, &QToolButton::clicked, this, [this] { project_content_stack_->setCurrentIndex(1); });
-    breadcrumb_row->addWidget(list_mode);
-    breadcrumb_row->addWidget(thumbnail_mode);
+    breadcrumb_row->addWidget(project_breadcrumb_);
+    project_breadcrumb_segments_ = new QWidget(project_panel);
+    project_breadcrumb_segments_->setObjectName(QStringLiteral("ProjectBreadcrumbSegments"));
+    project_breadcrumb_segments_->setAccessibleName(QStringLiteral("Project folder path"));
+    auto* project_breadcrumb_segments_layout = new QHBoxLayout(project_breadcrumb_segments_);
+    project_breadcrumb_segments_layout->setContentsMargins(0, 0, 0, 0);
+    project_breadcrumb_segments_layout->setSpacing(1);
+    breadcrumb_row->addWidget(project_breadcrumb_segments_, 1);
+    project_layout->addLayout(project_toolbar_row);
     project_layout->addLayout(breadcrumb_row);
-    auto* project_filter_row = new QHBoxLayout;
-    project_filter_row->addWidget(project_type_filter_);
-    project_filter_row->addWidget(project_status_filter_);
-    auto* project_refresh = new QPushButton(QStringLiteral("Refresh"), project_panel);
-    project_refresh->setObjectName(QStringLiteral("RefreshProjectAction"));
-    project_refresh->setAccessibleName(QStringLiteral("Refresh Project Explorer"));
-    connect(project_refresh, &QPushButton::clicked, this, &EditorWindow::rebuild_assets);
-    project_filter_row->addWidget(project_refresh);
-    project_layout->addLayout(project_filter_row);
-    auto* project_splitter = new QSplitter(Qt::Horizontal, project_panel);
-    project_splitter->setObjectName(QStringLiteral("ProjectBrowserSplitter"));
-    project_splitter->setAccessibleName(QStringLiteral("Project folders and asset content"));
-    project_splitter->addWidget(project_folder_tree_);
-    project_splitter->addWidget(project_content_stack_);
-    project_splitter->setStretchFactor(0, 0);
-    project_splitter->setStretchFactor(1, 1);
-    project_splitter->setSizes({190, 520});
-    project_layout->addWidget(project_splitter, 1);
+    project_splitter_ = new QSplitter(Qt::Horizontal, project_panel);
+    project_splitter_->setObjectName(QStringLiteral("ProjectBrowserSplitter"));
+    project_splitter_->setAccessibleName(QStringLiteral("Project folders and asset content"));
+    auto* project_navigation_panel = new QWidget(project_splitter_);
+    project_navigation_panel->setObjectName(QStringLiteral("ProjectNavigationPanel"));
+    auto* project_navigation_layout = new QVBoxLayout(project_navigation_panel);
+    project_navigation_layout->setContentsMargins(0, 0, 0, 0);
+    project_navigation_layout->setSpacing(2);
+    auto* favorites_label = new QLabel(QStringLiteral("Favorites"), project_navigation_panel);
+    favorites_label->setObjectName(QStringLiteral("ProjectFavoritesLabel"));
+    favorites_label->setAccessibleName(QStringLiteral("Favorites"));
+    project_navigation_layout->addWidget(favorites_label);
+    project_navigation_layout->addWidget(project_favorites_);
+    auto* folders_label = new QLabel(QStringLiteral("Project"), project_navigation_panel);
+    folders_label->setObjectName(QStringLiteral("ProjectFoldersLabel"));
+    folders_label->setAccessibleName(QStringLiteral("Project folders"));
+    project_navigation_layout->addWidget(folders_label);
+    project_navigation_layout->addWidget(project_folder_tree_, 1);
+    project_splitter_->addWidget(project_navigation_panel);
+    project_splitter_->addWidget(project_content_stack_);
+    project_splitter_->setStretchFactor(0, 0);
+    project_splitter_->setStretchFactor(1, 1);
+    project_splitter_->setSizes({190, 520});
+    QSettings project_view_settings{editor_settings_path(), QSettings::IniFormat};
+    const auto project_splitter_state = project_view_settings.value(
+        QStringLiteral("projectView/splitterState")).toByteArray();
+    if (!project_splitter_state.isEmpty())
+        project_splitter_->restoreState(project_splitter_state);
+    connect(project_splitter_, &QSplitter::splitterMoved, this, [this] {
+        QSettings settings{editor_settings_path(), QSettings::IniFormat};
+        settings.setValue(
+            QStringLiteral("projectView/splitterState"), project_splitter_->saveState());
+    });
+    project_layout->addWidget(project_splitter_, 1);
+    rebuild_project_favorites();
+    project_bottom_bar_ = new QWidget(project_panel);
+    project_bottom_bar_->setObjectName(QStringLiteral("ProjectBottomBar"));
+    auto* project_bottom_layout = new QHBoxLayout(project_bottom_bar_);
+    project_bottom_layout->setContentsMargins(0, 0, 0, 0);
+    project_bottom_layout->setSpacing(6);
     project_details_ = new QLabel(QStringLiteral("Select an asset to see details."), project_panel);
     project_details_->setObjectName(QStringLiteral("ProjectDetailsPane"));
     project_details_->setAccessibleName(QStringLiteral("Selected project asset details"));
     project_details_->setWordWrap(true);
     project_details_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-    project_details_->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
-    project_details_->setMinimumHeight(48);
-    project_layout->addWidget(project_details_);
+    project_details_->setMinimumHeight(36);
+    project_details_->setMaximumHeight(72);
+    project_bottom_layout->addWidget(project_details_, 1);
+    auto* small_icons = new QLabel(QStringLiteral("List"), project_bottom_bar_);
+    small_icons->setAccessibleName(QStringLiteral("List mode at minimum icon size"));
+    project_bottom_layout->addWidget(small_icons);
+    project_icon_size_ = new QSlider(Qt::Horizontal, project_bottom_bar_);
+    project_icon_size_->setObjectName(QStringLiteral("ProjectIconSizeSlider"));
+    project_icon_size_->setAccessibleName(QStringLiteral("Project asset icon size"));
+    project_icon_size_->setToolTip(QStringLiteral(
+        "Drag left for list mode; drag right to resize asset icons"));
+    project_icon_size_->setRange(0, 96);
+    project_icon_size_->setSingleStep(8);
+    project_icon_size_->setPageStep(16);
+    project_icon_size_->setMinimumWidth(150);
+    connect(project_icon_size_, &QSlider::valueChanged,
+        this, &EditorWindow::set_project_icon_size);
+    project_bottom_layout->addWidget(project_icon_size_);
+    auto* large_icons = new QLabel(QStringLiteral("Icons"), project_bottom_bar_);
+    large_icons->setAccessibleName(QStringLiteral("Large icon mode"));
+    project_bottom_layout->addWidget(large_icons);
+    project_layout->addWidget(project_bottom_bar_);
+    auto icon_size = project_view_settings.value(QStringLiteral("projectView/iconSize"), -1).toInt();
+    if (icon_size < 0)
+    {
+        icon_size = project_view_settings.value(
+            QStringLiteral("projectView/contentMode"), 1).toInt() == 0 ? 0 : 72;
+    }
+    project_icon_size_->setValue(std::clamp(icon_size, 0, 96));
+    set_project_icon_size(project_icon_size_->value());
+    set_project_two_column(project_view_settings.value(
+        QStringLiteral("projectView/layoutColumns"), 2).toInt() != 1);
+    project_lock_->setChecked(project_view_settings.value(
+        QStringLiteral("projectView/locked"), false).toBool());
     connect(project_explorer_->selectionModel(), &QItemSelectionModel::currentChanged,
-        this, [this](const QModelIndex& current) { update_project_details(current); });
+        this, [this](const QModelIndex& current) {
+            QSignalBlocker blocker{project_thumbnail_view_->selectionModel()};
+            project_thumbnail_view_->setCurrentIndex(current);
+            update_project_details(current);
+        });
     connect(project_thumbnail_view_->selectionModel(), &QItemSelectionModel::currentChanged,
-        this, [this](const QModelIndex& current) { update_project_details(current); });
+        this, [this](const QModelIndex& current) {
+            QSignalBlocker blocker{project_explorer_->selectionModel()};
+            project_explorer_->setCurrentIndex(current);
+            update_project_details(current);
+        });
+    const auto add_project_shortcut = [project_panel](
+                                          const QString& object_name,
+                                          const QKeySequence& shortcut,
+                                          auto handler) {
+        auto* action = new QAction(project_panel);
+        action->setObjectName(object_name);
+        action->setShortcut(shortcut);
+        action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        QObject::connect(action, &QAction::triggered, project_panel, std::move(handler));
+        project_panel->addAction(action);
+        return action;
+    };
+    add_project_shortcut(QStringLiteral("ProjectFocusSearchShortcut"),
+        QKeySequence{QKeySequence::Find}, [this] {
+            project_search_->setFocus(Qt::ShortcutFocusReason);
+            project_search_->selectAll();
+        });
+    add_project_shortcut(QStringLiteral("ProjectFrameSelectedShortcut"),
+        QKeySequence{Qt::Key_F}, [this] {
+            if (!project_search_->hasFocus()) frame_project_selection();
+        });
+    add_project_shortcut(QStringLiteral("ProjectSelectAllShortcut"),
+        QKeySequence{QKeySequence::SelectAll}, [this] {
+            if (project_search_->hasFocus())
+            {
+                project_search_->selectAll();
+                return;
+            }
+            auto* active = project_content_stack_->currentIndex() == 0
+                ? static_cast<QAbstractItemView*>(project_explorer_)
+                : static_cast<QAbstractItemView*>(project_thumbnail_view_);
+            active->selectAll();
+        });
+    add_project_shortcut(QStringLiteral("ProjectDuplicateShortcut"),
+#ifdef Q_OS_MAC
+        QKeySequence{Qt::META | Qt::Key_D}, [this] {
+#else
+        QKeySequence{Qt::CTRL | Qt::Key_D}, [this] {
+#endif
+            if (!project_search_->hasFocus()) duplicate_selected_project_asset();
+        });
+    add_project_shortcut(QStringLiteral("ProjectDeleteShortcut"),
+        QKeySequence{QKeySequence::Delete}, [this] {
+            if (!project_search_->hasFocus()) trash_selected_project_asset(true);
+        });
+    add_project_shortcut(QStringLiteral("ProjectDeleteWithoutDialogShortcut"),
+        QKeySequence{QStringLiteral("Shift+Delete")}, [this] {
+            if (!project_search_->hasFocus()) trash_selected_project_asset(false);
+        });
+    add_project_shortcut(QStringLiteral("ProjectRenameShortcut"),
+        QKeySequence{Qt::Key_F2}, [this] {
+            if (!project_search_->hasFocus()) rename_selected_project_asset();
+        });
+    add_project_shortcut(QStringLiteral("ProjectActivateShortcut"),
+        QKeySequence{Qt::Key_Return}, [this] {
+            if (!project_search_->hasFocus()) activate_project_item(current_project_content_index());
+        });
+    add_project_shortcut(QStringLiteral("ProjectParentShortcut"),
+        QKeySequence{Qt::Key_Backspace}, [this] {
+            if (project_search_->hasFocus()) return;
+            auto parent = QFileInfo{current_project_folder_relative()}.path();
+            if (parent == QStringLiteral(".")) parent.clear();
+            if (!parent.isEmpty()) navigate_project_browser_to(parent);
+        });
 
     console_model_ = new ConsoleModel(this);
     console_filter_ = new RecursiveFilterProxyModel(this);
@@ -1401,7 +1746,7 @@ void EditorWindow::build_interface()
     scene_view_dock_ = make_dock(QStringLiteral("Scene View"), QStringLiteral("SceneView"), viewport_, Qt::RightDockWidgetArea);
     game_view_dock_ = make_dock(QStringLiteral("Game"), QStringLiteral("GameView"), game_panel, Qt::RightDockWidgetArea);
     hierarchy_dock_ = make_dock(QStringLiteral("Hierarchy"), QStringLiteral("Hierarchy"), hierarchy_panel, Qt::LeftDockWidgetArea);
-    assets_dock_ = make_dock(QStringLiteral("Project Explorer"), QStringLiteral("ProjectExplorer"), project_panel, Qt::LeftDockWidgetArea);
+    assets_dock_ = make_dock(QStringLiteral("Project"), QStringLiteral("ProjectExplorer"), project_panel, Qt::LeftDockWidgetArea);
     inspector_dock_ = make_dock(QStringLiteral("Inspector"), QStringLiteral("Inspector"), inspector_panel_, Qt::RightDockWidgetArea);
     tile_palette_dock_ = make_dock(QStringLiteral("Tile Palette"), QStringLiteral("TilePalette"), tile_palette_, Qt::BottomDockWidgetArea);
     console_dock_ = make_dock(QStringLiteral("Console"), QStringLiteral("Console"), console_panel, Qt::BottomDockWidgetArea);
@@ -1648,29 +1993,14 @@ void EditorWindow::build_interface()
     assets_menu->setObjectName(QStringLiteral("AssetsMenu"));
     auto* import_assets = assets_menu->addAction(QStringLiteral("Import..."));
     import_assets->setObjectName(QStringLiteral("ImportAssetsAction"));
-    connect(import_assets, &QAction::triggered, this, [this] {
-        import_asset_paths(QFileDialog::getOpenFileNames(this, QStringLiteral("Import Assets"),
-            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
-            QStringLiteral("All Files (*.*)")));
-    });
+    connect(import_assets, &QAction::triggered, this, &EditorWindow::choose_asset_import);
     auto* create_asset_folder = assets_menu->addAction(QStringLiteral("Create Folder..."));
     create_asset_folder->setObjectName(QStringLiteral("CreateAssetFolderAction"));
-    connect(create_asset_folder, &QAction::triggered, this, [this] {
-        if (project_manifest_path_.isEmpty()) return;
-        bool accepted = false;
-        const auto name = QInputDialog::getText(this, QStringLiteral("Create Folder"),
-            QStringLiteral("Folder name"), QLineEdit::Normal,
-            QStringLiteral("New Folder"), &accepted).trimmed();
-        if (!accepted || name.isEmpty()) return;
-        const auto result = asset_service_.create_folder(project_manifest_path_,
-            QDir::fromNativeSeparators(QDir{current_project_folder_relative()}.filePath(name)));
-        if (!result.succeeded)
-            QMessageBox::warning(this, QStringLiteral("Create Folder"),
-                result.diagnostics.isEmpty() ? QStringLiteral("Folder creation failed.")
-                                             : result.diagnostics.constFirst().message);
-        else rebuild_assets();
-    });
-    assets_menu->addAction(QStringLiteral("Refresh"), this, &EditorWindow::rebuild_assets);
+    connect(create_asset_folder, &QAction::triggered,
+        this, &EditorWindow::create_project_folder);
+    auto* refresh_assets = assets_menu->addAction(
+        QStringLiteral("Refresh"), this, &EditorWindow::rebuild_assets);
+    refresh_assets->setObjectName(QStringLiteral("RefreshAssetsAction"));
     assets_menu->addSeparator();
     auto* create_tile_set = assets_menu->addAction(QStringLiteral("Create TileSet from Image..."));
     create_tile_set->setObjectName(QStringLiteral("CreateTileSetFromImageAction"));
@@ -1792,7 +2122,9 @@ void EditorWindow::build_interface()
     };
     setTabOrder(hierarchy_search_, hierarchy_);
     setTabOrder(hierarchy_, project_search_);
-    setTabOrder(project_search_, project_explorer_);
+    setTabOrder(project_search_, project_favorites_);
+    setTabOrder(project_favorites_, project_folder_tree_);
+    setTabOrder(project_folder_tree_, project_explorer_);
     setTabOrder(project_explorer_, inspector_);
     setTabOrder(inspector_, console_search_);
     setTabOrder(console_search_, console_);
@@ -3282,6 +3614,114 @@ void EditorWindow::rebuild_scene_summary()
     }
 }
 
+QModelIndex EditorWindow::find_project_source(int role, const QString& value) const
+{
+    if (project_model_ == nullptr || value.trimmed().isEmpty()) return {};
+    std::function<QModelIndex(const QModelIndex&)> visit;
+    visit = [this, role, &value, &visit](const QModelIndex& parent) -> QModelIndex {
+        for (int row = 0; row < project_model_->rowCount(parent); ++row)
+        {
+            const auto index = project_model_->index(row, 0, parent);
+            if (index.data(role).toString().compare(value, Qt::CaseInsensitive) == 0)
+                return index;
+            if (const auto nested = visit(index); nested.isValid()) return nested;
+        }
+        return {};
+    };
+    return visit({});
+}
+
+void EditorWindow::navigate_project_browser_to(const QString& requested_path, bool record_history)
+{
+    if (project_folder_filter_ == nullptr || project_model_ == nullptr) return;
+    auto logical = QDir::fromNativeSeparators(QDir::cleanPath(requested_path));
+    if (logical == QStringLiteral(".")) logical.clear();
+    auto source = logical.isEmpty()
+        ? QModelIndex{} : find_project_source(EditorRoles::project_logical_path, logical);
+    while (!source.isValid() && logical.contains(QLatin1Char('/')))
+    {
+        logical = QFileInfo{logical}.path();
+        if (logical == QStringLiteral(".")) logical.clear();
+        source = logical.isEmpty()
+            ? QModelIndex{} : find_project_source(EditorRoles::project_logical_path, logical);
+    }
+    if (!source.isValid())
+    {
+        logical = QStringLiteral("Assets");
+        source = find_project_source(EditorRoles::project_logical_path, logical);
+    }
+    if (!source.isValid() || ProjectModel::item_kind(source) != ProjectItemKind::folder) return;
+    const auto proxy = project_folder_filter_->mapFromSource(source.siblingAtColumn(0));
+    if (!proxy.isValid()) return;
+
+    const auto prior_replay = project_navigation_replay_;
+    if (!record_history) project_navigation_replay_ = true;
+    project_folder_tree_->setCurrentIndex(proxy);
+    update_project_browser_folder(proxy);
+    project_folder_tree_->scrollTo(proxy);
+    project_navigation_replay_ = prior_replay;
+    update_project_navigation_actions();
+}
+
+void EditorWindow::rebuild_project_breadcrumb()
+{
+    if (project_breadcrumb_segments_ == nullptr) return;
+    auto* layout = qobject_cast<QHBoxLayout*>(project_breadcrumb_segments_->layout());
+    if (layout == nullptr) return;
+    while (auto* item = layout->takeAt(0))
+    {
+        if (auto* widget = item->widget())
+        {
+            widget->setObjectName({});
+            widget->hide();
+            widget->deleteLater();
+        }
+        delete item;
+    }
+
+    const auto logical = project_index_.candidate
+        ? current_project_folder_relative() : QString{};
+    const auto segments = logical.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    auto prefix = QString{};
+    for (qsizetype index = 0; index < segments.size(); ++index)
+    {
+        if (index > 0)
+        {
+            auto* separator = new QLabel(QStringLiteral("›"), project_breadcrumb_segments_);
+            separator->setAccessibleName(QStringLiteral("Folder separator"));
+            layout->addWidget(separator);
+        }
+        prefix = prefix.isEmpty()
+            ? segments.at(index)
+            : QStringLiteral("%1/%2").arg(prefix, segments.at(index));
+        auto* segment = new QToolButton(project_breadcrumb_segments_);
+        segment->setObjectName(QStringLiteral("ProjectBreadcrumbSegment%1").arg(index));
+        segment->setText(segments.at(index));
+        segment->setAutoRaise(true);
+        segment->setAccessibleName(QStringLiteral("Open Project folder %1").arg(prefix));
+        segment->setToolTip(QStringLiteral("Project / %1").arg(prefix));
+        const auto destination = prefix;
+        connect(segment, &QToolButton::clicked, this,
+            [this, destination] { navigate_project_browser_to(destination); });
+        layout->addWidget(segment);
+    }
+    layout->addStretch(1);
+    project_breadcrumb_->setToolTip(logical.isEmpty()
+        ? QStringLiteral("Project")
+        : QStringLiteral("Project / %1").arg(logical));
+}
+
+void EditorWindow::update_project_navigation_actions()
+{
+    if (project_back_ != nullptr)
+        project_back_->setEnabled(project_folder_history_index_ > 0);
+    if (project_forward_ != nullptr)
+        project_forward_->setEnabled(project_folder_history_index_ >= 0
+            && project_folder_history_index_ + 1 < project_folder_history_.size());
+    if (project_up_ != nullptr)
+        project_up_->setEnabled(current_project_folder_relative().contains(QLatin1Char('/')));
+}
+
 void EditorWindow::update_project_browser_folder(const QModelIndex& folder_index)
 {
     if (!folder_index.isValid() || project_folder_filter_ == nullptr)
@@ -3299,8 +3739,29 @@ void EditorWindow::update_project_browser_folder(const QModelIndex& folder_index
     project_thumbnail_view_->setRootIndex(content_root);
     auto logical = source.data(EditorRoles::project_logical_path).toString();
     if (logical.isEmpty()) logical = QStringLiteral("Project");
-    project_breadcrumb_->setText(QStringLiteral("Project / %1")
-        .arg(logical == QStringLiteral("Project") ? QString{} : logical));
+    if (!project_navigation_replay_)
+    {
+        if (project_folder_history_index_ + 1 < project_folder_history_.size())
+            project_folder_history_.erase(
+                project_folder_history_.begin() + project_folder_history_index_ + 1,
+                project_folder_history_.end());
+        if (project_folder_history_.isEmpty()
+            || project_folder_history_.constLast().compare(logical, Qt::CaseInsensitive) != 0)
+            project_folder_history_.push_back(logical);
+        project_folder_history_index_ = project_folder_history_.size() - 1;
+    }
+    else if (project_folder_history_index_ >= 0
+        && project_folder_history_index_ < project_folder_history_.size())
+    {
+        project_folder_history_[project_folder_history_index_] = logical;
+    }
+    else
+    {
+        project_folder_history_ = {logical};
+        project_folder_history_index_ = 0;
+    }
+    rebuild_project_breadcrumb();
+    update_project_navigation_actions();
 }
 
 void EditorWindow::update_project_details(const QModelIndex& proxy_index)
@@ -3311,12 +3772,17 @@ void EditorWindow::update_project_details(const QModelIndex& proxy_index)
         return;
     }
     const auto index = proxy_index.siblingAtColumn(0);
+    const auto path = index.data(EditorRoles::project_path).toString();
     QStringList lines;
-    lines.push_back(index.data().toString());
+    lines.push_back(!project_search_->text().trimmed().isEmpty() && !path.isEmpty()
+        ? QStringLiteral("%1 — %2").arg(
+              index.data().toString(), QDir::toNativeSeparators(path))
+        : index.data().toString());
+    auto status = index.data(EditorRoles::project_status_filter).toString();
+    if (!status.isEmpty()) status[0] = status.at(0).toUpper();
     lines.push_back(QStringLiteral("Kind: %1 | Status: %2")
         .arg(proxy_index.siblingAtColumn(static_cast<int>(ProjectColumn::kind_type)).data().toString(),
-            proxy_index.siblingAtColumn(static_cast<int>(ProjectColumn::overall_status)).data().toString()));
-    const auto path = index.data(EditorRoles::project_path).toString();
+            status));
     if (!path.isEmpty())
     {
         lines.push_back(QStringLiteral("Path: %1").arg(QDir::toNativeSeparators(path)));
@@ -3416,6 +3882,302 @@ QString EditorWindow::current_project_folder_relative() const
     return QStringLiteral("Assets");
 }
 
+QModelIndex EditorWindow::current_project_content_index() const
+{
+    if (project_content_stack_ == nullptr) return {};
+    return project_content_stack_->currentIndex() == 0
+        ? project_explorer_->currentIndex()
+        : project_thumbnail_view_->currentIndex();
+}
+
+void EditorWindow::rebuild_project_favorites()
+{
+    if (project_favorites_model_ == nullptr) return;
+    project_favorites_model_->clear();
+    const auto append = [this](const QString& label, const QString& kind,
+                            const QString& value, bool removable) {
+        const auto source = kind == QStringLiteral("folder")
+            ? find_project_source(EditorRoles::project_logical_path, value)
+            : QModelIndex{};
+        if (kind == QStringLiteral("folder") && removable && !source.isValid()) return;
+        auto* item = new QStandardItem{label};
+        item->setEditable(false);
+        item->setData(kind, project_favorite_kind_role);
+        item->setData(value, project_favorite_value_role);
+        item->setData(removable, project_favorite_removable_role);
+        item->setToolTip(kind == QStringLiteral("folder")
+            ? QStringLiteral("Project / %1").arg(value)
+            : QStringLiteral("Search Project for %1").arg(value));
+        if (kind == QStringLiteral("folder"))
+        {
+            auto icon = source.data(Qt::DecorationRole).value<QIcon>();
+            if (icon.isNull()) icon = style()->standardIcon(QStyle::SP_DirIcon);
+            item->setIcon(icon);
+        }
+        else
+        {
+            item->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
+        }
+        project_favorites_model_->appendRow(item);
+    };
+
+    append(QStringLiteral("All Assets"), QStringLiteral("folder"),
+        QStringLiteral("Assets"), false);
+    append(QStringLiteral("Scenes"), QStringLiteral("search"),
+        QStringLiteral("t:scene"), false);
+    append(QStringLiteral("Prefabs"), QStringLiteral("search"),
+        QStringLiteral("t:prefab"), false);
+
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    const auto favorites = settings.value(QStringLiteral("projectView/favorites")).toStringList();
+    for (const auto& token : favorites)
+    {
+        if (token.size() < 3 || token.at(1) != QLatin1Char('|')) continue;
+        const auto kind = token.startsWith(QStringLiteral("F|"))
+            ? QStringLiteral("folder")
+            : token.startsWith(QStringLiteral("S|")) ? QStringLiteral("search") : QString{};
+        const auto value = token.sliced(2).trimmed();
+        if (kind.isEmpty() || value.isEmpty()) continue;
+        const auto label = kind == QStringLiteral("folder")
+            ? QFileInfo{value}.fileName()
+            : QStringLiteral("Search: %1").arg(value);
+        append(label.isEmpty() ? value : label, kind, value, true);
+    }
+}
+
+void EditorWindow::add_project_favorite(const QString& kind, const QString& value)
+{
+    const auto normalized_kind = kind.trimmed().toLower();
+    const auto normalized_value = value.trimmed();
+    if ((normalized_kind != QStringLiteral("folder")
+            && normalized_kind != QStringLiteral("search"))
+        || normalized_value.isEmpty())
+    {
+        return;
+    }
+    const auto token = QStringLiteral("%1|%2")
+        .arg(normalized_kind == QStringLiteral("folder")
+                ? QStringLiteral("F") : QStringLiteral("S"),
+            normalized_value);
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    auto favorites = settings.value(QStringLiteral("projectView/favorites")).toStringList();
+    if (!favorites.contains(token, Qt::CaseInsensitive))
+    {
+        favorites.push_back(token);
+        settings.setValue(QStringLiteral("projectView/favorites"), favorites);
+    }
+    rebuild_project_favorites();
+}
+
+void EditorWindow::activate_project_favorite(const QModelIndex& index)
+{
+    if (!index.isValid()) return;
+    const auto kind = index.data(project_favorite_kind_role).toString();
+    const auto value = index.data(project_favorite_value_role).toString();
+    if (kind == QStringLiteral("folder"))
+    {
+        project_search_->clear();
+        project_type_filter_->setCurrentIndex(0);
+        project_status_filter_->setCurrentIndex(0);
+        navigate_project_browser_to(value);
+        return;
+    }
+    if (kind == QStringLiteral("search"))
+    {
+        project_type_filter_->setCurrentIndex(0);
+        project_status_filter_->setCurrentIndex(0);
+        navigate_project_browser_to(QStringLiteral("Assets"));
+        project_search_->setText(value);
+        project_search_->setFocus(Qt::OtherFocusReason);
+    }
+}
+
+void EditorWindow::save_project_search()
+{
+    auto query = project_search_->text().simplified();
+    const auto type = project_type_filter_->currentData().toString();
+    const auto status = project_status_filter_->currentData().toString();
+    if (!type.isEmpty()) query = QStringLiteral("%1 t:%2").arg(query, type).trimmed();
+    if (!status.isEmpty()) query = QStringLiteral("%1 s:%2").arg(query, status).trimmed();
+    if (query.isEmpty())
+    {
+        statusBar()->showMessage(QStringLiteral("Enter a search or choose a filter before saving."), 4000);
+        return;
+    }
+    add_project_favorite(QStringLiteral("search"), query);
+    statusBar()->showMessage(QStringLiteral("Saved Project search to Favorites."), 4000);
+}
+
+void EditorWindow::set_project_two_column(bool enabled)
+{
+    if (project_content_stack_ == nullptr) return;
+    project_content_stack_->setVisible(enabled);
+    if (project_bottom_bar_ != nullptr) project_bottom_bar_->setVisible(enabled);
+    if (project_one_column_action_ != nullptr)
+    {
+        QSignalBlocker blocker{project_one_column_action_};
+        project_one_column_action_->setChecked(!enabled);
+    }
+    if (project_two_column_action_ != nullptr)
+    {
+        QSignalBlocker blocker{project_two_column_action_};
+        project_two_column_action_->setChecked(enabled);
+    }
+    if (enabled && project_splitter_ != nullptr)
+    {
+        const auto sizes = project_splitter_->sizes();
+        if (sizes.size() == 2 && sizes.at(1) == 0) project_splitter_->setSizes({190, 520});
+    }
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    settings.setValue(QStringLiteral("projectView/layoutColumns"), enabled ? 2 : 1);
+}
+
+void EditorWindow::set_project_icon_size(int size)
+{
+    if (project_content_stack_ == nullptr || project_thumbnail_view_ == nullptr) return;
+    size = std::clamp(size, 0, 96);
+    if (project_icon_size_ != nullptr && project_icon_size_->value() != size)
+    {
+        const QSignalBlocker blocker{project_icon_size_};
+        project_icon_size_->setValue(size);
+    }
+    const auto searching = project_search_ != nullptr
+        && !project_search_->text().trimmed().isEmpty();
+    project_content_stack_->setCurrentIndex(searching || size == 0 ? 0 : 1);
+    if (size > 0)
+    {
+        const auto icon_size = std::max(size, 16);
+        project_thumbnail_view_->setIconSize(QSize{icon_size, icon_size});
+        project_thumbnail_view_->setGridSize(QSize{
+            std::max(icon_size + 54, 96), std::max(icon_size + 42, 82)});
+    }
+    QSettings settings{editor_settings_path(), QSettings::IniFormat};
+    settings.setValue(QStringLiteral("projectView/iconSize"), size);
+    settings.setValue(QStringLiteral("projectView/contentMode"), size == 0 ? 0 : 1);
+}
+
+void EditorWindow::frame_project_selection()
+{
+    const auto proxy = current_project_content_index();
+    if (!proxy.isValid()) return;
+    const auto source = project_filter_->mapToSource(proxy.siblingAtColumn(0));
+    if (!source.isValid()) return;
+    const auto folder = ProjectModel::item_kind(source) == ProjectItemKind::folder
+        ? source : source.parent();
+    if (!folder.isValid()) return;
+    navigate_project_browser_to(
+        folder.data(EditorRoles::project_logical_path).toString());
+    if (ProjectModel::item_kind(source) == ProjectItemKind::folder) return;
+    const auto restored = project_filter_->mapFromSource(source.siblingAtColumn(0));
+    if (!restored.isValid()) return;
+    project_explorer_->setCurrentIndex(restored);
+    project_thumbnail_view_->setCurrentIndex(restored);
+    (project_content_stack_->currentIndex() == 0
+            ? static_cast<QAbstractItemView*>(project_explorer_)
+            : static_cast<QAbstractItemView*>(project_thumbnail_view_))
+        ->scrollTo(restored);
+}
+
+void EditorWindow::rename_selected_project_asset()
+{
+    const auto current = current_project_content_index();
+    const auto asset_id = ProjectModel::asset_id(current);
+    const auto path = ProjectModel::item_path(current);
+    if (asset_id.isEmpty()) return;
+    bool accepted = false;
+    auto suggested = QFileInfo{path}.completeBaseName();
+    if (suggested.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)
+        || suggested.endsWith(QStringLiteral(".jpg"), Qt::CaseInsensitive)
+        || suggested.endsWith(QStringLiteral(".jpeg"), Qt::CaseInsensitive))
+    {
+        suggested = QFileInfo{suggested}.completeBaseName();
+    }
+    const auto name = QInputDialog::getText(this, QStringLiteral("Rename Asset"),
+        QStringLiteral("New name"), QLineEdit::Normal, suggested, &accepted);
+    if (!accepted) return;
+    const auto result = asset_service_.rename_asset(project_manifest_path_, asset_id, name);
+    if (!result.succeeded)
+    {
+        QMessageBox::warning(this, QStringLiteral("Rename Asset"),
+            result.diagnostics.isEmpty() ? QStringLiteral("Rename failed.")
+                                         : result.diagnostics.constFirst().message);
+        return;
+    }
+    rebuild_assets();
+}
+
+void EditorWindow::duplicate_selected_project_asset()
+{
+    const auto asset_id = ProjectModel::asset_id(current_project_content_index());
+    if (asset_id.isEmpty()) return;
+    const auto result = asset_service_.duplicate_asset(
+        project_manifest_path_, asset_id, current_project_folder_relative());
+    if (!result.succeeded)
+    {
+        QMessageBox::warning(this, QStringLiteral("Duplicate Asset"),
+            result.diagnostics.isEmpty() ? QStringLiteral("Duplication failed.")
+                                         : result.diagnostics.constFirst().message);
+        return;
+    }
+    rebuild_assets();
+}
+
+void EditorWindow::trash_selected_project_asset(bool confirm)
+{
+    const auto asset_id = ProjectModel::asset_id(current_project_content_index());
+    if (asset_id.isEmpty()) return;
+    if (confirm)
+    {
+        const auto impact = asset_service_.dependency_impact(project_manifest_path_, asset_id);
+        const auto message = impact.dependent_paths.isEmpty()
+            ? QStringLiteral("Move this asset into recoverable Project Trash?")
+            : QStringLiteral("Move this asset into recoverable Project Trash? %1 indexed document(s) reference it and will report missing dependencies until restored.")
+                  .arg(impact.dependent_paths.size());
+        if (QMessageBox::question(this, QStringLiteral("Remove Asset"), message,
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
+        {
+            return;
+        }
+    }
+    const auto result = asset_service_.trash_asset(project_manifest_path_, asset_id);
+    if (!result.succeeded)
+    {
+        QMessageBox::warning(this, QStringLiteral("Remove Asset"),
+            result.diagnostics.isEmpty() ? QStringLiteral("Removal failed.")
+                                         : result.diagnostics.constFirst().message);
+        return;
+    }
+    rebuild_assets();
+}
+
+void EditorWindow::choose_asset_import()
+{
+    import_asset_paths(QFileDialog::getOpenFileNames(this, QStringLiteral("Import Assets"),
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
+        QStringLiteral("All Files (*.*)")));
+}
+
+void EditorWindow::create_project_folder()
+{
+    if (project_manifest_path_.isEmpty()) return;
+    bool accepted = false;
+    const auto name = QInputDialog::getText(this, QStringLiteral("Create Folder"),
+        QStringLiteral("Folder name"), QLineEdit::Normal,
+        QStringLiteral("New Folder"), &accepted).trimmed();
+    if (!accepted || name.isEmpty()) return;
+    const auto relative = QDir::fromNativeSeparators(
+        QDir{current_project_folder_relative()}.filePath(name));
+    const auto result = asset_service_.create_folder(project_manifest_path_, relative);
+    if (!result.succeeded)
+    {
+        QMessageBox::warning(this, QStringLiteral("Create Folder"),
+            result.diagnostics.isEmpty() ? QStringLiteral("Folder creation failed.")
+                                         : result.diagnostics.constFirst().message);
+        return;
+    }
+    rebuild_assets();
+}
+
 void EditorWindow::import_asset_paths(const QStringList& paths)
 {
     if (project_manifest_path_.isEmpty() || paths.isEmpty())
@@ -3480,7 +4242,7 @@ bool EditorWindow::handle_project_browser_drop(
     const QMimeData* mime,
     const QModelIndex& destination_source)
 {
-    if (mime == nullptr || !scene_ || !project_index_.candidate) return false;
+    if (mime == nullptr || !project_index_.candidate) return false;
     auto destination = destination_source;
     if (destination.isValid() && ProjectModel::item_kind(destination) != ProjectItemKind::folder)
         destination = destination.parent();
@@ -3493,6 +4255,12 @@ bool EditorWindow::handle_project_browser_drop(
 
     if (mime->hasFormat(QStringLiteral("application/x-dragonpixel-entity")))
     {
+        if (!scene_)
+        {
+            append_console(QStringLiteral("Hierarchy-to-Project drop rejected because no authoring Scene is open."),
+                QStringLiteral("Warning"), QStringLiteral("Drag and Drop"));
+            return false;
+        }
         const auto payload = QJsonDocument::fromJson(mime->data(
             QStringLiteral("application/x-dragonpixel-entity"))).object();
         const auto items = payload.value(QStringLiteral("items")).toArray();
@@ -3635,20 +4403,7 @@ void EditorWindow::show_project_browser_context_menu(const QPoint& point)
     if (chosen == nullptr) return;
     if (chosen == create_folder)
     {
-        bool accepted = false;
-        const auto name = QInputDialog::getText(this, QStringLiteral("Create Folder"),
-            QStringLiteral("Folder name"), QLineEdit::Normal, QStringLiteral("New Folder"), &accepted).trimmed();
-        if (!accepted || name.isEmpty()) return;
-        const auto relative = QDir::fromNativeSeparators(
-            QDir{current_project_folder_relative()}.filePath(name));
-        const auto result = asset_service_.create_folder(project_manifest_path_, relative);
-        if (!result.succeeded)
-        {
-            QMessageBox::warning(this, QStringLiteral("Create Folder"),
-                result.diagnostics.isEmpty() ? QStringLiteral("Folder creation failed.")
-                                             : result.diagnostics.constFirst().message);
-        }
-        else rebuild_assets();
+        create_project_folder();
     }
     else if (chosen == new_scene)
     {
@@ -3656,10 +4411,7 @@ void EditorWindow::show_project_browser_context_menu(const QPoint& point)
     }
     else if (chosen == import)
     {
-        const auto files = QFileDialog::getOpenFileNames(this, QStringLiteral("Import Assets"),
-            QStandardPaths::writableLocation(QStandardPaths::PicturesLocation),
-            QStringLiteral("All Files (*.*)"));
-        import_asset_paths(files);
+        choose_asset_import();
     }
     else if (chosen == create_tilemap)
     {
@@ -3673,20 +4425,7 @@ void EditorWindow::show_project_browser_context_menu(const QPoint& point)
     }
     else if (chosen == rename)
     {
-        bool accepted = false;
-        auto suggested = QFileInfo{path}.completeBaseName();
-        if (suggested.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)
-            || suggested.endsWith(QStringLiteral(".jpg"), Qt::CaseInsensitive)
-            || suggested.endsWith(QStringLiteral(".jpeg"), Qt::CaseInsensitive))
-            suggested = QFileInfo{suggested}.completeBaseName();
-        const auto name = QInputDialog::getText(this, QStringLiteral("Rename Asset"),
-            QStringLiteral("New name"), QLineEdit::Normal, suggested, &accepted);
-        if (!accepted) return;
-        const auto result = asset_service_.rename_asset(project_manifest_path_, asset_id, name);
-        if (!result.succeeded)
-            QMessageBox::warning(this, QStringLiteral("Rename Asset"),
-                result.diagnostics.isEmpty() ? QStringLiteral("Rename failed.") : result.diagnostics.constFirst().message);
-        else rebuild_assets();
+        rename_selected_project_asset();
     }
     else if (chosen == move)
     {
@@ -3704,28 +4443,11 @@ void EditorWindow::show_project_browser_context_menu(const QPoint& point)
     }
     else if (chosen == duplicate)
     {
-        const auto result = asset_service_.duplicate_asset(project_manifest_path_, asset_id,
-            current_project_folder_relative());
-        if (!result.succeeded)
-            QMessageBox::warning(this, QStringLiteral("Duplicate Asset"),
-                result.diagnostics.isEmpty() ? QStringLiteral("Duplication failed.") : result.diagnostics.constFirst().message);
-        else rebuild_assets();
+        duplicate_selected_project_asset();
     }
     else if (chosen == remove)
     {
-        const auto impact = asset_service_.dependency_impact(project_manifest_path_, asset_id);
-        const auto message = impact.dependent_paths.isEmpty()
-            ? QStringLiteral("Move this asset into recoverable Project Trash?")
-            : QStringLiteral("Move this asset into recoverable Project Trash? %1 indexed document(s) reference it and will report missing dependencies until restored.")
-                  .arg(impact.dependent_paths.size());
-        if (QMessageBox::question(this, QStringLiteral("Remove Asset"), message,
-                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
-            return;
-        const auto result = asset_service_.trash_asset(project_manifest_path_, asset_id);
-        if (!result.succeeded)
-            QMessageBox::warning(this, QStringLiteral("Remove Asset"),
-                result.diagnostics.isEmpty() ? QStringLiteral("Removal failed.") : result.diagnostics.constFirst().message);
-        else rebuild_assets();
+        trash_selected_project_asset(true);
     }
     else if (chosen == restore)
     {
@@ -3761,9 +4483,32 @@ void EditorWindow::rebuild_assets()
 
 void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
 {
-    const auto prior_folder = project_current_folder_.isValid()
+    auto prior_folder = project_current_folder_.isValid()
         ? project_current_folder_.data(EditorRoles::project_logical_path).toString()
         : QString{};
+    const auto prior_project_id = project_index_.candidate
+        ? project_index_.candidate->project_id : QString{};
+    QStringList prior_expanded_folders;
+    if (project_folder_tree_ != nullptr && project_folder_filter_ != nullptr)
+    {
+        std::function<void(const QModelIndex&)> capture_expanded;
+        capture_expanded = [this, &capture_expanded, &prior_expanded_folders](
+                               const QModelIndex& parent) {
+            for (int row = 0; row < project_folder_filter_->rowCount(parent); ++row)
+            {
+                const auto proxy = project_folder_filter_->index(row, 0, parent);
+                if (project_folder_tree_->isExpanded(proxy))
+                {
+                    const auto source = project_folder_filter_->mapToSource(proxy);
+                    const auto logical = source.data(
+                        EditorRoles::project_logical_path).toString();
+                    if (!logical.isEmpty()) prior_expanded_folders.push_back(logical);
+                }
+                capture_expanded(proxy);
+            }
+        };
+        capture_expanded({});
+    }
     const auto prior_index = project_content_stack_ && project_content_stack_->currentIndex() == 1
         ? project_thumbnail_view_->currentIndex()
         : project_explorer_->currentIndex();
@@ -3781,13 +4526,27 @@ void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
     }
 
     project_index_ = std::move(candidate);
+    const auto project_changed = project_index_.candidate
+        && prior_project_id.compare(
+               project_index_.candidate->project_id, Qt::CaseInsensitive) != 0;
+    if (project_changed)
+    {
+        prior_folder.clear();
+        prior_expanded_folders.clear();
+        project_folder_history_.clear();
+        project_folder_history_index_ = -1;
+    }
     if (!project_index_.candidate)
     {
         project_model_->rebuild(project_index_);
+        rebuild_project_favorites();
         project_current_folder_ = QPersistentModelIndex{};
         project_explorer_->setRootIndex({});
         project_thumbnail_view_->setRootIndex({});
-        project_breadcrumb_->setText(QStringLiteral("Project"));
+        project_folder_history_.clear();
+        project_folder_history_index_ = -1;
+        rebuild_project_breadcrumb();
+        update_project_navigation_actions();
         project_details_->setText(QStringLiteral("Select an asset to see details."));
         project_input_map_.reset();
         input_map_source_path_.clear();
@@ -3796,23 +4555,19 @@ void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
     }
 
     project_model_->rebuild(project_index_);
-    const auto find_source = [this](int role, const QString& value) {
-        std::function<QModelIndex(const QModelIndex&)> visit;
-        visit = [this, role, &value, &visit](const QModelIndex& parent) -> QModelIndex {
-            for (int row = 0; row < project_model_->rowCount(parent); ++row)
-            {
-                const auto index = project_model_->index(row, 0, parent);
-                if (index.data(role).toString().compare(value, Qt::CaseInsensitive) == 0)
-                    return index;
-                if (const auto nested = visit(index); nested.isValid()) return nested;
-            }
-            return {};
-        };
-        return visit({});
-    };
+    rebuild_project_favorites();
     auto folder_source = prior_folder.isEmpty()
         ? QModelIndex{}
-        : find_source(EditorRoles::project_logical_path, prior_folder);
+        : find_project_source(EditorRoles::project_logical_path, prior_folder);
+    auto fallback_folder = prior_folder;
+    while (!folder_source.isValid() && fallback_folder.contains(QLatin1Char('/')))
+    {
+        fallback_folder = QFileInfo{fallback_folder}.path();
+        if (fallback_folder == QStringLiteral(".")) fallback_folder.clear();
+        folder_source = fallback_folder.isEmpty()
+            ? QModelIndex{}
+            : find_project_source(EditorRoles::project_logical_path, fallback_folder);
+    }
     if (!folder_source.isValid())
     {
         auto first_root = QString{};
@@ -3826,19 +4581,34 @@ void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
         }
         folder_source = first_root.isEmpty()
             ? project_model_->index(0, 0)
-            : find_source(EditorRoles::project_logical_path, first_root);
+            : find_project_source(EditorRoles::project_logical_path, first_root);
     }
     const auto folder_proxy = project_folder_filter_->mapFromSource(folder_source);
     if (folder_proxy.isValid())
     {
+        project_navigation_replay_ = true;
         project_folder_tree_->setCurrentIndex(folder_proxy);
-        project_folder_tree_->expandAll();
         update_project_browser_folder(folder_proxy);
+        project_navigation_replay_ = false;
+        auto ancestor = folder_proxy.parent();
+        while (ancestor.isValid())
+        {
+            project_folder_tree_->setExpanded(ancestor, true);
+            ancestor = ancestor.parent();
+        }
+        for (const auto& expanded_path : prior_expanded_folders)
+        {
+            const auto expanded_source = find_project_source(
+                EditorRoles::project_logical_path, expanded_path);
+            const auto expanded_proxy = project_folder_filter_->mapFromSource(expanded_source);
+            if (expanded_proxy.isValid())
+                project_folder_tree_->setExpanded(expanded_proxy, true);
+        }
     }
     auto selection_source = prior_asset_id.isEmpty()
-        ? QModelIndex{} : find_source(EditorRoles::project_entry_id, prior_asset_id);
+        ? QModelIndex{} : find_project_source(EditorRoles::project_entry_id, prior_asset_id);
     if (!selection_source.isValid() && !prior_path.isEmpty())
-        selection_source = find_source(EditorRoles::project_path, prior_path);
+        selection_source = find_project_source(EditorRoles::project_path, prior_path);
     if (selection_source.isValid())
     {
         const auto selection_proxy = project_filter_->mapFromSource(selection_source);
@@ -3915,13 +4685,7 @@ void EditorWindow::apply_project_index(ProjectIndexBuildResult candidate)
         project_watcher_->addPaths(watched_directories);
     }
 
-    project_explorer_->expandAll();
-    project_explorer_->resizeColumnToContents(0);
     project_explorer_->resizeColumnToContents(static_cast<int>(ProjectColumn::kind_type));
-    project_explorer_->resizeColumnToContents(static_cast<int>(ProjectColumn::overall_status));
-    project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::identifier), true);
-    project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::path), true);
-    project_explorer_->setColumnHidden(static_cast<int>(ProjectColumn::structural_status), true);
     hierarchy_model_->set_drag_context(
         project_index_.candidate ? project_index_.candidate->project_id : QString{},
         scene_ ? QString::fromStdString(scene_->id().to_string()) : QString{},
@@ -6182,6 +6946,10 @@ void EditorWindow::activate_project_item(const QModelIndex& proxy_index)
     const auto source = project_filter_->mapToSource(proxy_index.siblingAtColumn(0));
     switch (ProjectModel::item_kind(source))
     {
+        case ProjectItemKind::folder:
+            navigate_project_browser_to(
+                source.data(EditorRoles::project_logical_path).toString());
+            break;
         case ProjectItemKind::scene:
             load_scene(ProjectModel::item_path(source));
             break;
@@ -8461,6 +9229,13 @@ void EditorWindow::navigate_console_entry(const QModelIndex& proxy_index)
     if (project_proxy.isValid())
     {
         assets_dock_->show();
+        if (project_browser_locked_)
+        {
+            statusBar()->showMessage(
+                QStringLiteral("Project Window is locked; diagnostic navigation was not applied."),
+                4000);
+            return;
+        }
         auto parent = project_proxy.parent();
         while (parent.isValid())
         {
