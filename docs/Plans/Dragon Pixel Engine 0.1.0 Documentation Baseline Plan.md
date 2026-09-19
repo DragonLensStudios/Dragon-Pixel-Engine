@@ -1,5 +1,24 @@
 # Dragon Pixel Engine 0.1.0 Documentation Baseline Plan
 
+## Main README publication follow-up — 2026-09-18
+
+**Status:** Complete; main README published and remote commit verified. The user explicitly requested updating the main-branch README after merging PR #8. Initial inspection confirmed #8 merged into `feature/project-view-workflow` at `edff7a8bb6e36d79d8c041790f3e7e011868040d`; PR #7 remained open and `origin/main` was `dd914f03878f338055c39d6cc511a8705623f2be` with only a heading in README.
+
+Scope: publish the expanded README to main as an explicitly authorized documentation-only exception to the normal release-only main policy. Prepare on isolated `feature/main-readme-publication` from current main, change only README, verify all destinations and in-page anchors, review the one-file diff, commit, and fast-forward push to main without force. Do not merge Project View implementation or modify release tags. README must distinguish the documented development snapshot from main's implementation and link source/docs to immutable snapshot `edff7a8bb6e36d79d8c041790f3e7e011868040d` because those paths are not all present on main. Preserve the current parent implementation worktree. Record final commit and verification here and mirror both external roots. Runtime/platform tests are not applicable to this prose-only update; existing product blockers stay open.
+
+Verification before work: fetched origin; confirmed #8 MERGED and #7 OPEN; clean worktree; both external roots passed all 68 UTF-8/LF Markdown mirror checks at DPE-ARCH-0017. This explicit user follow-up supersedes the earlier handoff's statement that the default README awaits later release integration; it does not retroactively alter the earlier receipt.
+
+### Main publication result
+
+- Published [main README](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/blob/main/README.md) in commit `01899caa5ed26880c000ee8a84d0e2a444bd80cd`, `docs(readme): publish comprehensive project overview on main`.
+- Only README changed on main: 342 added lines, 4,379 words. Added a main-versus-development clarification, accurately recorded #8's feature-branch merge, and converted 58 local source/document links to immutable `edff7a8` snapshot URLs. No parent implementation merge, release, or tag change.
+- `python out/publish-main-readme.py` passed: 58 destinations checked with `git cat-file -t <snapshot>:<path>`, 14 in-page anchors resolved, code fences balanced, UTF-8/no-BOM/LF. The ignored helper derives README from `git show edff7a8:README.md`, adds branch context, rewrites local links to matching GitHub blob/tree paths, validates, and writes the isolated checkout. No runtime tests were needed or claimed.
+- `git -C out/main-readme-publication diff --cached --check` passed; staged inventory contained only README.md. Reviewed the added context and complete derived-document scope against the already reviewed baseline.
+- `git -C out/main-readme-publication push origin HEAD:main` succeeded as a non-forced fast-forward from `dd914f0` to `01899ca`; `git ls-remote origin refs/heads/main` returned the exact published SHA. Isolated publication worktree is clean.
+- Remaining work is unchanged product work on PR #7, not a blocker to this completed README request. The user-merged #8 no longer awaits its own merge; its earlier draft handoff below is historical. No further main README publication step is pending.
+
+## Original baseline handoff record (historical)
+
 > **Status:** Documentation implementation and publication complete; draft PR #8 awaiting parent merge, retarget/reverification, CI, and human review
 > **Branch:** `feature/documentation-baseline-0.1.0`
 > **Temporary target:** `feature/project-view-workflow`; final target `develop`
