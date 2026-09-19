@@ -1,6 +1,6 @@
 # Dragon Pixel Engine 0.1.0 Documentation Baseline Plan
 
-> **Status:** Documentation implementation verified; publication in progress; dependent draft required
+> **Status:** Documentation implementation and publication complete; draft PR #8 awaiting parent merge, retarget/reverification, CI, and human review
 > **Branch:** `feature/documentation-baseline-0.1.0`
 > **Temporary target:** `feature/project-view-workflow`; final target `develop`
 > **Owner:** Codex / Dragon Lens Studios; human maintainer review required
@@ -61,8 +61,8 @@ Documentation-only changes require exact mirror/UTF-8/LF validation, original pr
 - [x] Versioned prompt/result and detailed README complete.
 - [x] License decision and primary-source verification recorded.
 - [x] Preservation, links, formatting, mirrors, and aggregate review pass.
-- [ ] Focused commits pushed, annotated tag verified remotely, dependent draft PR open.
-- [ ] Durable final evidence and blockers recorded.
+- [x] Focused commits pushed, annotated tag verified remotely, dependent draft PR open.
+- [x] Durable final evidence and blockers recorded.
 - [ ] Human review, parent merge, retarget/reverification, child merge and post-merge validation (outside this handoff).
 
 ## Work log
@@ -101,3 +101,15 @@ Reviewed README's aggregate diff, the relocated Prompt Source structure and pres
 Tag selection: use annotated `docs/v0.1.0` for the requested documentation baseline; the optional engine-snapshot alternative received no selection before publication. The annotation must say this contains unmerged parent work and does not qualify a product release. The tag will identify the completed content commit; a subsequent documentation-only publication receipt may follow on the branch without moving that tag.
 
 Parent complete Ubuntu matrix remains blocked; macOS remains deferred/unrun for the parent; KNI is experimental. All slice, POC, ADR, packaging, and release gates remain unchanged. Publish the verified content, open a dependent draft PR, then record remote branch/tag identities and final handoff below.
+
+### Final publication receipt — 2026-09-18
+
+- Content commit: `fbbb69b7266e3ec618058ac0c8a6c5351c806ec8`, `docs(project): consolidate 0.1.0 provenance and expand project guide`, pushed to `feature/documentation-baseline-0.1.0`.
+- Opened and inspected [draft PR #8](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/pull/8): OPEN, draft, head `feature/documentation-baseline-0.1.0`, temporary base `feature/project-view-workflow`. Both parent/child plans and PR bodies record the stack. Neither PR was merged.
+- Published annotated [tag docs/v0.1.0](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/tree/docs/v0.1.0). `git ls-remote origin refs/heads/feature/documentation-baseline-0.1.0 refs/tags/docs/v0.1.0 'refs/tags/docs/v0.1.0^{}'` confirmed the content branch/peeled tag at `fbbb69b7266e3ec618058ac0c8a6c5351c806ec8`; tag object is `19dc50eb292d0bf784ddf8646dffe289599035cc`. The tag annotation explicitly states documentation/development snapshot, unmerged parent/child work, unchanged runtime versions, experimental KNI, and open product gates.
+- This publication receipt follows the tagged content commit as an ordinary documentation commit; the tag remains fixed. No force-push, history rewrite, product version update, or release binary publication occurred.
+- `gh run list --branch feature/documentation-baseline-0.1.0 --limit 3 --json databaseId,status,conclusion,url,headSha` reported [run 35408325543](https://github.com/DragonLensStudios/Dragon-Pixel-Engine/actions/runs/35408325543) queued and duplicate run 35408321541 cancelled at observation. Hosted runtime/CI results are pending/unverified, not passing evidence. A receipt push may supersede these runs under normal workflow concurrency.
+- Delivered: the requested shared Prompt Source plus governed mirrors; original prompt and all 20 historical sections preserved under 0.1.0; detailed 4,312-word README; unchanged MIT license with dependency explanation; corrected Tilemap status; durable plan, commits, tag and draft PR.
+- Verification: all 68 Markdown pairs passed against each external root, original prompt and protected-file byte checks passed, six edited-document link/anchor and formatting checks passed, aggregate diff/scope reviewed, `git diff --check` clean. Only documentation validation ran; no runtime/sanitizer/platform evidence was invented or promoted.
+- Remaining blockers: PR #7's complete Ubuntu failures; parent review/merge; child update/retarget to `develop` and repeated affected checks; required hosted CI and human review. macOS, KNI conformance, all POC/ADR/slice/release gates remain unchanged.
+- Next handoff: review [README](../../README.md) and Prompt Source via PR #8; resolve/review parent work first, then follow the recorded child retarget procedure. The repository default-branch README remains unchanged until the authorized review/release workflow brings these commits there.
