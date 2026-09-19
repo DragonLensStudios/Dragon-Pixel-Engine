@@ -12,6 +12,10 @@
 
 ## Objective
 
+### Documentation baseline work item — 2026-09-18
+
+The user selected a documentation-only `0.1.0` consolidation: preserve all original prompts/history, organize the LLM Prompt Source as original prompt then result and information, expand README into the public project entry point, retain MIT with dependency compatibility documentation, and commit/tag/push the baseline. The mirrored [0.1.0 Documentation Baseline Plan](Dragon%20Pixel%20Engine%200.1.0%20Documentation%20Baseline%20Plan.md) owns this work on `feature/documentation-baseline-0.1.0`, explicitly dependent on PR #7. It does not change DPE-ARCH-0017, runtime versions, product acceptance, support, or the pending Project Window blockers. This annotation supersedes no historical evidence or product milestone.
+
 Complete all four slices in the Dragon Pixel Engine Design Document and deliver a stable, documented, distributable Dragon Pixel Engine `1.0.0`.
 
 Version 1.0 means the complete design-defined workflow: create or reversibly migrate a project; visually author functional 2D and 3D scenes; build, run, debug, save, recover, package, install, update, roll back, archive, and upgrade the project on Windows, macOS, and Linux.

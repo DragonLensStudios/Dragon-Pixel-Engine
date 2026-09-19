@@ -2,7 +2,8 @@
 
 > **Architecture revision:** DPE-ARCH-0015
 > **Feature branch:** `feature/tilemap-authoring-workspace`
-> **Status:** Draft PR #6 implementation guide; behavior remains subject to review
+> **Status:** PR #6 reviewed and merged into `develop` on 2026-07-29; broader platform/POC/release gates remain open
+> **Status annotation:** 2026-09-18 documentation review; behavior and recorded test results unchanged
 
 ## Overview
 
@@ -172,8 +173,8 @@ Runtime snapshot v5 carries resolved grid projection, multiple TileSets/textures
 
 MonoGame and KNI have separate adapter implementations. KNI remains experimental. The current branch passes the complete local Windows matrix at **63/63 in 570.78 seconds Release** and **63/63 in 895.30 seconds MSVC AddressSanitizer**, and its 189-record production bundle hash-verifies with a passing packaged MonoGame smoke test. These local results do not establish production KNI or complete cross-platform support; hosted Windows, Ubuntu, and macOS Release/ASan gates and the unchanged frame/input thresholds remain authoritative.
 
-## Current draft limitations
+## Current limitations
 
-PR #6 remains a draft because the required six hosted Windows, Ubuntu, and macOS Release/ASan jobs are not all green. The current implementation deliberately does not provide Unity branding, icons, serialized formats, C# TileBase/GridBrush APIs, render-pipeline-specific fields, XML Tiled import, object-layer import, image-collection TileSets, reimport/merge, plugin installation/update, a marketplace, or trusted in-editor native code.
+PR #6 was reviewed and merged on 2026-07-29 at `fa59b227e3057af603c569f1913b652d22b50c5a`. Its [feature plan](Plans/Dragon%20Pixel%20Engine%20Tilemap%20Authoring%20Workspace%20Plan.md) retains the separate local Windows and hosted Ubuntu passes, hosted Windows framebuffer limitations, and deferred macOS evidence. The merge does not close platform, POC K/O/P/J, ADR, slice, release, or KNI support gates. The implementation deliberately does not provide Unity branding, icons, serialized formats, C# TileBase/GridBrush APIs, render-pipeline-specific fields, XML Tiled import, object-layer import, image-collection TileSets, reimport/merge, plugin installation/update, a marketplace, or trusted in-editor native code.
 
 The custom extension workflow is project-local, explicit-build, worker-only functionality; it is not the general plugin installation lifecycle governed by POC P. Composite collision intentionally handles only shapes that can be merged without changing their authored geometry. Unsupported cases remain separate or diagnosable rather than being silently approximated. These limits preserve authored data and keep unsupported behavior visible.
