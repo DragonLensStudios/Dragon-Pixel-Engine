@@ -169,13 +169,24 @@ try {
     }
 
     $files = Get-ChildItem -LiteralPath $stagingRoot -Recurse -File | Sort-Object FullName
-    $manifestFiles = @($files | ForEach-Object {
-        [ordered]@{
-            path = $_.FullName.Substring($stagingRoot.Length + 1).Replace('\', '/')
-            size = $_.Length
-            sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-    })
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $manifestFiles = @(foreach ($file in $files) {
+            $stream = $file.OpenRead()
+            try {
+                $hash = $sha256.ComputeHash($stream)
+            } finally {
+                $stream.Dispose()
+            }
+            [ordered]@{
+                path = $file.FullName.Substring($stagingRoot.Length + 1).Replace('\', '/')
+                size = $file.Length
+                sha256 = [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+            }
+        })
+    } finally {
+        $sha256.Dispose()
+    }
     $manifest = [ordered]@{
         format = 'dpe.developer-editor-bundle'
         formatVersion = 1
@@ -290,7 +301,5 @@ Write-Host "Production-style editor bundle generated at $outputRoot" -Foreground
 Write-Host "Executable: $outputEditor" -ForegroundColor Green
 
 if ($Launch) {
-    $launcherArguments = @('-Production', '-SkipBuild')
-    if ($ResetSample) { $launcherArguments += '-ResetSample' }
-    & (Join-Path $PSScriptRoot 'Launch-Editor.ps1') @launcherArguments
+    & (Join-Path $PSScriptRoot 'Launch-Editor.ps1') -Production -SkipBuild -ResetSample:$ResetSample
 }

@@ -8,6 +8,8 @@ Feature work starts from current `develop`, uses one focused `feature/*` branch 
 
 ## Windows development quick start
 
+After installing the prerequisites below, double-click [Build-And-Run.bat](Build-And-Run.bat) or run it from a terminal. It builds the Release editor, deploys and smoke-tests the developer bundle, and opens the editor. Close the editor before rebuilding.
+
 From an elevated PowerShell session:
 
 ```powershell
